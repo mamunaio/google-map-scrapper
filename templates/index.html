@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Google Maps & Website Scraper</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f8fafc; }
+    </style>
+</head>
+<body class="text-slate-800 antialiased min-h-screen p-8">
+
+<div class="max-w-4xl mx-auto space-y-8">
+    <!-- Header -->
+    <div class="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 text-center">
+        <h1 class="text-3xl font-bold text-slate-900 mb-2">Smart Web Scraper</h1>
+        <p class="text-slate-500">Extract data from Google Maps or enrich existing Excel/CSV files.</p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        
+        <!-- Option 1: Manual Input -->
+        <div class="bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
+            <h2 class="text-xl font-semibold mb-4 text-indigo-600">Option A: Manual Input</h2>
+            <p class="text-sm text-slate-500 mb-4">Paste Google Maps URLs below (one per line):</p>
+            <textarea id="manualUrls" class="w-full h-40 p-4 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none mb-4 text-sm" placeholder="https://maps.app.goo.gl/...&#10;https://maps.app.goo.gl/..."></textarea>
+            <button onclick="startManualScraping()" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors">
+                Scrape Google Maps
+            </button>
+        </div>
+
+        <!-- Option 2: File Upload -->
+        <div class="bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
+            <h2 class="text-xl font-semibold mb-4 text-emerald-600">Option B: File Upload</h2>
+            <p class="text-sm text-slate-500 mb-4">Upload an Excel/CSV file to enrich data. We will extract links from the <strong>"Website"</strong> column.</p>
+            
+            <div class="border-2 border-dashed border-slate-200 rounded-xl p-8 text-center mb-4 hover:border-emerald-500 transition-colors cursor-pointer relative">
+                <input type="file" id="fileInput" accept=".csv, .xlsx, .xls" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="handleFileSelect(event)">
+                <div class="text-slate-400">
+                    <svg class="w-8 h-8 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                    <span id="fileNameDisplay" class="font-medium text-slate-600">Click to upload or drag & drop</span>
+                    <p class="text-xs mt-1">.csv, .xlsx</p>
+                </div>
+            </div>
+            
+            <button onclick="startFileScraping()" class="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-medium transition-colors">
+                Enrich Excel/CSV Data
+            </button>
+        </div>
+
+    </div>
+
+    <!-- Progress Section -->
+    <div id="progressSection" class="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 hidden">
+        <div class="flex justify-between items-center mb-2">
+            <h3 class="font-semibold text-slate-700" id="statusText">Scraping in progress...</h3>
+            <span class="text-sm font-medium text-indigo-600" id="progressCount">0 / 0</span>
+        </div>
+        <div class="w-full bg-slate-100 rounded-full h-3 mb-4 overflow-hidden">
+            <div id="progressBar" class="bg-indigo-600 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        
+        <div class="h-40 overflow-y-auto bg-slate-50 border border-slate-100 rounded-xl p-4 font-mono text-xs text-slate-600" id="logBox">
+            <!-- Logs appear here -->
+        </div>
+
+        <div class="mt-6 hidden" id="downloadSection">
+            <button onclick="downloadExcel()" class="w-full py-4 bg-slate-900 hover:bg-black text-white rounded-xl font-semibold flex items-center justify-center gap-2 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                Download Result as Excel
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let finalData = [];
+    let uploadedData = [];
+    let targetUrls = [];
+    let scrapeMode = ''; // 'maps' or 'website'
+
+    function log(msg) {
+        const box = document.getElementById('logBox');
+        const div = document.createElement('div');
+        div.className = 'mb-1 border-b border-slate-100 pb-1';
+        div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        box.appendChild(div);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    function showProgress(show) {
+        document.getElementById('progressSection').classList.toggle('hidden', !show);
+        if(show) {
+            document.getElementById('downloadSection').classList.add('hidden');
+            document.getElementById('progressBar').style.width = '0%';
+            document.getElementById('progressCount').textContent = `0 / 0`;
+            document.getElementById('logBox').innerHTML = '';
+            finalData = [];
+        }
+    }
+
+    // -- Option A: Manual --
+    async function startManualScraping() {
+        const text = document.getElementById('manualUrls').value.trim();
+        if(!text) return alert("Please enter some URLs.");
+        
+        targetUrls = text.split('\n').map(u => u.trim()).filter(u => u);
+        scrapeMode = 'maps';
+        
+        showProgress(true);
+        log(`Starting manual scrape for ${targetUrls.length} Google Maps URLs...`);
+        await processQueue();
+    }
+
+    // -- Option B: File Upload --
+    function handleFileSelect(event) {
+        const file = event.target.files[0];
+        if(file) {
+            document.getElementById('fileNameDisplay').textContent = file.name;
+        }
+    }
+
+    async function startFileScraping() {
+        const fileInput = document.getElementById('fileInput');
+        if(!fileInput.files.length) return alert("Please upload a file first.");
+        
+        const file = fileInput.files[0];
+        showProgress(true);
+        log(`Reading file: ${file.name}...`);
+
+        if(file.name.endsWith('.csv')) {
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: function(results) {
+                    processParsedData(results.data);
+                }
+            });
+        } else {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = XLSX.utils.sheet_to_json(firstSheet);
+                processParsedData(jsonData);
+            };
+            reader.readAsArrayBuffer(file);
+        }
+    }
+
+    function processParsedData(data) {
+        uploadedData = data;
+        
+        // Find the website column (case insensitive)
+        const keys = data.length > 0 ? Object.keys(data[0]) : [];
+        const websiteKey = keys.find(k => k.toLowerCase().includes('website'));
+        
+        if(!websiteKey) {
+            log(`[ERROR] Could not find a 'Website' column in the uploaded file.`);
+            return;
+        }
+
+        targetUrls = data.map(row => row[websiteKey]).filter(url => url && url.toString().trim() !== '');
+        scrapeMode = 'website';
+        
+        log(`Found ${targetUrls.length} website URLs to enrich.`);
+        processQueue();
+    }
+
+    // -- Core Processing Queue --
+    async function processQueue() {
+        let completed = 0;
+        const total = targetUrls.length;
+
+        for (let i = 0; i < total; i++) {
+            const url = targetUrls[i];
+            log(`Processing: ${url}`);
+            
+            try {
+                const response = await fetch('/api/scrape', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url, type: scrapeMode })
+                });
+                
+                const res = await response.json();
+                
+                if(res.success) {
+                    if(scrapeMode === 'maps') {
+                        finalData.push(res.data);
+                        log(`Success -> Website: ${res.data.Website || 'None'}, Email: ${res.data.Email || 'None'}`);
+                    } else {
+                        // Merge with existing data
+                        const rowToUpdate = uploadedData.find(row => {
+                            const keys = Object.keys(row);
+                            const webKey = keys.find(k => k.toLowerCase().includes('website'));
+                            return row[webKey] === url;
+                        });
+                        
+                        if(rowToUpdate) {
+                            rowToUpdate['Email'] = res.data.Email || rowToUpdate['Email'] || '';
+                            rowToUpdate['Facebook'] = res.data.Facebook || rowToUpdate['Facebook'] || '';
+                            rowToUpdate['Instagram'] = res.data.Instagram || rowToUpdate['Instagram'] || '';
+                            rowToUpdate['LinkedIn'] = res.data.LinkedIn || rowToUpdate['LinkedIn'] || '';
+                            rowToUpdate['About Page Link'] = res.data['About Page Link'] || rowToUpdate['About Page Link'] || '';
+                        }
+                        log(`Enriched -> Email: ${res.data.Email || 'None'}`);
+                    }
+                } else {
+                    log(`Failed: ${res.error}`);
+                    if(scrapeMode === 'maps') finalData.push({ "Source URL": url, "Error": "Failed to scrape" });
+                }
+            } catch(e) {
+                log(`Network error: ${e.message}`);
+            }
+
+            completed++;
+            document.getElementById('progressCount').textContent = `${completed} / ${total}`;
+            document.getElementById('progressBar').style.width = `${(completed/total)*100}%`;
+        }
+
+        log(`All tasks completed!`);
+        document.getElementById('statusText').textContent = 'Scraping Complete!';
+        document.getElementById('downloadSection').classList.remove('hidden');
+    }
+
+    function downloadExcel() {
+        const dataToExport = scrapeMode === 'maps' ? finalData : uploadedData;
+        
+        // Reorder columns exactly as requested by user
+        const orderedData = dataToExport.map(row => {
+            let fb_insta = row["Facebook / Instagram"] || '';
+            if (!fb_insta) {
+                const parts = [];
+                if (row["Facebook"]) parts.push(row["Facebook"]);
+                if (row["Instagram"]) parts.push(row["Instagram"]);
+                fb_insta = parts.join(" | ");
+            }
+
+            return {
+                "Business Name": row["Business Name"] || "",
+                "Website": row["Website"] || "",
+                "Email": row["Email"] || "",
+                "Phone": row["Phone Number"] || row["Phone"] || "",
+                "Facebook / Instagram": fb_insta,
+                "LinkedIn": row["LinkedIn"] || "",
+                "Source URL": row["Source URL"] || "",
+                "About Page Link": row["About Page Link"] || ""
+            };
+        });
+        
+        // Create Workbook and Worksheet
+        const worksheet = XLSX.utils.json_to_sheet(orderedData);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Scraped Data");
+
+        // Format column widths for beauty
+        const cols = Object.keys(orderedData[0] || {}).map(k => ({ wch: Math.max(k.length + 5, 20) }));
+        worksheet['!cols'] = cols;
+
+        XLSX.writeFile(workbook, "scraped_leads_formatted.xlsx");
+    }
+</script>
+
+</body>
+</html>
