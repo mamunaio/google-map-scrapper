@@ -106,10 +106,44 @@ def extract_social_and_email(html):
             
     return emails[0] if emails else "", facebook, instagram, linkedin
 
+def scrape_website_details_with_playwright(url):
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(url, timeout=30000)
+            time.sleep(get_random_delay())
+            html = page.content()
+            email, fb, insta, linkedin = extract_social_and_email(html)
+            
+            contact_urls = [url.rstrip('/') + '/contact', url.rstrip('/') + '/contact-us']
+            for curl in contact_urls:
+                if not email or not fb or not insta or not linkedin:
+                    try:
+                        page.goto(curl, timeout=20000)
+                        time.sleep(1)
+                        c_html = page.content()
+                        c_email, c_fb, c_insta, c_linkedin = extract_social_and_email(c_html)
+                        email = email or c_email
+                        fb = fb or c_fb
+                        insta = insta or c_insta
+                        linkedin = linkedin or c_linkedin
+                    except: pass
+            
+            browser.close()
+            return email, fb, insta, linkedin, ""
+    except Exception as e:
+        print(f"Playwright fallback failed for {url}: {e}")
+        return "", "", "", "", ""
+
 def scrape_website_details(url):
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=15, verify=False)
+        
+        if response.status_code in [403, 401, 503, 429]:
+            raise Exception(f"Blocked by server with status {response.status_code}")
+            
         email, fb, insta, linkedin = extract_social_and_email(response.text)
         
         about_info = get_about_page_link(url, headers)
@@ -119,17 +153,18 @@ def scrape_website_details(url):
             if not email or not fb or not insta or not linkedin:
                 try:
                     c_resp = requests.get(curl, headers=headers, timeout=15, verify=False)
-                    c_email, c_fb, c_insta, c_linkedin = extract_social_and_email(c_resp.text)
-                    email = email or c_email
-                    fb = fb or c_fb
-                    insta = insta or c_insta
-                    linkedin = linkedin or c_linkedin
+                    if c_resp.status_code == 200:
+                        c_email, c_fb, c_insta, c_linkedin = extract_social_and_email(c_resp.text)
+                        email = email or c_email
+                        fb = fb or c_fb
+                        insta = insta or c_insta
+                        linkedin = linkedin or c_linkedin
                 except: pass
                     
         return email, fb, insta, linkedin, about_info
     except Exception as e:
-        print(f"Error on website {url}: {e}")
-        return "", "", "", "", ""
+        print(f"Requests failed for {url}: {e}. Falling back to Playwright...")
+        return scrape_website_details_with_playwright(url)
 
 @app.route('/')
 def index():
