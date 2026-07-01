@@ -14,11 +14,11 @@
 </head>
 <body class="text-slate-800 antialiased min-h-screen p-8">
 
-<div class="max-w-4xl mx-auto space-y-8">
+<div class="max-w-5xl mx-auto space-y-8">
     <!-- Header -->
     <div class="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 text-center">
         <h1 class="text-3xl font-bold text-slate-900 mb-2">Smart Web Scraper</h1>
-        <p class="text-slate-500">Extract data from Google Maps or enrich existing Excel/CSV files.</p>
+        <p class="text-slate-500">Extract data from Google Maps, Websites, or enrich existing Excel/CSV files.</p>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -26,10 +26,22 @@
         <!-- Option 1: Manual Input -->
         <div class="bg-white p-8 rounded-2xl shadow-sm border border-slate-100">
             <h2 class="text-xl font-semibold mb-4 text-indigo-600">Option A: Manual Input</h2>
-            <p class="text-sm text-slate-500 mb-4">Paste Google Maps URLs below (one per line):</p>
-            <textarea id="manualUrls" class="w-full h-40 p-4 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none mb-4 text-sm" placeholder="https://maps.app.goo.gl/...&#10;https://maps.app.goo.gl/..."></textarea>
+            
+            <div class="flex items-center gap-4 mb-4">
+                <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                    <input type="radio" name="linkType" value="maps" checked class="text-indigo-600 focus:ring-indigo-500">
+                    Google Maps URLs
+                </label>
+                <label class="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
+                    <input type="radio" name="linkType" value="website" class="text-indigo-600 focus:ring-indigo-500">
+                    Direct Website URLs
+                </label>
+            </div>
+
+            <p class="text-sm text-slate-500 mb-4">Paste URLs below (one per line):</p>
+            <textarea id="manualUrls" class="w-full h-40 p-4 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none mb-4 text-sm" placeholder="https://..."></textarea>
             <button onclick="startManualScraping()" class="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors">
-                Scrape Google Maps
+                Start Scraping
             </button>
         </div>
 
@@ -75,6 +87,29 @@
             </button>
         </div>
     </div>
+
+    <!-- Table Section -->
+    <div id="resultsTableContainer" class="bg-white p-8 rounded-2xl shadow-sm border border-slate-100 hidden">
+        <div class="flex justify-between items-center mb-4">
+            <h3 class="font-semibold text-slate-700">Scraped Results (You can copy this table)</h3>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm text-slate-600 border-collapse">
+                <thead class="text-xs text-slate-700 uppercase bg-slate-50 border-b border-slate-200">
+                    <tr>
+                        <th class="px-4 py-3 border border-slate-200">Business Name</th>
+                        <th class="px-4 py-3 border border-slate-200">Website</th>
+                        <th class="px-4 py-3 border border-slate-200">Email</th>
+                        <th class="px-4 py-3 border border-slate-200">Phone</th>
+                        <th class="px-4 py-3 border border-slate-200">Facebook / Insta</th>
+                        <th class="px-4 py-3 border border-slate-200">LinkedIn</th>
+                    </tr>
+                </thead>
+                <tbody id="resultsTableBody">
+                </tbody>
+            </table>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -82,6 +117,7 @@
     let uploadedData = [];
     let targetUrls = [];
     let scrapeMode = ''; // 'maps' or 'website'
+    let inputType = ''; // 'manual' or 'file'
 
     function log(msg) {
         const box = document.getElementById('logBox');
@@ -96,6 +132,7 @@
         document.getElementById('progressSection').classList.toggle('hidden', !show);
         if(show) {
             document.getElementById('downloadSection').classList.add('hidden');
+            document.getElementById('resultsTableContainer').classList.add('hidden');
             document.getElementById('progressBar').style.width = '0%';
             document.getElementById('progressCount').textContent = `0 / 0`;
             document.getElementById('logBox').innerHTML = '';
@@ -106,13 +143,21 @@
     // -- Option A: Manual --
     async function startManualScraping() {
         const text = document.getElementById('manualUrls').value.trim();
-        if(!text) return alert("Please enter some URLs.");
+        if(!text) return alert("Please enter at least 1 URL.");
         
         targetUrls = text.split('\n').map(u => u.trim()).filter(u => u);
-        scrapeMode = 'maps';
+        
+        if (targetUrls.length === 0) return alert("Please enter at least 1 URL.");
+        if (targetUrls.length > 100) {
+            alert(`You have entered ${targetUrls.length} URLs. Processing the first 100 only.`);
+            targetUrls = targetUrls.slice(0, 100);
+        }
+
+        scrapeMode = document.querySelector('input[name="linkType"]:checked').value;
+        inputType = 'manual';
         
         showProgress(true);
-        log(`Starting manual scrape for ${targetUrls.length} Google Maps URLs...`);
+        log(`Starting manual scrape for ${targetUrls.length} URLs...`);
         await processQueue();
     }
 
@@ -167,6 +212,7 @@
 
         targetUrls = data.map(row => row[websiteKey]).filter(url => url && url.toString().trim() !== '');
         scrapeMode = 'website';
+        inputType = 'file';
         
         log(`Found ${targetUrls.length} website URLs to enrich.`);
         processQueue();
@@ -182,19 +228,25 @@
             log(`Processing: ${url}`);
             
             try {
+                // Prepend http:// if URL doesn't have it, to avoid fetch errors if user pastes 'example.com'
+                let fetchUrl = url;
+                if(!url.startsWith('http')) {
+                    fetchUrl = 'https://' + url;
+                }
+
                 const response = await fetch('/api/scrape', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url, type: scrapeMode })
+                    body: JSON.stringify({ url: fetchUrl, type: scrapeMode })
                 });
                 
                 const res = await response.json();
                 
                 if(res.success) {
-                    if(scrapeMode === 'maps') {
+                    if(inputType === 'manual') {
                         finalData.push(res.data);
                         log(`Success -> Website: ${res.data.Website || 'None'}, Email: ${res.data.Email || 'None'}`);
-                    } else {
+                    } else if(inputType === 'file') {
                         // Merge with existing data
                         const rowToUpdate = uploadedData.find(row => {
                             const keys = Object.keys(row);
@@ -213,10 +265,11 @@
                     }
                 } else {
                     log(`Failed: ${res.error}`);
-                    if(scrapeMode === 'maps') finalData.push({ "Source URL": url, "Error": "Failed to scrape" });
+                    if(inputType === 'manual') finalData.push({ "Source URL": url, "Error": "Failed to scrape" });
                 }
             } catch(e) {
                 log(`Network error: ${e.message}`);
+                if(inputType === 'manual') finalData.push({ "Source URL": url, "Error": e.message });
             }
 
             completed++;
@@ -227,13 +280,36 @@
         log(`All tasks completed!`);
         document.getElementById('statusText').textContent = 'Scraping Complete!';
         document.getElementById('downloadSection').classList.remove('hidden');
+        renderTable();
     }
 
-    function downloadExcel() {
-        const dataToExport = scrapeMode === 'maps' ? finalData : uploadedData;
+    function renderTable() {
+        const dataToExport = getOrderedData();
+        const tbody = document.getElementById('resultsTableBody');
+        tbody.innerHTML = '';
         
-        // Reorder columns exactly as requested by user
-        const orderedData = dataToExport.map(row => {
+        dataToExport.forEach(row => {
+            const tr = document.createElement('tr');
+            tr.className = 'border-b border-slate-100 hover:bg-slate-50';
+            
+            tr.innerHTML = `
+                <td class="px-4 py-3 border border-slate-200">${row["Business Name"] || '-'}</td>
+                <td class="px-4 py-3 border border-slate-200 text-indigo-600 max-w-[200px] truncate"><a href="${row["Website"]}" target="_blank" title="${row["Website"]}">${row["Website"] || '-'}</a></td>
+                <td class="px-4 py-3 border border-slate-200 font-medium text-slate-800">${row["Email"] || '-'}</td>
+                <td class="px-4 py-3 border border-slate-200">${row["Phone"] || '-'}</td>
+                <td class="px-4 py-3 border border-slate-200">${row["Facebook / Instagram"] || '-'}</td>
+                <td class="px-4 py-3 border border-slate-200 max-w-[150px] truncate"><a href="${row["LinkedIn"]}" target="_blank" title="${row["LinkedIn"]}">${row["LinkedIn"] || '-'}</a></td>
+            `;
+            tbody.appendChild(tr);
+        });
+        
+        document.getElementById('resultsTableContainer').classList.remove('hidden');
+    }
+
+    function getOrderedData() {
+        const rawData = inputType === 'manual' ? finalData : uploadedData;
+        
+        return rawData.map(row => {
             let fb_insta = row["Facebook / Instagram"] || '';
             if (!fb_insta) {
                 const parts = [];
@@ -253,6 +329,10 @@
                 "About Page Link": row["About Page Link"] || ""
             };
         });
+    }
+
+    function downloadExcel() {
+        const orderedData = getOrderedData();
         
         // Create Workbook and Worksheet
         const worksheet = XLSX.utils.json_to_sheet(orderedData);
