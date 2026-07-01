@@ -26,10 +26,32 @@ def get_about_page_link(url, headers):
         except: pass
     return ""
 
+def decode_cloudflare_email(cf_hash):
+    try:
+        if not cf_hash: return ""
+        key = int(cf_hash[:2], 16)
+        email = ""
+        for i in range(2, len(cf_hash), 2):
+            email += chr(int(cf_hash[i:i+2], 16) ^ key)
+        return email
+    except:
+        return ""
+
 def extract_social_and_email(html):
     # Strict regex with word boundaries
     email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,7}\b'
     raw_emails = list(set(re.findall(email_pattern, html)))
+    
+    # Cloudflare email extraction
+    cf_hashes = re.findall(r'/email-protection#([a-fA-F0-9]+)', html)
+    cf_hashes += re.findall(r'data-cfemail=["\']([a-fA-F0-9]+)["\']', html)
+    
+    for cfh in cf_hashes:
+        decoded = decode_cloudflare_email(cfh)
+        if decoded:
+            raw_emails.append(decoded)
+            
+    raw_emails = list(set(raw_emails))
     
     emails = []
     # Comprehensive blacklist
@@ -53,9 +75,10 @@ def extract_social_and_email(html):
             
         # Validate email syntax and domain MX records
         try:
-            valid = validate_email(em, check_deliverability=True)
+            # Turning off check_deliverability to avoid DNS timeouts dropping all valid emails on some networks
+            valid = validate_email(em, check_deliverability=False)
             emails.append(valid.normalized)
-        except EmailNotValidError:
+        except Exception:
             pass # Invalid email, skip it
         
     # Sort emails to prioritize generic ones like info@, contact@, admin@
@@ -85,7 +108,7 @@ def extract_social_and_email(html):
 
 def scrape_website_details(url):
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
         response = requests.get(url, headers=headers, timeout=15, verify=False)
         email, fb, insta, linkedin = extract_social_and_email(response.text)
         
