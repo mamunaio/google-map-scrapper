@@ -198,12 +198,25 @@ def detect_business_features(html_text: str):
 
     # 1. Lead Capture
     lead_cap = detect_lead_capture_mechanisms(soup, html_text)
+    lc_details = lead_cap["details"]
+    lc_providers = []
+    if lc_details.get("has_quote_form"):
+        lc_providers.append("Quote / Estimate Form")
+    elif lc_details.get("has_contact_form"):
+        lc_providers.append("On-Page Contact Form")
+    if lc_details.get("has_phone_link"):
+        lc_providers.append("Click-to-Call")
+    if lc_details.get("has_email_link"):
+        lc_providers.append("Direct Email Link")
+    if lc_details.get("prominent_ctas") and not (lc_details.get("has_quote_form") or lc_details.get("has_contact_form")):
+        lc_providers.append("Prominent CTA")
+
     results["lead_capture"] = {
         "category": "Lead Capture",
         "status": lead_cap["status"],
-        "providers": ["On-Page Form / CTA"] if lead_cap["status"] == "Detected" else [],
+        "providers": lc_providers,
         "evidence": ", ".join(lead_cap["evidence"]) if lead_cap["evidence"] else "No interactive contact forms or CTAs observed on scanned pages.",
-        "details": lead_cap["details"]
+        "details": lc_details
     }
 
     # 2. Booking and Appointment

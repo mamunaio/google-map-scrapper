@@ -159,7 +159,7 @@ def is_challenge_or_blocked(status_code: int = 200, html_text: str = "", error_m
 
     return False, ""
 
-def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_name: str = ""):
+def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_name: str = "", phone: str = ""):
     """
     Complete end-to-end audit:
     - SSRF protection & safe fetching
@@ -401,7 +401,10 @@ def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_na
         decision_maker=decision_maker_str,
         email=email,
         business_name=business_name,
-        target_url=final_url
+        target_url=final_url,
+        phone=phone,
+        email_status=verification_status,
+        performance_result=perf_audit
     )
 
     # Step 7: Combine all results (preserving existing backward-compatible keys!)

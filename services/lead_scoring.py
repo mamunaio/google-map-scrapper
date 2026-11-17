@@ -60,6 +60,7 @@ def calculate_lead_score(
     perf = intel.get("performance", {}) or {}
 
     email = audit_data.get("Email", "") or audit_data.get("Contact Email", "")
+    email_status = audit_data.get("Email Status", "") or audit_data.get("Email Verification", "")
     phone = audit_data.get("Phone Number", "") or audit_data.get("Phone", "")
     dm = audit_data.get("Decision Maker", "")
     website = audit_data.get("Website", "")
@@ -253,12 +254,30 @@ def calculate_lead_score(
     has_email = bool(email and "@" in email)
     has_phone = bool(phone and phone.strip() and phone != "-")
 
+    es_lower = str(email_status or "").strip().lower()
+    is_smtp_verified = ("smtp verified" in es_lower or es_lower == "verified" or "smtp valid" in es_lower)
+    is_mx_only = ("mx only" in es_lower or "mx valid" in es_lower or "catch-all" in es_lower)
+
     if has_email and has_phone:
-        dim7 = 10.0
-        expl7 = "Both verified direct email and telephone number are available for outreach."
+        if is_smtp_verified:
+            dim7 = 10.0
+            expl7 = "Both verified direct email and telephone number are available for outreach."
+        elif is_mx_only:
+            dim7 = 8.0
+            expl7 = "Both telephone number and MX-only email (mailbox not SMTP-verified) are available for outreach."
+        else:
+            dim7 = 7.0
+            expl7 = "Both telephone number and unverified email are available for outreach."
     elif has_email:
-        dim7 = 6.0
-        expl7 = "Verified direct email available; telephone number not identified."
+        if is_smtp_verified:
+            dim7 = 6.0
+            expl7 = "Verified direct email available; telephone number not identified."
+        elif is_mx_only:
+            dim7 = 5.0
+            expl7 = "MX-only email available (mailbox not SMTP-verified); telephone number not identified."
+        else:
+            dim7 = 4.0
+            expl7 = "Unverified email available; telephone number not identified."
     elif has_phone:
         dim7 = 4.0
         expl7 = "Telephone number available; direct email not identified."

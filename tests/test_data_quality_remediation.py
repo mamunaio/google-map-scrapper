@@ -460,3 +460,184 @@ def test_case_14_exact_export_schema_validation():
     csv_str = generate_lead_tracker_csv([lead])
     first_line = csv_str.strip().split("\n")[0].split(",")
     assert len(first_line) == 16
+
+
+# -----------------------------------------------------------------------------
+# 15. Contact Availability Scoring (Phone + MX Only Email Verification Accuracy)
+# -----------------------------------------------------------------------------
+def test_case_15_contact_availability_scoring_phone_and_mx_only():
+    from services.opportunity_analyzer import analyze_business_opportunities
+
+    # Case A: Phone + MX Only email (e.g. Harlen Johnson)
+    res_mx_phone = calculate_lead_score({
+        "Website": "https://hjac.com",
+        "Phone": "+1 972-241-7771",
+        "Email": "sales@hjac.com",
+        "Email Status": "MX Only",
+        "intelligence": {
+            "seo": {"seo_score": 90},
+            "features": {"lead_capture": {"status": "Detected", "details": {"has_phone_link": True}}}
+        }
+    })
+    expl = res_mx_phone["dimension_explanations"]["contact_availability"]
+    assert "telephone number" in expl.lower()
+    assert "mx-only" in expl.lower()
+    assert "verified direct email" not in expl.lower()
+    assert "telephone number not identified" not in expl.lower()
+
+    # Case B: Phone + SMTP Verified email
+    res_verified = calculate_lead_score({
+        "Website": "https://hjac.com",
+        "Phone": "+1 972-241-7771",
+        "Email": "sales@hjac.com",
+        "Email Status": "Verified",
+        "intelligence": {"seo": {"seo_score": 90}}
+    })
+    expl_v = res_verified["dimension_explanations"]["contact_availability"]
+    assert "verified direct email" in expl_v.lower()
+    assert "telephone number" in expl_v.lower()
+    assert res_verified["dimension_scores"]["contact_availability"] > res_mx_phone["dimension_scores"]["contact_availability"]
+
+    # Case C: Phone only, no email (e.g. Texas AirZone)
+    res_phone_only = calculate_lead_score({
+        "Website": "https://texasairzone.com",
+        "Phone": "+1 214-851-3886",
+        "Email": "",
+        "Email Status": "Not Found",
+        "intelligence": {"seo": {"seo_score": 90}}
+    })
+    expl_p = res_phone_only["dimension_explanations"]["contact_availability"]
+    assert "telephone number available" in expl_p.lower()
+    assert "direct email not identified" in expl_p.lower()
+
+    # Case D: End-to-end through analyze_business_opportunities passing phone & email_status
+    opps = analyze_business_opportunities(
+        features_result={"lead_capture": {"status": "Detected", "providers": ["Click-to-Call"], "details": {"has_phone_link": True}}},
+        seo_result={"seo_score": 90, "findings": []},
+        technical_result={"ssl_certificate": {"status": "Valid"}, "mobile_usability": {"has_viewport": True}},
+        decision_maker="",
+        email="sales@hjac.com",
+        business_name="Harlen Johnson HVAC",
+        target_url="https://hjac.com",
+        phone="+1 972-241-7771",
+        email_status="MX Only"
+    )
+    opps_expl = opps["scoring_details"]["dimension_explanations"]["contact_availability"]
+    assert "telephone number" in opps_expl.lower()
+    assert "mx-only" in opps_expl.lower()
+    assert "verified direct email" not in opps_expl.lower()
+
+
+# -----------------------------------------------------------------------------
+# 16. Feature Classification (Click-to-Call vs Form)
+# -----------------------------------------------------------------------------
+def test_case_16_feature_classification_click_to_call_not_form():
+    from services.business_feature_detector import detect_business_features
+
+    # Page with tel: link only and NO forms (Texas AirZone pattern)
+    html_tel_only = """
+    <html>
+    <body>
+        <h1>Texas AirZone</h1>
+        <a href="tel:2148513886">(214) 851-3886</a>
+    </body>
+    </html>
+    """
+    feats = detect_business_features(html_tel_only)
+    lc = feats["lead_capture"]
+    assert lc["status"] == "Detected"
+    assert lc["details"]["has_contact_form"] is False
+    assert lc["details"]["has_quote_form"] is False
+    assert lc["details"]["has_phone_link"] is True
+    assert lc["providers"] == ["Click-to-Call"]
+    assert not any("form" in p.lower() for p in lc["providers"])
+
+    # Page with contact form + tel link
+    html_contact = """
+    <html><body>
+        <a href="tel:9724230012">Call</a>
+        <form action="/contact"><input name="name"/><input name="email"/></form>
+    </body></html>
+    """
+    lc_contact = detect_business_features(html_contact)["lead_capture"]
+    assert "On-Page Contact Form" in lc_contact["providers"]
+    assert "Click-to-Call" in lc_contact["providers"]
+
+    # Page with quote form + tel link
+    html_quote = """
+    <html><body>
+        <a href="tel:9722147002">Call</a>
+        <form action="/free-quote"><input name="name"/><input name="phone"/><button>Request Quote</button></form>
+    </body></html>
+    """
+    lc_quote = detect_business_features(html_quote)["lead_capture"]
+    assert "Quote / Estimate Form" in lc_quote["providers"]
+    assert "Click-to-Call" in lc_quote["providers"]
+
+
+# -----------------------------------------------------------------------------
+# 17. Main Opportunity Consistency Across Lead Tracker and Business Opportunities
+# -----------------------------------------------------------------------------
+def test_case_17_main_opportunity_matches_business_opportunities_sheet():
+    from services.opportunity_analyzer import analyze_business_opportunities
+
+    # Click-to-call only business (no interactive inquiry form, no technical issues)
+    opps = analyze_business_opportunities(
+        features_result={
+            "lead_capture": {
+                "status": "Detected",
+                "providers": ["Click-to-Call"],
+                "details": {"has_contact_form": False, "has_quote_form": False, "has_phone_link": True}
+            },
+            "booking": {"status": "Detected"},
+            "chatbot": {"status": "Not Detected"},
+            "voice_agent": {"status": "Not Detected"},
+            "crm": {"status": "Not Detected"},
+            "review_management": {"status": "Not Detected"}
+        },
+        seo_result={"seo_score": 92, "findings": []},
+        technical_result={"ssl_certificate": {"status": "Valid"}, "mobile_usability": {"has_viewport": True}},
+        decision_maker="",
+        email="",
+        business_name="Texas AirZone LLC",
+        target_url="https://www.texasairzone.com/",
+        phone="+1 214-851-3886",
+        email_status="Not Found"
+    )
+
+    findings = [o["Finding"] for o in opps["detected_opportunities"]]
+    # Must contain an evidence-backed Lead Capture opportunity
+    assert "No Public Web Inquiry or Quote Form Detected" in findings
+    # Main Opportunity must be an exact Finding in detected_opportunities
+    assert opps["main_gap"] in findings
+    assert opps["scoring_details"]["main_identified_gap"] == opps["main_gap"]
+
+    # Verify in 3-sheet Excel workbook that Sheet 01 Main Opportunity exists in Sheet 03 Findings
+    lead = {
+        "Business Name": "Texas AirZone LLC",
+        "Website": "https://www.texasairzone.com/",
+        "Phone": "+1 214-851-3886",
+        "Priority": opps["priority"],
+        "Lead Score": opps["lead_score"],
+        "Main Opportunity": opps["main_gap"],
+        "Notes": opps["priority_reason"],
+        "intelligence": {
+            "seo": {"status": "Online", "seo_score": 92},
+            "technical": {"ssl_certificate": {"status": "Valid"}, "mobile_usability": {"status": "Responsive"}},
+            "performance": {"audit_status": "API Key Not Configured", "mobile_score": None},
+            "opportunities": opps
+        }
+    }
+    wb_bytes = generate_standard_intelligence_workbook([lead])
+    wb = openpyxl.load_workbook(io.BytesIO(wb_bytes.getvalue()))
+    ws_leads = wb["Lead Tracker"]
+    ws_opps = wb["Business Opportunities"]
+
+    sheet1_main_opp = ws_leads.cell(row=2, column=15).value  # Main Opportunity column
+    sheet3_findings = [
+        ws_opps.cell(row=r, column=3).value
+        for r in range(2, ws_opps.max_row + 1)
+        if ws_opps.cell(row=r, column=1).value == "Texas AirZone LLC"
+    ]
+    assert sheet1_main_opp in sheet3_findings
+

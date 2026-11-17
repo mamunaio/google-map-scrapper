@@ -14,7 +14,10 @@ def analyze_business_opportunities(
     email: str,
     business_name: str = "",
     target_url: str = "",
-    scoring_weights: dict = None
+    scoring_weights: dict = None,
+    phone: str = "",
+    email_status: str = "",
+    performance_result: dict = None
 ):
     """
     Evaluates detected infrastructure and on-page audits to identify concrete business gaps.
@@ -25,6 +28,62 @@ def analyze_business_opportunities(
 
     biz = business_name or "your company"
     evidence_url = target_url or "scanned website"
+
+    # Opportunity 0: Lead Capture (Interactive Web Inquiry / Quote Form)
+    lead_capture = features_result.get("lead_capture", {})
+    lc_status = lead_capture.get("status", "")
+    lc_details = lead_capture.get("details", {}) or {}
+    if lc_status == "Not Detected":
+        opportunities.append({
+            "Business Name": biz,
+            "Opportunity Category": "Lead Capture",
+            "Finding": "No Public Contact or Quote Form Detected",
+            "Evidence": "No interactive contact forms, quote request forms, or click-to-call CTAs were detected on scanned pages.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Interactive Lead Capture & Quote Request Form Implementation",
+            "Related Finding": "No Public Contact or Quote Form Detected",
+            "Evidence URL": evidence_url,
+            "Evidence Description": "No interactive contact forms, quote request forms, or click-to-call CTAs were detected on scanned pages.",
+            "Potential Business Impact": "No public web inquiry or quote request form was detected on scanned pages; does not determine whether inquiries are handled via phone, external portals, or secondary landing pages.",
+            "Confidence Level": "Medium"
+        })
+    elif lc_status == "Detected":
+        has_quote = lc_details.get("has_quote_form", False)
+        has_contact = lc_details.get("has_contact_form", False)
+        if not has_quote and not has_contact:
+            providers_str = ", ".join(lead_capture.get("providers", [])) or "non-form contact links"
+            ev_text = f"Only {providers_str} detected on scanned pages; no interactive HTML inquiry or quote form observed."
+            opportunities.append({
+                "Business Name": biz,
+                "Opportunity Category": "Lead Capture",
+                "Finding": "No Public Web Inquiry or Quote Form Detected",
+                "Evidence": ev_text,
+                "Confidence": "Medium",
+                "Research Status": "Needs Review",
+                "Recommended Service": "Interactive Web Inquiry & Quote Request Form Integration",
+                "Related Finding": "No Public Web Inquiry or Quote Form Detected",
+                "Evidence URL": evidence_url,
+                "Evidence Description": ev_text,
+                "Potential Business Impact": "No public HTML inquiry or estimate form was detected on scanned pages; does not determine whether estimates or inquiries are handled via phone dispatch, external portals, or subpages.",
+                "Confidence Level": "Medium"
+            })
+        elif has_contact and not has_quote:
+            ev_text = "General contact form detected on scanned pages, but no dedicated quote or estimate request workflow was observed."
+            opportunities.append({
+                "Business Name": biz,
+                "Opportunity Category": "Lead Capture",
+                "Finding": "No Dedicated Quote / Estimate Form Detected",
+                "Evidence": ev_text,
+                "Confidence": "Medium",
+                "Research Status": "Needs Review",
+                "Recommended Service": "Dedicated Online Estimate & Quote Request Workflow",
+                "Related Finding": "No Dedicated Quote / Estimate Form Detected",
+                "Evidence URL": evidence_url,
+                "Evidence Description": ev_text,
+                "Potential Business Impact": "A general contact form is present, but no dedicated quote or estimate request form was detected on scanned pages; does not determine whether quote qualification occurs by phone or external tools.",
+                "Confidence Level": "Medium"
+            })
 
     # Opportunity 1: Booking & Self-Service Scheduling
     booking = features_result.get("booking", {})
@@ -188,16 +247,18 @@ def analyze_business_opportunities(
             "Confidence Level": "High"
         })
 
-    # Build mock container for lead scoring calculation
+    # Build container for lead scoring calculation
     scoring_input = {
         "Website": target_url,
         "Email": email,
+        "Email Status": email_status,
+        "Phone": phone,
         "Decision Maker": decision_maker,
         "intelligence": {
             "seo": seo_result,
             "technical": technical_result,
             "features": features_result,
-            "performance": {},
+            "performance": performance_result or {},
             "opportunities": {"detected_opportunities": opportunities}
         }
     }
@@ -208,6 +269,17 @@ def analyze_business_opportunities(
         business_name=biz
     )
 
+    # Guarantee Main Opportunity is strictly derived from an actual opportunity record when opportunities exist
+    if opportunities:
+        detected_opps = [o for o in opportunities if o.get("Research Status") == "Detected"]
+        primary_opp = detected_opps[0] if detected_opps else opportunities[0]
+        main_gap = primary_opp["Finding"]
+        scoring["main_identified_gap"] = main_gap
+        if scoring.get("priority") == "High":
+            scoring["priority_reason"] = f"High opportunity score ({scoring['research_score']}/100) with key gaps in {main_gap}."
+    else:
+        main_gap = scoring["main_identified_gap"]
+
     return {
         "lead_score": scoring["research_score"],
         "priority": scoring.get("priority", "Manual Review"),
@@ -217,7 +289,7 @@ def analyze_business_opportunities(
         "opportunities_count": len(opportunities),
         "detected_opportunities": opportunities,
         "outreach_hooks": outreach_hooks,
-        "main_gap": scoring["main_identified_gap"],
+        "main_gap": main_gap,
         "next_action": scoring["suggested_next_action"],
         "summary": f"{len(opportunities)} evidence-backed opportunity gaps identified. Lead Priority: {scoring['research_priority']}."
     }

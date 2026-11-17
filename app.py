@@ -98,7 +98,8 @@ def scrape_api():
                         audit_data = crawl_and_audit_website(
                             clean_website,
                             hint_decision_maker=hint_dm,
-                            business_name=lead.get("Business Name", "")
+                            business_name=lead.get("Business Name", ""),
+                            phone=lead.get("Phone") or lead.get("Phone Number") or ""
                         )
                         lead["Website"] = audit_data.get("Website", clean_website)
                         lead["Website Status"] = audit_data.get("Website Status", "Online")
