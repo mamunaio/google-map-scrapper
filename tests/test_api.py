@@ -89,6 +89,84 @@ class TestAppAPI(unittest.TestCase):
         self.assertEqual(data["data"]["Business Name"], "Dallas Pro HVAC")
 
     @patch('app.scrape_google_maps')
+    @patch('app.crawl_and_audit_website')
+    def test_scrape_api_maps_failed_website_enrichment_preserves_maps_lead(self, mock_crawl, mock_maps):
+        mock_maps.return_value = {
+            "success": True,
+            "is_search": True,
+            "leads": [
+                {"Business Name": "Dallas Online HVAC", "Website": "https://dallasonline.com", "Phone Number": "(214) 555-1111", "City": "Dallas", "State": "TX"},
+                {"Business Name": "Dallas Timeout HVAC", "Website": "https://dallastimeout.com", "Phone Number": "(214) 555-2222", "City": "Dallas", "State": "TX"}
+            ],
+            "count": 2,
+            "data": {"Business Name": "Dallas Online HVAC", "Website": "https://dallasonline.com"}
+        }
+
+        def crawl_side_effect(url, **kwargs):
+            if "dallastimeout" in url:
+                raise Exception("Connection timed out after 12s")
+            return {
+                "Website": url,
+                "Email": "info@dallasonline.com",
+                "Decision Maker": "Alice Smith",
+                "Email Verification": "SMTP Valid",
+                "intelligence": {"opportunities": {"priority": "High"}}
+            }
+
+        mock_crawl.side_effect = crawl_side_effect
+
+        response = self.client.post('/api/scrape', json={
+            "url": "https://www.google.com/maps/search/HVAC+contractors+in+Dallas,+TX",
+            "type": "maps"
+        })
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue(data["success"])
+        self.assertEqual(len(data["leads"]), 2)
+
+        # Lead 1 is enriched
+        self.assertEqual(data["leads"][0]["Business Name"], "Dallas Online HVAC")
+        self.assertEqual(data["leads"][0]["Email"], "info@dallasonline.com")
+
+        # Lead 2 failed website enrichment but is preserved with original Maps lead data
+        self.assertEqual(data["leads"][1]["Business Name"], "Dallas Timeout HVAC")
+        self.assertEqual(data["leads"][1]["Phone Number"], "(214) 555-2222")
+        self.assertEqual(data["leads"][1]["City"], "Dallas")
+        self.assertEqual(data["leads"][1]["State"], "TX")
+        self.assertEqual(data["leads"][1]["Website"], "https://dallastimeout.com")
+
+    @patch('app.scrape_google_maps')
+    @patch('app.crawl_and_audit_website')
+    def test_scrape_api_maps_aclk_without_adurl_sanitized_and_not_crawled(self, mock_crawl, mock_maps):
+        mock_maps.return_value = {
+            "success": True,
+            "is_search": True,
+            "leads": [
+                {
+                    "Business Name": "Dallas Ad HVAC",
+                    "Website": "/aclk?sa=l&ai=internal_tracking_only",
+                    "Phone Number": "(214) 555-3333"
+                }
+            ],
+            "count": 1,
+            "data": {"Business Name": "Dallas Ad HVAC"}
+        }
+
+        response = self.client.post('/api/scrape', json={
+            "url": "https://www.google.com/maps/search/HVAC+contractors+in+Dallas,+TX",
+            "type": "maps"
+        })
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue(data["success"])
+        self.assertEqual(len(data["leads"]), 1)
+        # Website must be sanitized to empty string, and crawl must NOT be called for /aclk
+        self.assertEqual(data["leads"][0]["Website"], "")
+        mock_crawl.assert_not_called()
+
+    @patch('app.scrape_google_maps')
     def test_scrape_api_maps_empty_failure_honest_422(self, mock_maps):
         mock_maps.return_value = {
             "success": False,

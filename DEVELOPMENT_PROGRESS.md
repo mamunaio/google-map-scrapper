@@ -19,6 +19,7 @@
 | **Phase 08** | Dual Export Engine (Format A Source-Preserved + Format B 3-Sheet) | **COMPLETED & VERIFIED** | 3 OpenPyXL Dual-Format Tests Passing |
 | **Phase 14** | Lead Data Quality, Essential Fields Schema & Export Modernization | **COMPLETED & VERIFIED** | 109 Automated Tests Passing |
 | **Phase 15** | Final Data Integrity Corrections: Unknown Priority & Evidence-Based Opportunity Language | **COMPLETED & VERIFIED** | 112 Automated Tests Passing |
+| **Phase 16** | Google Maps Listing Extraction Hardening, External Website Cleaning & UI Responsiveness | **COMPLETED & VERIFIED** | 123 Automated Tests Passing |
 
 ---
 
@@ -447,3 +448,59 @@
 
 ### 3. Automated Test Suite Verification
 - Expanded test suite from 109 to **112 automated unit and integration tests** across 10 modules (100% passing).
+
+---
+
+## Phase 16: Google Maps Listing Extraction Hardening, External Website Cleaning & UI Responsiveness
+
+### 1. External Website URL Cleaning & Extraction (`services/maps_scraper.py`)
+- Replaced basic `/url?q=` handling with comprehensive `clean_external_website_url()`:
+  - Supports Google Ads tracking links (`/aclk?...&adurl=...`, `https://www.google.com/aclk?`, `https://googleadservices.com/pagead/aclk?`).
+  - Safely extracts and unquotes external target destinations from query parameters (`adurl`, `q`, `url`).
+  - When `/aclk` or `/url` contains no external destination or an empty target, safely returns `""`.
+  - Rejects relative URLs (`/maps/place/...`, `/search?q=...`, `/contact-us`, `relative/path.html`).
+  - Rejects Google internal domains (`google.com`, `maps.google.com`, `googleadservices.com`, `doubleclick.net`, `gstatic.com`, `goo.gl`, etc.).
+  - Rejects loopback, private, and metadata IP addresses (`localhost`, `127.0.0.1`, `::1`, `169.254.169.254`).
+  - Rejects non-web schemes (`javascript:`, `tel:`, `mailto:`, `data:`, `#`).
+  - Handles protocol-relative URLs (`//example.com` -> `https://example.com`).
+  - Preserved `clean_google_redirect_url` as a backward-compatible alias.
+  - Updated `extract_search_listing_card()` and `scrape_maps_place_detail()` to use `clean_external_website_url()`.
+
+### 2. Resilient Lead Enrichment & Stage Logging (`app.py`)
+- Added structured stage-specific logging across the scraping and enrichment pipeline:
+  - `[Maps]` log markers for start, query type, and lead count.
+  - `[Maps Feed]` and `[Maps Place]` extraction logs.
+  - `[Enrichment X/Y]` per-lead progress logs with business name and target URL.
+- Sanitizes `lead["Website"]` via `clean_external_website_url()` before enrichment.
+- Skips website crawl if `Website` is empty or invalid, retaining all extracted Maps data.
+- Enclosed `crawl_and_audit_website()` in robust `try...except Exception:` handling:
+  - Logs warning with detailed error message if enrichment fails or times out.
+  - Always appends the lead to `enriched_leads`, preventing lead drops.
+
+### 3. Sensible Timeouts & Performance Optimization (`services/website_crawler.py`)
+- Bounded Playwright fallback timeouts in `scrape_with_playwright_fallback()`:
+  - Reduced main page navigation timeout from 35s to 12s.
+  - Reduced candidate subpage navigation timeout from 18s to 8s.
+  - Capped candidate subpages from 3 to 2.
+  - Decreased artificial sleeps from 1.2s to 0.5s.
+  - Prevents multi-minute stalls when scanning listings with offline or slow websites.
+
+### 4. UI Progress Responsiveness (`templates/index.html`)
+- Updated `processQueue()` in `templates/index.html` to provide dynamic real-time status:
+  - Displays "Scanning Google Maps & Extracting Leads..." and "Extracting feed listings, verifying contact info & auditing websites."
+  - Shows active query progress (`Processing query 1/1...`) instead of remaining frozen at 0 leads.
+
+### 5. Automated Regression Test Suite (`tests/test_maps_scraper.py`, `tests/test_api.py`)
+- Added 11 new automated unit and integration tests covering:
+  - `test_clean_external_website_url_google_ads_aclk_with_target`
+  - `test_clean_external_website_url_google_ads_aclk_without_target`
+  - `test_clean_external_website_url_google_redirect_url`
+  - `test_clean_external_website_url_relative_urls_rejected`
+  - `test_clean_external_website_url_google_internal_domains_rejected`
+  - `test_clean_external_website_url_valid_external_https_websites`
+  - `test_clean_external_website_url_missing_or_disallowed_links`
+  - `test_extract_search_listing_card_aclk_with_target`
+  - `test_extract_search_listing_card_aclk_without_target`
+  - `test_scrape_api_maps_failed_website_enrichment_preserves_maps_lead`
+  - `test_scrape_api_maps_aclk_without_adurl_sanitized_and_not_crawled`
+- Expanded overall test suite from 112 to **123 automated tests** (100% passing across 10 test modules).

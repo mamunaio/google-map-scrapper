@@ -6,13 +6,17 @@ Flask Application & API Gateway
 import io
 import time
 import random
+import logging
 from flask import Flask, render_template, request, jsonify, send_file
 from playwright.sync_api import sync_playwright
 
 from services.security import SecurityError, validate_google_maps_url
 from services.website_crawler import crawl_and_audit_website
 from services.export_service import generate_styled_excel, generate_lead_tracker_csv
-from services.maps_scraper import scrape_google_maps
+from services.maps_scraper import scrape_google_maps, clean_external_website_url
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger("leadhunter.app")
 
 app = Flask(__name__)
 
@@ -58,9 +62,11 @@ def scrape_api():
         if type_ == 'maps':
             clean_url = validate_google_maps_url(url)
             max_res = min(int(data.get('max_results', 20)), 50)
+            logger.info(f"[Maps] Starting extraction for URL: {clean_url} (max_results={max_res})")
             maps_res = scrape_google_maps(clean_url, max_results=max_res)
 
             if not maps_res.get("success"):
+                logger.warning(f"[Maps] Extraction failed or returned no listings for: {clean_url}")
                 return jsonify({
                     "success": False,
                     "error": maps_res.get("error", "No business details or listings could be extracted from this Google Maps URL."),
@@ -70,22 +76,31 @@ def scrape_api():
                 }), 422
 
             extracted_leads = maps_res.get("leads", [])
+            total_leads = len(extracted_leads)
+            logger.info(f"[Maps] Extracted {total_leads} listing(s) from Maps feed. Beginning lead enrichment...")
             enriched_leads = []
 
-            for raw_lead in extracted_leads:
+            for idx, raw_lead in enumerate(extracted_leads, 1):
                 lead = dict(raw_lead)
                 if data.get("business_name") and not lead.get("Business Name"):
                     lead["Business Name"] = data.get("business_name")
 
-                # If website was extracted, run Website Intelligence & Contact Enrichment
-                if lead.get("Website"):
+                biz_name = lead.get("Business Name") or f"Listing #{idx}"
+                raw_website = lead.get("Website") or ""
+                # Ensure website is a valid external URL, sanitizing redirect / adclick URLs
+                clean_website = clean_external_website_url(raw_website)
+                lead["Website"] = clean_website
+
+                # If website was extracted and valid, run Website Intelligence & Contact Enrichment
+                if clean_website:
+                    logger.info(f"[Enrichment {idx}/{total_leads}] Auditing website for '{biz_name}': {clean_website}")
                     try:
                         audit_data = crawl_and_audit_website(
-                            lead["Website"],
+                            clean_website,
                             hint_decision_maker=hint_dm,
                             business_name=lead.get("Business Name", "")
                         )
-                        lead["Website"] = audit_data.get("Website", lead["Website"])
+                        lead["Website"] = audit_data.get("Website", clean_website)
                         lead["Email"] = audit_data.get("Email", "")
                         lead["Contact Person"] = audit_data.get("Contact Person") or audit_data.get("Decision Maker", "")
                         lead["Decision Maker"] = audit_data.get("Decision Maker", "")
@@ -104,10 +119,15 @@ def scrape_api():
                         lead["Lead Score"] = opps.get("lead_score") or 0
                         lead["Main Opportunity"] = opps.get("main_gap") or ""
                         lead["Notes"] = scoring.get("priority_reason") or ""
+                        logger.info(f"[Enrichment {idx}/{total_leads}] Successfully enriched '{biz_name}' (Email: {lead['Email'] or 'None'}, Priority: {lead['Priority']})")
                     except Exception as e:
-                        print(f"Website enrichment error for {lead.get('Website')}: {e}")
+                        logger.warning(f"[Enrichment {idx}/{total_leads}] Website enrichment failed for '{biz_name}' ({clean_website}): {e}. Retaining Maps lead data.")
+                else:
+                    logger.info(f"[Enrichment {idx}/{total_leads}] No valid external website for '{biz_name}'. Retaining Maps lead data.")
 
                 enriched_leads.append(lead)
+
+            logger.info(f"[Maps] Completed processing all {len(enriched_leads)} leads for {clean_url}")
 
             return jsonify({
                 "success": True,

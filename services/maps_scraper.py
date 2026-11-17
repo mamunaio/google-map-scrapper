@@ -8,6 +8,7 @@ Provides honest extraction validation (no empty phantom leads).
 
 import time
 import re
+import logging
 from urllib.parse import urlparse, parse_qs, unquote
 from playwright.sync_api import sync_playwright
 
@@ -16,8 +17,11 @@ from services.security import (
     validate_google_maps_url,
     is_safe_browser_url,
     is_google_maps_domain,
+    is_authorized_maps_subresource_host,
     SafeBrowserProxy
 )
+
+logger = logging.getLogger("leadhunter.maps_scraper")
 
 PHONE_REGEX = re.compile(r'(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}')
 
@@ -162,15 +166,94 @@ def normalize_place_url(raw_url: str) -> str:
     except Exception:
         return raw_url.strip().lower()
 
-def clean_google_redirect_url(url_str: str) -> str:
-    """Extracts external target website from Google redirect links (/url?q=...)."""
-    if not url_str:
+GOOGLE_INTERNAL_DOMAINS = (
+    'google.com', 'googleadservices.com', 'googlesyndication.com',
+    'doubleclick.net', 'gstatic.com', 'googleapis.com', 'googleusercontent.com',
+    'ggpht.com', 'goo.gl'
+)
+
+def is_google_internal_host(hostname: str) -> bool:
+    """Checks whether a hostname belongs to Google internal services, ad networks, or Maps."""
+    if not hostname:
+        return False
+    h = hostname.lower().strip('.')
+    if is_google_maps_domain(h) or is_authorized_maps_subresource_host(h):
+        return True
+    for g_dom in GOOGLE_INTERNAL_DOMAINS:
+        if h == g_dom or h.endswith('.' + g_dom):
+            return True
+    return False
+
+def clean_external_website_url(url_str: str) -> str:
+    """
+    Extracts and sanitizes a valid external business website URL from Google Maps hrefs.
+    - Extracts external targets from Google redirects (/url?q=...) and Google Ads (/aclk?...&adurl=...).
+    - Unquotes URL-encoded destinations safely.
+    - Rejects internal Google/Maps/Ads URLs, relative URLs, non-HTTP(S) schemes, localhost/private IPs, and empty links.
+    - Returns a clean absolute URL (http:// or https://) or "" if invalid.
+    """
+    if not url_str or not isinstance(url_str, str):
         return ""
-    if url_str.startswith('/url?q='):
-        qs = parse_qs(urlparse(url_str).query)
-        target = qs.get('q', [''])[0]
-        return unquote(target)
-    return url_str.strip()
+
+    s = url_str.strip()
+    if not s or s.startswith(('#', 'javascript:', 'tel:', 'mailto:', 'data:')):
+        return ""
+
+    # Protocol-relative URLs: //example.com -> https://example.com
+    if s.startswith('//'):
+        s = 'https:' + s
+
+    # Handle Google redirect or ad click URLs (both relative and absolute)
+    is_redirect_or_ad = (
+        s.startswith(('/url?', 'url?', '/aclk?', 'aclk?', '/pagead/aclk?')) or
+        bool(re.search(r'^(?:https?://[^/]+)?/(?:url|aclk|pagead/aclk)\?', s, re.IGNORECASE))
+    )
+
+    if is_redirect_or_ad:
+        try:
+            query_str = s.split('?', 1)[1] if '?' in s else ''
+            qs = parse_qs(query_str)
+            # Check adurl (Google Ads /aclk), q (Google /url), and url parameters
+            target = qs.get('adurl', [''])[0] or qs.get('q', [''])[0] or qs.get('url', [''])[0]
+            if target:
+                target = unquote(target.strip())
+                # Recursively clean target in case of nested redirect wrappers
+                return clean_external_website_url(target)
+            else:
+                # Ad or redirect link with no external destination
+                return ""
+        except Exception:
+            return ""
+
+    # Reject relative URLs without external target
+    if s.startswith('/'):
+        return ""
+
+    # Validate scheme and host
+    try:
+        parsed = urlparse(s)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in ('http', 'https'):
+            return ""
+
+        hostname = (parsed.hostname or "").lower().strip('.')
+        if not hostname or '.' not in hostname:
+            return ""
+
+        # Reject loopback, localhost, and metadata hosts
+        if hostname in ('localhost', '127.0.0.1', '::1', '169.254.169.254'):
+            return ""
+
+        # Reject all Google internal, ad, or maps hosts
+        if is_google_internal_host(hostname):
+            return ""
+
+        return s
+    except Exception:
+        return ""
+
+# Backward-compatibility alias
+clean_google_redirect_url = clean_external_website_url
 
 def extract_search_listing_card(card) -> dict:
     """Extracts business data from a single div.Nv2PK listing card in search feed."""
@@ -194,7 +277,7 @@ def extract_search_listing_card(card) -> dict:
         website = ""
         if web_el.count() > 0:
             raw_href = web_el.first.get_attribute('href') or ""
-            website = clean_google_redirect_url(raw_href)
+            website = clean_external_website_url(raw_href)
 
         # 4. Text lines for Phone, Category, Location, and Rating
         card_text = card.inner_text()
@@ -257,6 +340,7 @@ def extract_search_listing_card(card) -> dict:
 
 def scrape_maps_search_feed(page, max_results: int = 20) -> list[dict]:
     """Scrolls and extracts multiple distinct businesses from Google Maps search feed."""
+    logger.info(f"[Maps Feed] Starting feed extraction (target: up to {max_results} listings)")
     leads = []
     seen_identities = set()
 
@@ -302,10 +386,12 @@ def scrape_maps_search_feed(page, max_results: int = 20) -> list[dict]:
             break
         scroll_attempts += 1
 
+    logger.info(f"[Maps Feed] Extraction complete: collected {len(leads)} distinct lead(s)")
     return leads
 
 def scrape_maps_place_detail(page, url: str) -> dict:
     """Extracts single place details from an individual Google Maps place page."""
+    logger.info(f"[Maps Place] Extracting single place details for: {url}")
     try:
         page.wait_for_selector('h1.DUwDvf, div[role="main"]', timeout=15000)
     except Exception:
@@ -322,7 +408,7 @@ def scrape_maps_place_detail(page, url: str) -> dict:
     web_loc = page.locator('a[data-item-id="authority"], a[aria-label*="website" i]')
     if web_loc.count() > 0:
         raw_href = web_loc.first.get_attribute('href') or ""
-        website = clean_google_redirect_url(raw_href)
+        website = clean_external_website_url(raw_href)
 
     # 3. Phone Number
     phone = ""
@@ -421,6 +507,8 @@ def scrape_google_maps(url: str, max_results: int = 20) -> dict:
     """
     clean_url = validate_google_maps_url(url)
     is_search = is_maps_search_url(clean_url)
+    url_kind = "search query" if is_search else "place detail"
+    logger.info(f"[Maps] Initiating Google Maps navigation ({url_kind}): {clean_url}")
 
     with SafeBrowserProxy() as proxy:
         with sync_playwright() as p:

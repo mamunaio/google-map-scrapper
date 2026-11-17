@@ -76,12 +76,12 @@ def scrape_with_playwright_fallback(url: str, existing_fb: str = "", existing_in
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.goto(url, timeout=35000, wait_until='domcontentloaded')
-            time.sleep(1.2)
+            page.goto(url, timeout=12000, wait_until='domcontentloaded')
+            time.sleep(0.5)
 
             try:
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(1.0)
+                time.sleep(0.5)
             except Exception:
                 pass
 
@@ -93,12 +93,12 @@ def scrape_with_playwright_fallback(url: str, existing_fb: str = "", existing_in
             insta = insta or existing_insta
             linkedin = linkedin or existing_linkedin
 
-            # Crawl candidates if still missing info
+            # Crawl candidates if still missing info (bounded to 2 candidates, 8s timeout)
             if not (email and fb and linkedin and dm_name):
-                candidate_links = find_candidate_pages(html, url, max_candidates=3)
+                candidate_links = find_candidate_pages(html, url, max_candidates=2)
                 for curl in candidate_links:
                     try:
-                        page.goto(curl, timeout=18000, wait_until='domcontentloaded')
+                        page.goto(curl, timeout=8000, wait_until='domcontentloaded')
                         c_html = page.content()
                         c_email, c_fb, c_insta, c_linkedin, _ = extract_emails_and_socials(c_html, base_url=url)
                         if not dm_name:

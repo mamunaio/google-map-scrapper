@@ -693,7 +693,15 @@
             for (let i = 0; i < total; i++) {
                 const item = targetQueue[i];
                 const url = item.url;
-                log(`[${i + 1}/${total}] Auditing: ${url}`);
+                if (scrapeMode === 'maps') {
+                    document.getElementById('statusText').textContent = 'Scanning Google Maps & Extracting Leads...';
+                    document.getElementById('statusSubText').textContent = 'Extracting feed listings, verifying contact info & auditing websites.';
+                    document.getElementById('progressCount').textContent = `Processing query ${i + 1}/${total}...`;
+                    log(`[${i + 1}/${total}] Scanning Google Maps: ${url} (extracting listings and auditing websites)...`);
+                } else {
+                    document.getElementById('statusText').textContent = 'Auditing Websites...';
+                    log(`[${i + 1}/${total}] Auditing: ${url}`);
+                }
 
                 try {
                     let fetchUrl = url;

@@ -4,6 +4,7 @@ from services.maps_scraper import (
     is_maps_search_url,
     normalize_place_url,
     clean_google_redirect_url,
+    clean_external_website_url,
     extract_search_listing_card,
     scrape_maps_search_feed,
     scrape_maps_place_detail,
@@ -47,6 +48,87 @@ class TestMapsScraper(unittest.TestCase):
         direct = "https://www.dallashvacpros.com/"
         self.assertEqual(clean_google_redirect_url(direct), direct)
         self.assertEqual(clean_google_redirect_url(""), "")
+
+    def test_clean_external_website_url_google_ads_aclk_with_target(self):
+        # /aclk with plain adurl
+        u1 = "/aclk?sa=l&ai=DChcSEwj123&sig=AOD64_456&adurl=https://www.allamericanheatingandair.com/"
+        self.assertEqual(clean_external_website_url(u1), "https://www.allamericanheatingandair.com/")
+
+        # /aclk with URL-encoded adurl
+        u2 = "/aclk?sa=l&ai=DChcSEwj123&adurl=https%3A%2F%2Fwww.allamericanheatingandair.com%2Fservices%3Fid%3D1"
+        self.assertEqual(clean_external_website_url(u2), "https://www.allamericanheatingandair.com/services?id=1")
+
+        # Absolute Google host with /aclk
+        u3 = "https://www.google.com/aclk?sa=l&ai=abc&adurl=https://texasairsolutions.com"
+        self.assertEqual(clean_external_website_url(u3), "https://texasairsolutions.com")
+
+        # Google ad services domain with /pagead/aclk
+        u4 = "https://googleadservices.com/pagead/aclk?adurl=https%3A%2F%2Fdfwaircare.com%2Fcontact"
+        self.assertEqual(clean_external_website_url(u4), "https://dfwaircare.com/contact")
+
+    def test_clean_external_website_url_google_ads_aclk_without_target(self):
+        # /aclk with tracking signature but no adurl parameter
+        u1 = "/aclk?sa=l&ai=DChcSEwj7vO7k196FAxWJk1wKHXXlB3oYABAAGgJpbQ&co=1&ase=2&gclid=EAIaIQobChMI&sig=AOD64_0"
+        self.assertEqual(clean_external_website_url(u1), "")
+
+        # /aclk with empty adurl parameter
+        u2 = "/aclk?sa=l&ai=abc&adurl="
+        self.assertEqual(clean_external_website_url(u2), "")
+
+        # Absolute Google /aclk without destination
+        u3 = "https://www.google.com/aclk?sa=l&ai=test_only"
+        self.assertEqual(clean_external_website_url(u3), "")
+
+    def test_clean_external_website_url_google_redirect_url(self):
+        # /url?q=...
+        u1 = "/url?q=https://example.com"
+        self.assertEqual(clean_external_website_url(u1), "https://example.com")
+
+        # /url with encoded path and query
+        u2 = "/url?q=https%3A%2F%2Fdallashvacpros.com%2Fbooking%3Fsource%3Dmaps&sa=U"
+        self.assertEqual(clean_external_website_url(u2), "https://dallashvacpros.com/booking?source=maps")
+
+        # Google host with /url?q=...
+        u3 = "https://www.google.com/url?q=https://dfwhvac.com"
+        self.assertEqual(clean_external_website_url(u3), "https://dfwhvac.com")
+
+        # /url without destination
+        self.assertEqual(clean_external_website_url("/url?q="), "")
+
+        # /url redirecting to Google internal destination is rejected
+        self.assertEqual(clean_external_website_url("/url?q=https://maps.google.com/place/123"), "")
+
+    def test_clean_external_website_url_relative_urls_rejected(self):
+        self.assertEqual(clean_external_website_url("/maps/place/Dallas+HVAC"), "")
+        self.assertEqual(clean_external_website_url("/search?q=hvac"), "")
+        self.assertEqual(clean_external_website_url("/contact-us"), "")
+        self.assertEqual(clean_external_website_url("relative/path.html"), "")
+
+    def test_clean_external_website_url_google_internal_domains_rejected(self):
+        self.assertEqual(clean_external_website_url("https://maps.google.com/?cid=12345"), "")
+        self.assertEqual(clean_external_website_url("https://www.google.com/maps/place/Dallas+HVAC"), "")
+        self.assertEqual(clean_external_website_url("https://www.google.com/search?q=hvac"), "")
+        self.assertEqual(clean_external_website_url("https://google.com/"), "")
+        self.assertEqual(clean_external_website_url("https://googleadservices.com/pagead/aclk"), "")
+        self.assertEqual(clean_external_website_url("https://gstatic.com/images/branding"), "")
+
+    def test_clean_external_website_url_valid_external_https_websites(self):
+        self.assertEqual(clean_external_website_url("https://allamericanac.com/"), "https://allamericanac.com/")
+        self.assertEqual(clean_external_website_url("http://www.dallashvacpros.com/services"), "http://www.dallashvacpros.com/services")
+        self.assertEqual(clean_external_website_url("https://sub.domain.co.uk/path?ref=1"), "https://sub.domain.co.uk/path?ref=1")
+        # Protocol-relative
+        self.assertEqual(clean_external_website_url("//allamericanac.com/home"), "https://allamericanac.com/home")
+
+    def test_clean_external_website_url_missing_or_disallowed_links(self):
+        self.assertEqual(clean_external_website_url(""), "")
+        self.assertEqual(clean_external_website_url(None), "")
+        self.assertEqual(clean_external_website_url("   "), "")
+        self.assertEqual(clean_external_website_url("javascript:void(0)"), "")
+        self.assertEqual(clean_external_website_url("mailto:info@domain.com"), "")
+        self.assertEqual(clean_external_website_url("tel:+12145550199"), "")
+        self.assertEqual(clean_external_website_url("http://localhost:8000"), "")
+        self.assertEqual(clean_external_website_url("http://127.0.0.1/admin"), "")
+        self.assertEqual(clean_external_website_url("http://169.254.169.254/latest"), "")
 
     def test_extract_search_listing_card_full(self):
         card = MagicMock()
@@ -129,6 +211,63 @@ class TestMapsScraper(unittest.TestCase):
         self.assertEqual(lead["Website"], "")
         self.assertIsNone(lead["Rating"])
         self.assertIsNone(lead["Reviews"])
+
+    def test_extract_search_listing_card_aclk_with_target(self):
+        card = MagicMock()
+        name_mock = MagicMock()
+        name_mock.count.return_value = 1
+        name_mock.inner_text.return_value = "Dallas Sponsored HVAC"
+
+        web_mock = MagicMock()
+        web_mock.count.return_value = 1
+        web_mock.first.get_attribute.return_value = "/aclk?sa=l&ai=DChcSEwj&adurl=https%3A%2F%2Fsponsoredhvac.com%2F"
+
+        empty_mock = MagicMock()
+        empty_mock.count.return_value = 0
+
+        def locator_side_effect(selector):
+            if 'div.qBF1Pd' in selector:
+                return name_mock
+            elif 'a.lcr4fd' in selector or 'Website' in selector:
+                return web_mock
+            return empty_mock
+
+        card.locator.side_effect = locator_side_effect
+        card.inner_text.return_value = "Dallas Sponsored HVAC\nAd · (214) 555-4433"
+
+        lead = extract_search_listing_card(card)
+        self.assertIsNotNone(lead)
+        self.assertEqual(lead["Business Name"], "Dallas Sponsored HVAC")
+        self.assertEqual(lead["Website"], "https://sponsoredhvac.com/")
+
+    def test_extract_search_listing_card_aclk_without_target(self):
+        card = MagicMock()
+        name_mock = MagicMock()
+        name_mock.count.return_value = 1
+        name_mock.inner_text.return_value = "Dallas Internal Ad HVAC"
+
+        web_mock = MagicMock()
+        web_mock.count.return_value = 1
+        web_mock.first.get_attribute.return_value = "/aclk?sa=l&ai=DChcSEwj_only_tracking_sig"
+
+        empty_mock = MagicMock()
+        empty_mock.count.return_value = 0
+
+        def locator_side_effect(selector):
+            if 'div.qBF1Pd' in selector:
+                return name_mock
+            elif 'a.lcr4fd' in selector or 'Website' in selector:
+                return web_mock
+            return empty_mock
+
+        card.locator.side_effect = locator_side_effect
+        card.inner_text.return_value = "Dallas Internal Ad HVAC\nAd · (214) 555-7766"
+
+        lead = extract_search_listing_card(card)
+        self.assertIsNotNone(lead)
+        self.assertEqual(lead["Business Name"], "Dallas Internal Ad HVAC")
+        # Internal /aclk without destination must be rejected as website
+        self.assertEqual(lead["Website"], "")
 
     def test_scrape_maps_search_feed_multiple_and_deduplication(self):
         page = MagicMock()
