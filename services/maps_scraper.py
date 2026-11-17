@@ -417,6 +417,35 @@ def scrape_maps_search_feed(page, max_results: int = 20) -> list[dict]:
             if identity in seen_identities:
                 continue
 
+            # If city or state is unknown from card text, click the card to inspect structured address panel
+            if (lead.get("City") == "Unknown" or not lead.get("Phone")) and hasattr(card, "click"):
+                try:
+                    card.click()
+                    try:
+                        page.wait_for_selector('button[data-item-id="address"]', timeout=3000)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(1000)
+                    addr_loc = page.locator('button[data-item-id="address"], button[aria-label*="Address" i]')
+                    if addr_loc.count() > 0:
+                        addr_text = addr_loc.first.inner_text().strip()
+                        aria_label = addr_loc.first.get_attribute('aria-label') or ""
+                        c, s = parse_city_state(f"{addr_text} {aria_label}")
+                        if c != "Unknown":
+                            lead["City"] = c
+                            lead["State"] = s
+
+                    if not lead.get("Phone") or not lead.get("Phone Number"):
+                        phone_btn = page.locator('button[data-item-id*="phone" i], button[data-tooltip*="phone" i]')
+                        if phone_btn.count() > 0:
+                            phone_raw = f"{phone_btn.first.inner_text()} {phone_btn.first.get_attribute('aria-label') or ''}"
+                            pm = PHONE_REGEX.search(phone_raw)
+                            if pm:
+                                lead["Phone"] = pm.group(0)
+                                lead["Phone Number"] = pm.group(0)
+                except Exception:
+                    pass
+
             seen_identities.add(identity)
             leads.append(lead)
 
@@ -459,9 +488,10 @@ def scrape_maps_place_detail(page, url: str) -> dict:
     phone = ""
     phone_loc = page.locator('button[data-tooltip*="Copy phone number" i], button[data-item-id*="phone" i], button[aria-label*="Phone" i]')
     if phone_loc.count() > 0:
-        raw_phone = phone_loc.first.inner_text().strip()
+        raw_phone = f"{phone_loc.first.inner_text()} {phone_loc.first.get_attribute('aria-label') or ''}".strip()
         m = PHONE_REGEX.search(raw_phone)
-        phone = m.group(0) if m else raw_phone
+        if m:
+            phone = m.group(0)
     if not phone:
         # Fallback to page text search
         try:
