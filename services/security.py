@@ -40,12 +40,19 @@ class SecurityError(Exception):
 def is_ip_allowed(ip_str: str) -> bool:
     """Checks whether an IP address is a safe public address."""
     try:
-        ip_obj = ipaddress.ip_address(ip_str)
+        clean_ip = ip_str.strip('[]') if isinstance(ip_str, str) else str(ip_str)
+        ip_obj = ipaddress.ip_address(clean_ip)
+        
+        # Check IPv4-mapped IPv6 address (e.g. ::ffff:127.0.0.1)
+        if getattr(ip_obj, 'ipv4_mapped', None) is not None:
+            ip_obj = ip_obj.ipv4_mapped
+
         if (ip_obj.is_loopback or ip_obj.is_private or ip_obj.is_link_local or
             ip_obj.is_multicast or ip_obj.is_reserved or ip_obj.is_unspecified):
             return False
+            
         for net in BLOCKED_IP_NETWORKS:
-            if ip_obj in net:
+            if ip_obj.version == net.version and ip_obj in net:
                 return False
         return True
     except ValueError:
@@ -106,31 +113,68 @@ def validate_and_sanitize_url(url: str) -> str:
 # Hook urllib3 connection factory to guarantee DNS Rebinding (TOCTOU) defense at socket creation time
 _orig_create_connection = urllib3_connection.create_connection
 
-def _safe_create_connection(address, *args, **kwargs):
+def _safe_create_connection(address, timeout=urllib3_connection._DEFAULT_TIMEOUT, source_address=None, socket_options=None):
     """
     Intercepts urllib3 socket creation to ensure every connection target IP
-    is validated and pinned, completely preventing DNS rebinding TOCTOU attacks.
+    (both IPv4 and IPv6) is validated and connected directly without secondary
+    DNS resolution, completely preventing DNS rebinding TOCTOU attacks.
     """
     host, port = address
+    clean_host = host.strip("[]") if isinstance(host, str) else host
+
+    family = urllib3_connection.allowed_gai_family()
     try:
-        # Check if already an IP
-        ipaddress.ip_address(host)
-        resolved_ips = [host]
+        clean_host.encode("idna")
+    except UnicodeError:
+        raise SecurityError(f"Invalid host label: '{clean_host}'")
+
+    try:
+        # Check if clean_host is an explicit IP literal
+        ip_obj = ipaddress.ip_address(clean_host)
+        if not is_ip_allowed(str(ip_obj)):
+            raise SecurityError(f"DNS Rebinding / SSRF blocked: connection target is restricted IP '{clean_host}'")
+        addr_info = socket.getaddrinfo(clean_host, port, family, socket.SOCK_STREAM)
     except ValueError:
-        # Resolve hostname
-        addr_info = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        resolved_ips = [item[4][0] for item in addr_info]
+        # Domain name: resolve DNS
+        try:
+            addr_info = socket.getaddrinfo(clean_host, port, family, socket.SOCK_STREAM)
+        except socket.gaierror as e:
+            raise SecurityError(f"DNS resolution failed for {clean_host}: {e}")
 
-    if not resolved_ips:
-        raise SecurityError(f"Failed to resolve host for socket connection: {host}")
+    if not addr_info:
+        raise SecurityError(f"DNS resolution returned no addresses for {clean_host}")
 
-    for ip in resolved_ips:
+    # Validate EVERY resolved IP address (IPv4 and IPv6) before opening any socket
+    for res in addr_info:
+        ip = res[4][0]
         if not is_ip_allowed(ip):
-            raise SecurityError(f"DNS Rebinding / SSRF blocked: connection target {host} resolved to restricted IP: {ip}")
+            raise SecurityError(
+                f"DNS Rebinding / SSRF blocked: connection target '{clean_host}' resolved to restricted IP: {ip}"
+            )
 
-    # Connect directly to the validated IP, eliminating secondary DNS resolution window
-    pinned_ip = resolved_ips[0]
-    return _orig_create_connection((pinned_ip, port), *args, **kwargs)
+    # Establish socket connection using verified address tuples directly (no secondary DNS lookup)
+    err = None
+    for res in addr_info:
+        af, socktype, proto, canonname, sa = res
+        sock = None
+        try:
+            sock = socket.socket(af, socktype, proto)
+            urllib3_connection._set_socket_options(sock, socket_options)
+            if timeout is not urllib3_connection._DEFAULT_TIMEOUT:
+                sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sa)
+            err = None
+            return sock
+        except OSError as e:
+            err = e
+            if sock is not None:
+                sock.close()
+
+    if err is not None:
+        raise err
+    raise OSError(f"Failed to establish connection to {clean_host}")
 
 # Install socket-level hook
 urllib3_connection.create_connection = _safe_create_connection

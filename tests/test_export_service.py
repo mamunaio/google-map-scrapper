@@ -103,11 +103,6 @@ class TestExportService(unittest.TestCase):
         self.assertEqual(header3, SHEET_03_COLUMNS)
         self.assertEqual(ws3.freeze_panes, "A2")
 
-        # Check opportunity row populated
-        self.assertGreaterEqual(ws3.max_row, 2)
-        row2_cat = ws3.cell(row=2, column=2).value
-        self.assertEqual(row2_cat, "Booking Automation")
-
     def test_format_a_source_compatible(self):
         excel_stream = generate_source_compatible_excel(self.sample_leads)
         self.assertIsNotNone(excel_stream)
@@ -135,6 +130,149 @@ class TestExportService(unittest.TestCase):
         stream_b = generate_styled_excel(self.sample_leads, format_type="standard_3_sheet")
         wb_b = openpyxl.load_workbook(stream_b)
         self.assertEqual(len(wb_b.sheetnames), 3)
+
+    def test_multiple_verified_opportunities(self):
+        lead = {
+            "Business Name": "Multi Opps Co",
+            "Website": "https://multiopps.com",
+            "intelligence": {
+                "opportunities": {
+                    "detected_opportunities": [
+                        {
+                            "Opportunity Category": "Booking Automation",
+                            "Related Finding": "No booking widget",
+                            "Evidence Description": "Missing scheduling scripts",
+                            "Evidence URL": "https://multiopps.com",
+                            "Potential Business Impact": "Manual callback friction",
+                            "Recommended Service": "Online Booking Calendar",
+                            "Confidence Level": "High",
+                            "Research Status": "Identified"
+                        },
+                        {
+                            "Opportunity Category": "AI Automation",
+                            "Related Finding": "No live chat",
+                            "Evidence Description": "No chat widget in DOM",
+                            "Evidence URL": "https://multiopps.com",
+                            "Potential Business Impact": "Missed after-hours inquiries",
+                            "Recommended Service": "24/7 AI Chatbot",
+                            "Confidence Level": "High",
+                            "Research Status": "Identified"
+                        }
+                    ]
+                }
+            }
+        }
+        stream = generate_standard_intelligence_workbook([lead])
+        wb = openpyxl.load_workbook(stream)
+        ws = wb["Business Opportunities"]
+        # Header + 2 opportunity rows = 3 rows
+        self.assertEqual(ws.max_row, 3)
+        self.assertEqual(ws.cell(row=2, column=2).value, "Booking Automation")
+        self.assertEqual(ws.cell(row=3, column=2).value, "AI Automation")
+
+    def test_one_verified_opportunity(self):
+        lead = {
+            "Business Name": "Single Opp Co",
+            "Website": "https://singleopp.com",
+            "intelligence": {
+                "opportunities": {
+                    "detected_opportunities": [
+                        {
+                            "Opportunity Category": "Technical SEO",
+                            "Related Finding": "Missing title and meta description",
+                            "Evidence Description": "Title tag is blank",
+                            "Evidence URL": "https://singleopp.com",
+                            "Potential Business Impact": "Poor search engine visibility",
+                            "Recommended Service": "On-Page Technical SEO Optimization",
+                            "Confidence Level": "High",
+                            "Research Status": "Verified"
+                        }
+                    ]
+                }
+            }
+        }
+        stream = generate_standard_intelligence_workbook([lead])
+        wb = openpyxl.load_workbook(stream)
+        ws = wb["Business Opportunities"]
+        self.assertEqual(ws.max_row, 2)
+        self.assertEqual(ws.cell(row=2, column=2).value, "Technical SEO")
+
+    def test_no_opportunities_neutral_row(self):
+        lead = {
+            "Business Name": "Fully Modern Co",
+            "Website": "https://fullymodern.com",
+            "intelligence": {
+                "opportunities": {
+                    "detected_opportunities": []
+                }
+            }
+        }
+        stream = generate_standard_intelligence_workbook([lead])
+        wb = openpyxl.load_workbook(stream)
+        ws = wb["Business Opportunities"]
+        self.assertEqual(ws.max_row, 2)
+        # Category must be neutral and not fabricated
+        self.assertEqual(ws.cell(row=2, column=2).value, "No Verified Opportunity Identified")
+        self.assertEqual(ws.cell(row=2, column=3).value, "None Detected")
+        # Impact, service, and confidence must be N/A
+        self.assertEqual(ws.cell(row=2, column=6).value, "N/A")
+        self.assertEqual(ws.cell(row=2, column=7).value, "N/A")
+        self.assertEqual(ws.cell(row=2, column=8).value, "N/A")
+
+    def test_unknown_opportunity_status_neutral_row(self):
+        lead = {
+            "Business Name": "Unknown Co",
+            "Website": "https://unknownco.com",
+            "intelligence": {
+                "features": {
+                    "lead_capture": {"status": "Unknown"},
+                    "booking": {"status": "Unknown"}
+                },
+                "opportunities": {}
+            }
+        }
+        stream = generate_standard_intelligence_workbook([lead])
+        wb = openpyxl.load_workbook(stream)
+        ws = wb["Business Opportunities"]
+        self.assertEqual(ws.max_row, 2)
+        self.assertEqual(ws.cell(row=2, column=2).value, "No Verified Opportunity Identified")
+        self.assertEqual(ws.cell(row=2, column=7).value, "N/A")
+
+    def test_representative_22_columns_source_csv_preservation(self):
+        # 22 representative columns typical of original Google Maps scraping export
+        raw_lead = {
+            "place_id": "ChIJ123",
+            "name": "Original Dallas HVAC",
+            "category": "HVAC contractor",
+            "sub_categories": "Heating, AC",
+            "street": "123 Main St",
+            "city": "Dallas",
+            "state": "TX",
+            "postal_code": "75201",
+            "country": "US",
+            "latitude": "32.7767",
+            "longitude": "-96.7970",
+            "phone": "+1-214-555-9999",
+            "website": "https://dallashvac.com",
+            "rating": "4.9",
+            "reviews_count": "150",
+            "reviews_link": "https://maps.google.com/reviews",
+            "working_hours": "Mon-Fri 8am-5pm",
+            "verified": "True",
+            "owner_title": "Owner",
+            "cid": "9876543210",
+            "query": "HVAC Dallas",
+            "timezone": "America/Chicago"
+        }
+        stream = generate_source_compatible_excel([raw_lead])
+        wb = openpyxl.load_workbook(stream)
+        ws = wb.active
+        headers = [cell.value for cell in ws[1]]
+
+        # Verify all 22 columns are present in exact order
+        for col_name in raw_lead.keys():
+            self.assertIn(col_name, headers)
+        self.assertEqual(headers[:22], list(raw_lead.keys()))
 
 if __name__ == '__main__':
     unittest.main()

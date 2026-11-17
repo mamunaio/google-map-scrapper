@@ -20,7 +20,92 @@ class TestLeadScoring(unittest.TestCase):
         self.assertEqual(result["research_priority"], "Manual Review")
         self.assertIn("Manual Review", result["research_priority"])
 
-    def test_high_priority_lead(self):
+    def test_missing_audit_data_yields_manual_review(self):
+        lead_no_intel = {"Website": "https://example.com"}
+        result = calculate_lead_score(lead_no_intel)
+        self.assertEqual(result["research_priority"], "Manual Review")
+
+    def test_scan_failed_yields_manual_review(self):
+        lead_scan_failed = {
+            "Website": "https://example.com",
+            "intelligence": {
+                "performance": {"audit_status": "Scan Failed"},
+                "seo": {"status": "Scan Failed"},
+                "features": {
+                    "lead_capture": {"status": "Scan Failed"},
+                    "booking": {"status": "Scan Failed"}
+                }
+            }
+        }
+        result = calculate_lead_score(lead_scan_failed)
+        self.assertEqual(result["research_priority"], "Manual Review")
+        self.assertIn("crawler data is incomplete", result["suggested_next_action"])
+
+    def test_unknown_lead_capture_neutral_scoring(self):
+        lead_data = {
+            "Website": "https://example.com",
+            "Phone": "+1-555-1234",
+            "intelligence": {
+                "performance": {"mobile_score": 80},
+                "seo": {"seo_score": 85},
+                "features": {
+                    "lead_capture": {"status": "Unknown"},
+                    "booking": {"status": "Detected"},
+                    "chatbot": {"status": "Detected"},
+                    "voice_agent": {"status": "Detected"}
+                },
+                "technical": {"ssl_certificate": {"status": "Valid"}, "mobile_usability": {"status": "Good"}}
+            }
+        }
+        res = calculate_lead_score(lead_data)
+        # Lead capture should be neutral (5/10 * 15 = 7.5) and NOT treated as confirmed missing
+        self.assertEqual(res["dimension_scores"]["lead_capture"], 7.5)
+        self.assertIn("inconclusive", res["dimension_explanations"]["lead_capture"])
+        # Crucially: no false gap should be logged for unknown lead capture
+        gap_categories = [g[0] for g in res.get("gaps_identified", [])]
+        self.assertNotIn("Lead Capture", gap_categories)
+
+    def test_unknown_booking_neutral_scoring(self):
+        lead_data = {
+            "Website": "https://example.com",
+            "Phone": "+1-555-1234",
+            "intelligence": {
+                "performance": {"mobile_score": 80},
+                "seo": {"seo_score": 85},
+                "features": {
+                    "lead_capture": {"status": "Detected"},
+                    "booking": {"status": "Unknown"},
+                    "chatbot": {"status": "Detected"},
+                    "voice_agent": {"status": "Detected"}
+                },
+                "technical": {"ssl_certificate": {"status": "Valid"}, "mobile_usability": {"status": "Good"}}
+            }
+        }
+        res = calculate_lead_score(lead_data)
+        self.assertEqual(res["dimension_scores"]["booking_automation"], 7.5)
+        self.assertIn("inconclusive", res["dimension_explanations"]["booking_automation"])
+
+    def test_unknown_chatbot_and_voice_neutral_scoring(self):
+        lead_data = {
+            "Website": "https://example.com",
+            "Phone": "+1-555-1234",
+            "intelligence": {
+                "performance": {"mobile_score": 80},
+                "seo": {"seo_score": 85},
+                "features": {
+                    "lead_capture": {"status": "Detected"},
+                    "booking": {"status": "Detected"},
+                    "chatbot": {"status": "Unknown"},
+                    "voice_agent": {"status": "Unknown"}
+                },
+                "technical": {"ssl_certificate": {"status": "Valid"}, "mobile_usability": {"status": "Good"}}
+            }
+        }
+        res = calculate_lead_score(lead_data)
+        self.assertEqual(res["dimension_scores"]["chatbot_voice"], 5.0)
+        self.assertIn("inconclusive", res["dimension_explanations"]["chatbot_voice"])
+
+    def test_confirmed_not_detected_high_priority(self):
         lead_data = {
             "Website": "https://examplehvac.com",
             "Email": "john@examplehvac.com",
@@ -44,10 +129,11 @@ class TestLeadScoring(unittest.TestCase):
         res = calculate_lead_score(lead_data)
         self.assertGreaterEqual(res["research_score"], 68)
         self.assertEqual(res["research_priority"], "High Priority")
-        self.assertTrue(len(res["dimension_scores"]) == 9)
+        self.assertEqual(len(res["dimension_scores"]), 9)
+        self.assertEqual(len(res["dimension_explanations"]), 9)
         self.assertIn("mobile performance", res["main_identified_gap"].lower())
 
-    def test_low_priority_fully_optimized_lead(self):
+    def test_fully_detected_features_low_priority(self):
         lead_data = {
             "Website": "https://modernplumbing.com",
             "Email": "",
@@ -71,6 +157,7 @@ class TestLeadScoring(unittest.TestCase):
         res = calculate_lead_score(lead_data)
         self.assertLess(res["research_score"], 45)
         self.assertEqual(res["research_priority"], "Low Priority")
+        self.assertIn("well-optimized", res["dimension_explanations"]["technical_seo"])
 
 if __name__ == '__main__':
     unittest.main()

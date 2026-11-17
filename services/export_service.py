@@ -232,12 +232,18 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
                     opps_data.get("next_action", "Initial Outreach")
                 ])
         else:
-            # Add entry indicating no critical gaps identified
+            # Clearly labeled neutral status row with no fabricated impact, confidence, or service
             ws_opps.append([
-                biz_name, "General Optimization", "No Critical Gaps",
-                "Website digital infrastructure is up to date.",
-                lead.get("Website", ""), "None detected", "Maintenance / Retainer",
-                "Low", "Verified", "Monitor periodically"
+                biz_name,
+                "No Verified Opportunity Identified",
+                "None Detected",
+                "No observable gaps detected during audit.",
+                lead.get("Website", "") or "",
+                "N/A",
+                "N/A",
+                "N/A",
+                "Verified",
+                opps_data.get("next_action") or "Monitor lead periodically"
             ])
 
     apply_sheet_styling(ws_opps, HEADER_FILL_OPP, SHEET_03_COLUMNS)
