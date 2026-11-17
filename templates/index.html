@@ -1140,7 +1140,7 @@
                     "Contact Person": row["Contact Person"] || row["Decision Maker"] || "",
                     "Email": row["Email"] || row["Contact Email"] || "",
                     "Email Status": row["Email Status"] || row["Email Verification"] || "Not Found",
-                    "Priority": row["Priority"] || opps.priority || (intel.priority_tier === "High Priority" ? "High" : "Low"),
+                    "Priority": row["Priority"] || opps.priority || (intel.priority_tier === "High Priority" ? "High" : "Manual Review"),
                     "Lead Score": row["Lead Score"] !== undefined ? row["Lead Score"] : (opps.lead_score || intel.lead_score || 0),
                     "Main Opportunity": row["Main Opportunity"] || opps.main_gap || scoring.main_identified_gap || "",
                     "Notes": row["Notes"] || scoring.priority_reason || "",

@@ -100,7 +100,7 @@ def scrape_api():
                         intel = audit_data.get("intelligence") or {}
                         opps = intel.get("opportunities") or {}
                         scoring = opps.get("scoring_details") or {}
-                        lead["Priority"] = opps.get("priority") or "Low"
+                        lead["Priority"] = opps.get("priority") or "Manual Review"
                         lead["Lead Score"] = opps.get("lead_score") or 0
                         lead["Main Opportunity"] = opps.get("main_gap") or ""
                         lead["Notes"] = scoring.get("priority_reason") or ""
@@ -135,7 +135,7 @@ def scrape_api():
                 "Email": "",
                 "Email Status": "Not Found",
                 "Email Verification": "Not Found",
-                "Priority": "Low",
+                "Priority": "Manual Review",
                 "Lead Score": 0,
                 "Main Opportunity": "",
                 "Notes": "",
@@ -168,7 +168,7 @@ def scrape_api():
             intel = audit_data.get("intelligence") or {}
             opps = intel.get("opportunities") or {}
             scoring = opps.get("scoring_details") or {}
-            result["Priority"] = opps.get("priority") or "Low"
+            result["Priority"] = opps.get("priority") or "Manual Review"
             result["Lead Score"] = opps.get("lead_score") or 0
             result["Main Opportunity"] = opps.get("main_gap") or ""
             result["Notes"] = scoring.get("priority_reason") or ""

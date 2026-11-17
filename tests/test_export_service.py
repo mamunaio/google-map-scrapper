@@ -5,6 +5,7 @@ from services.export_service import (
     generate_standard_intelligence_workbook,
     generate_lead_tracker_csv,
     deduplicate_leads,
+    normalize_priority,
     LEAD_TRACKER_COLUMNS,
     WEBSITE_AUDIT_COLUMNS,
     BUSINESS_OPPORTUNITIES_COLUMNS
@@ -205,6 +206,56 @@ class TestExportService(unittest.TestCase):
         self.assertIn("Acme Air HVAC", lines[1])
         self.assertIn("Dallas", lines[1])
         self.assertIn("TX", lines[1])
+
+    def test_normalize_priority_handling(self):
+        # High stays High
+        self.assertEqual(normalize_priority("High"), "High")
+        self.assertEqual(normalize_priority("High Priority"), "High")
+
+        # Medium stays Medium
+        self.assertEqual(normalize_priority("Medium"), "Medium")
+        self.assertEqual(normalize_priority("Medium Priority"), "Medium")
+
+        # Low stays Low
+        self.assertEqual(normalize_priority("Low"), "Low")
+        self.assertEqual(normalize_priority("Low Priority"), "Low")
+
+        # Explicit Manual Review stays Manual Review
+        self.assertEqual(normalize_priority("Manual Review"), "Manual Review")
+        self.assertEqual(normalize_priority("Manual"), "Manual Review")
+
+        # Missing, empty, or unrecognized values default to Manual Review (NEVER silently classified as Low)
+        self.assertEqual(normalize_priority(""), "Manual Review")
+        self.assertEqual(normalize_priority(None), "Manual Review")
+        self.assertEqual(normalize_priority("Unknown"), "Manual Review")
+        self.assertEqual(normalize_priority("Unrecognized_Value"), "Manual Review")
+        self.assertEqual(normalize_priority("Pending"), "Manual Review")
+
+    def test_incomplete_record_priority_defaults_to_manual_review_in_exports(self):
+        # Lead with completely missing priority
+        lead_missing_priority = {
+            "Business Name": "Incomplete Data LLC",
+            "Website": "https://incompletedata.com",
+            "Phone": "+1-555-0001"
+            # No Priority, no intelligence
+        }
+
+        # 1. Test Excel export Sheet 01 priority column (column 13)
+        stream = generate_standard_intelligence_workbook([lead_missing_priority])
+        wb = openpyxl.load_workbook(stream)
+        ws1 = wb["Lead Tracker"]
+        priority_val = ws1.cell(row=2, column=13).value
+        self.assertEqual(priority_val, "Manual Review")
+        self.assertNotEqual(priority_val, "Low")
+
+        # 2. Test CSV export priority column
+        csv_str = generate_lead_tracker_csv([lead_missing_priority])
+        lines = csv_str.strip().split("\n")
+        self.assertEqual(len(lines), 2)
+        row_fields = lines[1].split(",")
+        priority_idx = LEAD_TRACKER_COLUMNS.index("Priority")
+        self.assertEqual(row_fields[priority_idx], "Manual Review")
+        self.assertNotEqual(row_fields[priority_idx], "Low")
 
 if __name__ == '__main__':
     unittest.main()

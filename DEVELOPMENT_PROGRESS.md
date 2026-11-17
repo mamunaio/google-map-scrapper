@@ -18,6 +18,7 @@
 | **Phase 07** | Dashboard & Selective Export (7 Metrics, Row Select, Dual Buttons) | **COMPLETED & VERIFIED** | UI Verified & API Tests Passing |
 | **Phase 08** | Dual Export Engine (Format A Source-Preserved + Format B 3-Sheet) | **COMPLETED & VERIFIED** | 3 OpenPyXL Dual-Format Tests Passing |
 | **Phase 14** | Lead Data Quality, Essential Fields Schema & Export Modernization | **COMPLETED & VERIFIED** | 109 Automated Tests Passing |
+| **Phase 15** | Final Data Integrity Corrections: Unknown Priority & Evidence-Based Opportunity Language | **COMPLETED & VERIFIED** | 112 Automated Tests Passing |
 
 ---
 
@@ -416,3 +417,33 @@
   - `tests/test_security.py`: 50 tests passing.
   - `tests/test_seo_audit.py`: 2 tests passing.
   - **Total: 109 / 109 automated unit & integration tests passing (100% success rate)**.
+
+---
+
+## Phase 15: Final Data Integrity Corrections
+
+### 1. Unknown Priority Handling (`services/export_service.py`)
+- Updated `normalize_priority()`:
+  - `High` remains `High`.
+  - `Medium` remains `Medium`.
+  - `Low` remains `Low`.
+  - `Manual Review` remains `Manual Review`.
+  - Missing, empty, or unrecognized priority values default to `Manual Review` (never silently classified as `Low`).
+- Removed fallback `or "Low"` in `generate_standard_intelligence_workbook()` and `generate_lead_tracker_csv()`, ensuring incomplete records accurately default to `Manual Review`.
+- Added dedicated regression tests in `tests/test_export_service.py` (`test_normalize_priority_handling` and `test_incomplete_record_priority_defaults_to_manual_review_in_exports`).
+
+### 2. Evidence-Based Opportunity Language (`services/opportunity_analyzer.py`)
+- Missing public website evidence (booking scripts, chatbot widgets, CRM tags, AI voice attendants, review widgets) is strictly evaluated without assuming absence of internal business workflows or systems.
+- Kept research status as `Needs Review` and confidence as `Medium` for inferred gaps based on missing public elements.
+- Purged all unsupported operational claims:
+  - Purged claims that absence of booking scripts means appointments are handled only by phone/email.
+  - Purged claims that absence of chatbot widgets means after-hours inquiries go unanswered.
+  - Purged claims that absence of CRM trackers means leads are manually copied into spreadsheets.
+  - Purged claims that absence of voice agent markers means callers reach voicemail or calls are missed.
+- Rewrote outreach hooks as neutral, non-presumptive research questions (e.g. asking how after-hours inquiries or post-service reviews are currently managed).
+- Preserved DOM evidence descriptions.
+- Confirmed on-page technical issues (Technical SEO, Mobile Viewport, SSL) remain distinct with `Detected` status and `High` confidence.
+- Added dedicated regression test `test_evidence_based_neutral_language_and_neutral_questions` in `tests/test_opportunity_analyzer.py`.
+
+### 3. Automated Test Suite Verification
+- Expanded test suite from 109 to **112 automated unit and integration tests** across 10 modules (100% passing).

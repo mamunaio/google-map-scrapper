@@ -41,11 +41,11 @@ def analyze_business_opportunities(
             "Related Finding": "Missing Online Scheduling Widget",
             "Evidence URL": evidence_url,
             "Evidence Description": "No self-service scheduling scripts or embedded booking widgets (Calendly, Acuity, ServiceTitan, etc.) identified on scanned pages.",
-            "Potential Business Impact": "Prospective clients seeking immediate appointment scheduling cannot self-book and must wait for manual callback.",
+            "Potential Business Impact": "No public self-service booking widget was identified on scanned pages; does not determine whether scheduling is coordinated via external portals, dispatch systems, or direct communication.",
             "Confidence Level": "Medium"
         })
         outreach_hooks.append(
-            f"Noticed {biz}'s website currently requires phone calls or plain emails for appointments—adding self-service online scheduling allows customers to book directly."
+            f"Does {biz} offer direct online self-scheduling for customers, or do you coordinate appointments through another workflow?"
         )
 
     # Opportunity 2: Conversational Lead Capture / 24/7 Chatbot
@@ -62,11 +62,11 @@ def analyze_business_opportunities(
             "Related Finding": "Absence of Live Chat / Chatbot Widget",
             "Evidence URL": evidence_url,
             "Evidence Description": "No conversational widget scripts or live chat providers detected in page DOM.",
-            "Potential Business Impact": "Inquiries outside standard operating hours may go unanswered if visitors do not wish to leave a static contact form submission.",
+            "Potential Business Impact": "No interactive conversational chat provider was detected in the page DOM; does not determine how after-hours web visitor questions or leads are routed internally.",
             "Confidence Level": "Medium"
         })
         outreach_hooks.append(
-            f"Observed that {biz}'s website doesn't have an interactive chat widget—deploying an automated concierge can capture and qualify after-hours inquiries."
+            f"How does {biz} currently handle after-hours website visitor inquiries—would an interactive conversational assistant be worth exploring?"
         )
 
     # Opportunity 3: AI Voice Receptionist / Phone Overflow
@@ -83,7 +83,7 @@ def analyze_business_opportunities(
             "Related Finding": "No AI Phone Integration Detected",
             "Evidence URL": evidence_url,
             "Evidence Description": "No telephony automation or AI voice agent provider markers identified in page assets.",
-            "Potential Business Impact": "Inbound callers during field work or peak hours may reach standard voicemail, delaying quote response time.",
+            "Potential Business Impact": "No automated voice assistant or telephony automation markers were identified in public assets; does not determine current call routing, answering service coverage, or office dispatch processes.",
             "Confidence Level": "Medium"
         })
 
@@ -101,7 +101,7 @@ def analyze_business_opportunities(
             "Related Finding": "No CRM Tracking or Forms Detected",
             "Evidence URL": evidence_url,
             "Evidence Description": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
-            "Potential Business Impact": "Inbound leads may require manual copying into spreadsheets, increasing risk of delayed lead follow-ups.",
+            "Potential Business Impact": "No public CRM integration trackers or third-party embed forms were identified on scanned pages; does not determine whether customer records are managed through backend ERP, specialized industry software, or internal databases.",
             "Confidence Level": "Medium"
         })
 
@@ -119,11 +119,11 @@ def analyze_business_opportunities(
             "Related Finding": "Missing Review Widget / Automation",
             "Evidence URL": evidence_url,
             "Evidence Description": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
-            "Potential Business Impact": "Relying strictly on manual review requests often leads to slower feedback collection compared to automated post-service flows.",
+            "Potential Business Impact": "No third-party review widgets or automated feedback collection badges were detected on public pages; does not determine how customer feedback or testimonial collection is handled after service delivery.",
             "Confidence Level": "Medium"
         })
         outreach_hooks.append(
-            f"Setting up an automated SMS review collection flow for {biz} can help systematically collect feedback from satisfied clients right after service completion."
+            f"How does {biz} currently collect and showcase customer reviews—is post-service feedback collection something you're looking to automate?"
         )
 
     # Opportunity 6: Technical SEO Optimization
@@ -143,11 +143,11 @@ def analyze_business_opportunities(
             "Related Finding": primary_issue,
             "Evidence URL": evidence_url,
             "Evidence Description": evidence_text,
-            "Potential Business Impact": "Search engine crawlers may fail to index important service keywords, limiting organic search discoverability.",
+            "Potential Business Impact": "Search engine crawlers may receive incomplete metadata, which can affect snippet display in organic search results.",
             "Confidence Level": "High"
         })
         outreach_hooks.append(
-            f"Spotted a couple of technical on-page items on {biz}'s website (like {primary_issue.lower()}) that search engines look for when ranking local service queries."
+            f"Observed that certain technical SEO metadata tags on {biz}'s website ({primary_issue.lower()}) could be refreshed—is technical on-page SEO currently on your radar?"
         )
 
     # Opportunity 7: Mobile Usability & Responsive Redesign
@@ -164,7 +164,7 @@ def analyze_business_opportunities(
             "Related Finding": "Mobile Viewport / Formatting Issues",
             "Evidence URL": evidence_url,
             "Evidence Description": "Missing viewport meta tag or fixed pixel widths detected causing horizontal overflow risks on mobile viewports.",
-            "Potential Business Impact": "Mobile visitors may experience horizontal scrolling or layout truncation, reducing form submission completion.",
+            "Potential Business Impact": "Mobile devices may render page content with horizontal overflow or scaling issues.",
             "Confidence Level": "High"
         })
 
@@ -182,7 +182,7 @@ def analyze_business_opportunities(
             "Related Finding": f"SSL Status: {ssl_info.get('status')}",
             "Evidence URL": evidence_url,
             "Evidence Description": ssl_info.get("evidence", "Certificate is expired or plain HTTP is served."),
-            "Potential Business Impact": "Modern browsers mark the website as 'Not Secure', discouraging visitors from entering contact details.",
+            "Potential Business Impact": "Browsers mark unencrypted or expired certificates with visual security warnings to visitors.",
             "Confidence Level": "High"
         })
 

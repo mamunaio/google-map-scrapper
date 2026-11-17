@@ -204,17 +204,29 @@ def normalize_email_status(status_raw: str, email: str = "") -> str:
 
 
 def normalize_priority(priority_raw: str) -> str:
-    """Normalizes priority to: High, Medium, Low, or Manual Review."""
-    p = str(priority_raw or "").strip()
-    if "High" in p:
-        return "High"
-    if "Medium" in p:
-        return "Medium"
-    if "Low" in p:
-        return "Low"
-    if "Manual" in p:
+    """
+    Normalizes priority to: High, Medium, Low, or Manual Review.
+    Explicit mapping:
+      - High remains High.
+      - Medium remains Medium.
+      - Low remains Low.
+      - Explicit Manual Review remains Manual Review.
+      - Missing, empty, or unrecognized priority becomes Manual Review.
+    Incomplete or unverified records are never silently classified as Low.
+    """
+    if not priority_raw:
         return "Manual Review"
-    return "Low"
+    p = str(priority_raw).strip()
+    p_lower = p.lower()
+    if "manual" in p_lower:
+        return "Manual Review"
+    if "high" in p_lower:
+        return "High"
+    if "medium" in p_lower or "med" in p_lower:
+        return "Medium"
+    if "low" in p_lower:
+        return "Low"
+    return "Manual Review"
 
 
 def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
@@ -274,7 +286,7 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
 
         priority = normalize_priority(
             lead.get("Priority") or opps.get("priority") or opps.get("priority_tier") or
-            scoring.get("priority") or scoring.get("research_priority") or "Low"
+            scoring.get("priority") or scoring.get("research_priority")
         )
 
         score_raw = lead.get("Lead Score") or opps.get("lead_score") or scoring.get("research_score") or 0
@@ -471,7 +483,7 @@ def generate_lead_tracker_csv(leads_data: list) -> str:
 
         priority = normalize_priority(
             lead.get("Priority") or opps.get("priority") or opps.get("priority_tier") or
-            scoring.get("priority") or scoring.get("research_priority") or "Low"
+            scoring.get("priority") or scoring.get("research_priority")
         )
 
         score_raw = lead.get("Lead Score") or opps.get("lead_score") or scoring.get("research_score") or 0

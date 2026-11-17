@@ -100,5 +100,45 @@ class TestOpportunityAnalyzer(unittest.TestCase):
                 self.assertEqual(opp["Research Status"], "Detected")
                 self.assertEqual(opp["Confidence"], "High")
 
+    def test_evidence_based_neutral_language_and_neutral_questions(self):
+        # Verify that absence of public website widgets does not make unsupported operational claims
+        features = {
+            "booking": {"status": "Not Detected"},
+            "chatbot": {"status": "Not Detected"},
+            "crm": {"status": "Not Detected"},
+            "voice_agent": {"status": "Not Detected"},
+            "review_management": {"status": "Not Detected"}
+        }
+        result = analyze_business_opportunities(
+            features_result=features,
+            seo_result={"findings": [], "seo_score": 100},
+            technical_result={"ssl_certificate": {"status": "Valid"}, "mobile_usability": {"has_viewport": True}},
+            decision_maker="John Owner",
+            email="john@example.com",
+            business_name="Apex Cooling",
+            target_url="https://apexthermal.com"
+        )
+        opps = result["detected_opportunities"]
+        hooks = result["outreach_hooks"]
+
+        # Verify operational claims are purged from potential impact
+        for opp in opps:
+            impact = opp["Potential Business Impact"].lower()
+            self.assertNotIn("must wait for manual callback", impact)
+            self.assertNotIn("inquiries outside standard operating hours may go unanswered", impact)
+            self.assertNotIn("spreadsheets", impact)
+            self.assertNotIn("delaying quote", impact)
+            self.assertNotIn("calls during field work or peak hours may reach standard voicemail", impact)
+            # DOM evidence must be preserved
+            self.assertTrue(len(opp["Evidence"]) > 20)
+
+        # Verify outreach hooks are neutral research questions (end with question marks)
+        self.assertGreater(len(hooks), 0)
+        for hook in hooks:
+            self.assertTrue(hook.endswith("?"))
+            # Hooks should not assert unverified operational facts
+            self.assertNotIn("currently requires phone calls", hook.lower())
+            self.assertNotIn("doesn't have an interactive chat widget", hook.lower())
+
 if __name__ == '__main__':
     unittest.main()
