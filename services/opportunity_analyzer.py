@@ -278,7 +278,8 @@ def analyze_business_opportunities(
         if scoring.get("priority") == "High":
             scoring["priority_reason"] = f"High opportunity score ({scoring['research_score']}/100) with key gaps in {main_gap}."
     else:
-        main_gap = scoring["main_identified_gap"]
+        main_gap = "No opportunity detected"
+        scoring["main_identified_gap"] = main_gap
 
     return {
         "lead_score": scoring["research_score"],

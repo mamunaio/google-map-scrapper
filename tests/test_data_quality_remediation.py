@@ -363,14 +363,14 @@ def test_case_13_json_and_excel_consistency():
             "Email Status": "Verified",
             "Priority": "High",
             "Lead Score": 82,
-            "Main Opportunity": "Missing Online Booking Workflow",
+            "Main Opportunity": "No online booking",
             "Notes": "High opportunity score with key gaps in Booking.",
             "intelligence": {
                 "seo": {"status": "Online", "seo_score": 75},
                 "opportunities": {
                     "priority": "High",
                     "lead_score": 82,
-                    "main_gap": "Missing Online Booking Workflow",
+                    "main_gap": "No online booking",
                     "detected_opportunities": [
                         {
                             "Opportunity Category": "Booking",
@@ -640,4 +640,204 @@ def test_case_17_main_opportunity_matches_business_opportunities_sheet():
         if ws_opps.cell(row=r, column=1).value == "Texas AirZone LLC"
     ]
     assert sheet1_main_opp in sheet3_findings
+
+
+# -----------------------------------------------------------------------------
+# 18. Blank Top-Level Priority/Score/Main Opportunity Fallback (Cozy - D Pattern)
+# -----------------------------------------------------------------------------
+def test_case_18_blank_fields_fallback_and_mx_only_lead_cozy_pattern():
+    # Simulates an audited lead (like Cozy - D Heating & A/C) with MX-only email and phone,
+    # where top-level Priority, Lead Score, and Main Opportunity were blank/missing before export.
+    lead_missing_top_fields = {
+        "Business Name": "Cozy - D Heating & A/C LLC",
+        "Category": "HVAC contractor",
+        "City": "Dallas",
+        "State": "TX",
+        "Phone": "+1 972-291-8002",
+        "Website": "https://cozydair.com/",
+        "Email": "info@cozydair.com",
+        "Email Status": "MX Only",
+        "Priority": "",
+        "Lead Score": "",
+        "Main Opportunity": "",
+        "Notes": "",
+        "intelligence": {
+            "seo": {
+                "status": "Online",
+                "seo_score": 60,
+                "metrics": {"title": "Cozy-D HVAC", "meta_description": "HVAC Dallas", "h1_tags": ["A", "B"]},
+                "findings": [
+                    {"name": "Multiple H1 Headings", "severity": "Medium"},
+                    {"name": "Missing Canonical Tag", "severity": "Medium"}
+                ]
+            },
+            "technical": {
+                "ssl_certificate": {"status": "Valid"},
+                "mobile_usability": {"status": "Needs Improvement (Responsive warnings detected)", "has_viewport": True, "overflow_risk": True},
+                "findings": [{"name": "Potential Mobile Horizontal Overflow", "severity": "Medium"}]
+            },
+            "features": {
+                "lead_capture": {"status": "Detected", "providers": ["Click-to-Call"], "details": {"has_phone_link": True, "has_contact_form": False, "has_quote_form": False}},
+                "booking": {"status": "Detected"},
+                "chatbot": {"status": "Not Detected"},
+                "voice_agent": {"status": "Not Detected"},
+                "crm": {"status": "Detected"},
+                "review_management": {"status": "Not Detected"}
+            },
+            "performance": {"audit_status": "API Key Not Configured", "mobile_score": None},
+            "opportunities": {
+                "detected_opportunities": [
+                    {
+                        "Opportunity Category": "Lead Capture",
+                        "Finding": "No Public Web Inquiry or Quote Form Detected",
+                        "Evidence": "Only Click-to-Call detected on scanned pages.",
+                        "Confidence": "Medium",
+                        "Research Status": "Needs Review",
+                        "Recommended Service": "Interactive Web Inquiry Form"
+                    },
+                    {
+                        "Opportunity Category": "Technical SEO",
+                        "Finding": "On-Page Metadata Gaps",
+                        "Evidence": "Multiple H1 Headings and Missing Canonical Tag.",
+                        "Confidence": "High",
+                        "Research Status": "Detected",
+                        "Recommended Service": "Technical SEO Optimization"
+                    }
+                ]
+            }
+        }
+    }
+
+    # Excel export must resolve valid Priority, Lead Score, Main Opportunity (from Sheet 03), and Sheet 02 statuses
+    wb_bytes = generate_standard_intelligence_workbook([lead_missing_top_fields])
+    wb = openpyxl.load_workbook(io.BytesIO(wb_bytes.getvalue()))
+    ws1 = wb["Lead Tracker"]
+    ws2 = wb["Website Audit"]
+    ws3 = wb["Business Opportunities"]
+
+    priority = ws1.cell(row=2, column=13).value
+    score = ws1.cell(row=2, column=14).value
+    main_opp = ws1.cell(row=2, column=15).value
+    notes = ws1.cell(row=2, column=16).value
+
+    assert priority in ["High", "Medium", "Low"]
+    assert isinstance(score, int) and score > 0
+    assert main_opp == "On-Page Metadata Gaps"  # Confirmed Detected finding from Sheet 03
+    assert notes != ""
+
+    # Confirm Sheet 01 Main Opportunity exists in Sheet 03
+    s3_findings = [ws3.cell(row=r, column=3).value for r in range(2, ws3.max_row + 1)]
+    assert main_opp in s3_findings
+
+    # Confirm Sheet 02 canonical, H1, and mobile statuses align with findings (no contradiction)
+    assert ws2.cell(row=2, column=6).value == "Confirmed issue"  # Canonical Status
+    assert ws2.cell(row=2, column=8).value == "Confirmed issue"  # H1 Status
+    assert ws2.cell(row=2, column=10).value == "Confirmed issue"  # Mobile / Viewport Status
+
+    # CSV export must resolve identical non-blank Priority, Score, and Main Opportunity
+    csv_str = generate_lead_tracker_csv([lead_missing_top_fields])
+    assert f",{priority},{score},{main_opp}," in csv_str
+
+
+# -----------------------------------------------------------------------------
+# 19. Reachable Site with Zero Opportunities Fallback Handling
+# -----------------------------------------------------------------------------
+def test_case_19_reachable_site_zero_opportunities_fallback():
+    from services.opportunity_analyzer import analyze_business_opportunities
+
+    opps = analyze_business_opportunities(
+        features_result={
+            "lead_capture": {"status": "Detected", "providers": ["Quote / Estimate Form", "Click-to-Call"], "details": {"has_quote_form": True, "has_contact_form": True, "has_phone_link": True}},
+            "booking": {"status": "Detected"},
+            "chatbot": {"status": "Detected"},
+            "voice_agent": {"status": "Detected"},
+            "crm": {"status": "Detected"},
+            "review_management": {"status": "Detected"}
+        },
+        seo_result={"status": "Online", "seo_score": 98, "findings": []},
+        technical_result={"ssl_certificate": {"status": "Valid"}, "mobile_usability": {"status": "Mobile-Friendly", "has_viewport": True, "overflow_risk": False}},
+        decision_maker="Alice Owner",
+        email="alice@modernhvac.com",
+        business_name="Modern HVAC Pro",
+        target_url="https://modernhvac.com",
+        phone="+1 214-555-0199",
+        email_status="Verified"
+    )
+
+    assert opps["opportunities_count"] == 0
+    assert opps["main_gap"] == "No opportunity detected"
+
+    lead = {
+        "Business Name": "Modern HVAC Pro",
+        "Website": "https://modernhvac.com",
+        "Phone": "+1 214-555-0199",
+        "Email": "alice@modernhvac.com",
+        "Email Status": "Verified",
+        "Priority": opps["priority"],
+        "Lead Score": opps["lead_score"],
+        "Main Opportunity": opps["main_gap"],
+        "Notes": opps["priority_reason"],
+        "intelligence": {
+            "seo": {"status": "Online", "seo_score": 98},
+            "technical": {"ssl_certificate": {"status": "Valid"}, "mobile_usability": {"status": "Mobile-Friendly", "has_viewport": True}},
+            "performance": {"audit_status": "API Key Not Configured", "mobile_score": None},
+            "opportunities": opps
+        }
+    }
+
+    wb_bytes = generate_standard_intelligence_workbook([lead])
+    wb = openpyxl.load_workbook(io.BytesIO(wb_bytes.getvalue()))
+    ws1 = wb["Lead Tracker"]
+    ws3 = wb["Business Opportunities"]
+
+    assert ws1.cell(row=2, column=13).value == opps["priority"]
+    assert ws1.cell(row=2, column=13).value in ["High", "Medium", "Low"]
+    assert ws1.cell(row=2, column=14).value == opps["lead_score"]
+    assert ws1.cell(row=2, column=15).value == "No opportunity detected"
+    # Zero phantom rows in Sheet 03
+    assert ws3.max_row == 1
+
+
+# -----------------------------------------------------------------------------
+# 20. Stale Main Opportunity on Reachable Site Re-Aligned to Sheet 03 Finding
+# -----------------------------------------------------------------------------
+def test_case_20_reachable_site_stale_main_opportunity_aligned_to_sheet_03():
+    lead = {
+        "Business Name": "Aligned HVAC LLC",
+        "Website": "https://alignedhvac.com",
+        "Priority": "Medium",
+        "Lead Score": 55,
+        "Main Opportunity": "Outdated or Unmatched Gap String",
+        "intelligence": {
+            "seo": {"status": "Online", "seo_score": 88},
+            "technical": {"ssl_certificate": {"status": "Valid"}, "mobile_usability": {"status": "Responsive", "has_viewport": True}},
+            "performance": {"audit_status": "API Key Not Configured", "mobile_score": None},
+            "opportunities": {
+                "priority": "Medium",
+                "lead_score": 55,
+                "main_gap": "Outdated or Unmatched Gap String",
+                "detected_opportunities": [
+                    {
+                        "Opportunity Category": "Lead Capture",
+                        "Finding": "No Public Web Inquiry or Quote Form Detected",
+                        "Evidence": "Only Click-to-Call detected.",
+                        "Confidence": "Medium",
+                        "Research Status": "Needs Review",
+                        "Recommended Service": "Interactive Web Inquiry Form"
+                    }
+                ]
+            }
+        }
+    }
+
+    wb_bytes = generate_standard_intelligence_workbook([lead])
+    wb = openpyxl.load_workbook(io.BytesIO(wb_bytes.getvalue()))
+    ws1 = wb["Lead Tracker"]
+    ws3 = wb["Business Opportunities"]
+
+    s1_main_opp = ws1.cell(row=2, column=15).value
+    s3_findings = [ws3.cell(row=r, column=3).value for r in range(2, ws3.max_row + 1)]
+    assert s1_main_opp == "No Public Web Inquiry or Quote Form Detected"
+    assert s1_main_opp in s3_findings
+
 

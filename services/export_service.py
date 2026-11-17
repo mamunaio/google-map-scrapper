@@ -18,6 +18,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 from services.maps_scraper import clean_external_website_url
+from services.lead_scoring import calculate_lead_score
 
 # Styles definition
 HEADER_FONT = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')
@@ -244,6 +245,117 @@ def normalize_priority(priority_raw: str) -> str:
     return "Manual Review"
 
 
+def resolve_lead_summary_fields(lead: dict, website: str) -> tuple[str, int, str, str]:
+    """
+    Resolves guaranteed non-blank, internally consistent (Priority, Lead Score, Main Opportunity, Notes)
+    across JSON, Excel Sheet 01, and CSV exports.
+    - Computes fallback scoring if top-level Priority/Lead Score were omitted on an audited lead.
+    - Guarantees every reachable website with Sheet 03 opportunities has a Main Opportunity matching
+      an actual Finding in Sheet 03.
+    - Provides explicit fallback handling ("No opportunity detected") when 0 opportunities exist.
+    """
+    intel = lead.get("intelligence", {}) or {}
+    seo = intel.get("seo", {}) or {}
+    tech = intel.get("technical", {}) or {}
+    perf = intel.get("performance", {}) or {}
+    opps = intel.get("opportunities", {}) or {}
+    scoring = opps.get("scoring_details", {}) or {}
+
+    # Determine whether fallback scoring calculation is needed
+    raw_priority = (
+        lead.get("Priority") or opps.get("priority") or opps.get("priority_tier") or
+        intel.get("priority") or intel.get("priority_tier") or
+        scoring.get("priority") or scoring.get("research_priority")
+    )
+
+    score_candidates = [
+        lead.get("Lead Score"),
+        opps.get("lead_score"),
+        intel.get("lead_score"),
+        scoring.get("research_score"),
+    ]
+    raw_score = None
+    for cand in score_candidates:
+        if cand is not None and str(cand).strip() != "":
+            raw_score = cand
+            break
+
+    fallback_scoring = None
+    if (not raw_priority or raw_score is None) and intel:
+        try:
+            fallback_scoring = calculate_lead_score(lead)
+        except Exception:
+            fallback_scoring = None
+
+    if not raw_priority and fallback_scoring:
+        raw_priority = fallback_scoring.get("priority") or fallback_scoring.get("research_priority")
+
+    priority = normalize_priority(raw_priority)
+
+    if raw_score is None and fallback_scoring:
+        raw_score = fallback_scoring.get("research_score")
+
+    try:
+        lead_score = int(round(float(raw_score))) if raw_score is not None and str(raw_score).strip() != "" else 0
+    except (ValueError, TypeError):
+        lead_score = 0
+
+    # Determine website reachability
+    is_failed = (
+        perf.get("audit_status") == "Scan Failed" or
+        tech.get("status") == "Scan Failed" or
+        seo.get("status") == "Scan Failed"
+    )
+    is_blocked = (
+        lead.get("Website Status") in ["Blocked / Inconclusive", "Timeout / Error", "Connection Error"] or
+        seo.get("status") == "Blocked / Inconclusive" or
+        tech.get("status") == "Inconclusive"
+    )
+    is_reachable = bool(website) and not is_failed and not is_blocked
+
+    # Resolve Main Opportunity strictly aligned with Sheet 03 when reachable
+    opp_list = opps.get("detected_opportunities", []) or []
+    valid_findings = [
+        (o.get("Finding") or o.get("Related Finding") or "").strip()
+        for o in opp_list
+        if isinstance(o, dict) and (o.get("Finding") or o.get("Related Finding"))
+    ]
+
+    candidate_main_opp = (
+        lead.get("Main Opportunity") or opps.get("main_gap") or scoring.get("main_identified_gap") or ""
+    ).strip()
+
+    if is_reachable:
+        if valid_findings:
+            if candidate_main_opp in valid_findings:
+                main_opp = candidate_main_opp
+            else:
+                detected_opps = [
+                    o for o in opp_list
+                    if isinstance(o, dict) and o.get("Research Status") == "Detected" and (o.get("Finding") or o.get("Related Finding"))
+                ]
+                primary_opp = detected_opps[0] if detected_opps else opp_list[0]
+                main_opp = (primary_opp.get("Finding") or primary_opp.get("Related Finding") or "").strip()
+        else:
+            main_opp = "No opportunity detected"
+    else:
+        if candidate_main_opp:
+            main_opp = candidate_main_opp
+        elif not website:
+            main_opp = "No website provided — manual review required"
+        else:
+            main_opp = "Website inspection blocked / inconclusive — manual review required"
+
+    notes = (
+        lead.get("Notes") or opps.get("priority_reason") or scoring.get("priority_reason") or
+        (fallback_scoring.get("priority_reason") if fallback_scoring else "") or ""
+    ).strip()
+    if not notes and priority == "Manual Review":
+        notes = "Requires manual review due to incomplete or unavailable website audit."
+
+    return priority, lead_score, main_opp, notes
+
+
 def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
     """
     Standard Lead Intelligence Workbook (Format B).
@@ -265,9 +377,6 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
 
     for item in deduped_leads:
         lead = dict(item)
-        intel = lead.get("intelligence", {}) or {}
-        opps = intel.get("opportunities", {}) or {}
-        scoring = opps.get("scoring_details", {}) or {}
 
         biz_name = lead.get("Business Name") or lead.get("Name") or ""
         category = lead.get("Category") or lead.get("Google Category") or "Unknown"
@@ -299,19 +408,7 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
         email = lead.get("Email") or lead.get("Contact Email") or ""
         email_status = normalize_email_status(lead.get("Email Status") or lead.get("Email Verification") or "", email)
 
-        priority = normalize_priority(
-            lead.get("Priority") or opps.get("priority") or opps.get("priority_tier") or
-            scoring.get("priority") or scoring.get("research_priority")
-        )
-
-        score_raw = lead.get("Lead Score") or opps.get("lead_score") or scoring.get("research_score") or 0
-        try:
-            lead_score = int(score_raw)
-        except (ValueError, TypeError):
-            lead_score = 0
-
-        main_opp = lead.get("Main Opportunity") or opps.get("main_gap") or scoring.get("main_identified_gap") or ""
-        notes = lead.get("Notes") or scoring.get("priority_reason") or ""
+        priority, lead_score, main_opp, notes = resolve_lead_summary_fields(lead, website)
 
         row_idx = ws_leads.max_row + 1
         ws_leads.append([
@@ -426,7 +523,7 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
 
         # 3. Canonical Status
         canonical_info = seo.get("canonical", {})
-        if "Missing Canonical URL Tag" in seo_finding_names or canonical_info.get("status") in ["Missing", "Mismatch"]:
+        if any(n in seo_finding_names for n in ["Missing Canonical URL Tag", "Missing Canonical Tag"]) or canonical_info.get("status") in ["Missing", "Mismatch"]:
             canonical_status = "Confirmed issue"
         elif metrics.get("canonical_url"):
             canonical_status = "Passed"
@@ -435,7 +532,7 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
 
         # 4. Indexability / Robots Status
         robots_info = seo.get("robots_sitemap", {})
-        if any(n in seo_finding_names for n in ["Page Blocked by Robots Noindex Tag", "Missing robots.txt File", "Missing XML Sitemap"]) or robots_info.get("robots_txt_status") == "Blocked" or seo.get("indexable") is False:
+        if any(n in seo_finding_names for n in ["Page Blocked by Robots Noindex Tag", "Page Blocked by Noindex Tag", "Missing robots.txt File", "Missing XML Sitemap"]) or robots_info.get("robots_txt_status") == "Blocked" or seo.get("indexable") is False:
             robots_status = "Confirmed issue"
         elif robots_info.get("has_robots_txt") or not metrics.get("is_noindex"):
             robots_status = "Passed"
@@ -443,7 +540,7 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
             robots_status = "Unknown"
 
         # 5. H1 Status
-        if any(n in seo_finding_names for n in ["Missing H1 Heading Tag", "Multiple H1 Heading Tags"]):
+        if any(n in seo_finding_names for n in ["Missing H1 Heading Tag", "Multiple H1 Heading Tags", "Missing H1 Heading", "Multiple H1 Headings"]):
             h1_status = "Confirmed issue"
         elif metrics.get("h1_tags") and len(metrics.get("h1_tags")) > 0:
             h1_status = "Passed"
@@ -451,7 +548,7 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
             h1_status = "Unknown"
 
         # 6. Image Alt Status
-        if "Missing Image Alt Attributes" in seo_finding_names:
+        if any(n in seo_finding_names for n in ["Missing Image Alt Attributes", "Images Missing Alt Attributes"]):
             alt_status = "Confirmed issue"
         elif metrics.get("images_total", 0) > 0 and metrics.get("images_missing_alt", 0) == 0:
             alt_status = "Passed"
@@ -462,7 +559,7 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
 
         # 7. Mobile / Viewport Status
         mob_info = tech.get("mobile_usability", {})
-        if any(n in tech_finding_names for n in ["Missing Responsive Viewport Meta Tag", "Mobile Viewport Width Mismatch", "Horizontal Content Overflow Risk"]) or mob_info.get("status") in ["Non-Responsive", "Overflow Risk"]:
+        if any(n in tech_finding_names for n in ["Missing Responsive Viewport Meta Tag", "Missing Viewport Meta Tag", "Mobile Viewport Width Mismatch", "Horizontal Content Overflow Risk", "Potential Mobile Horizontal Overflow"]) or mob_info.get("status") in ["Non-Responsive", "Overflow Risk"] or "Needs Improvement" in str(mob_info.get("status", "")):
             mob_status = "Confirmed issue"
         elif mob_info.get("status") in ["Mobile-Friendly", "Responsive", "Passed"] or mob_info.get("has_viewport"):
             mob_status = "Passed"
@@ -471,7 +568,7 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
 
         # 8. HTTPS Status
         ssl_info = tech.get("ssl_certificate", {})
-        if any(n in tech_finding_names for n in ["Missing or Inactive SSL Certificate", "SSL Certificate Expired", "SSL Certificate Near Expiration"]) or ssl_info.get("status") in ["Expired", "Plain HTTP", "Invalid"]:
+        if any(n in tech_finding_names for n in ["Missing or Inactive SSL Certificate", "Website Not Using HTTPS Encryption", "SSL Certificate Expired", "SSL Certificate Near Expiration", "SSL Certificate Expiring Soon"]) or ssl_info.get("status") in ["Expired", "Plain HTTP", "Invalid"]:
             https_status = "Confirmed issue"
         elif ssl_info.get("status") in ["Valid", "Active", "Passed"] or ssl_info.get("has_ssl"):
             https_status = "Passed"
@@ -557,9 +654,6 @@ def generate_lead_tracker_csv(leads_data: list) -> str:
     rows = []
     for item in deduped:
         lead = dict(item)
-        intel = lead.get("intelligence", {}) or {}
-        opps = intel.get("opportunities", {}) or {}
-        scoring = opps.get("scoring_details", {}) or {}
 
         biz_name = lead.get("Business Name") or lead.get("Name") or ""
         category = lead.get("Category") or lead.get("Google Category") or "Unknown"
@@ -579,19 +673,7 @@ def generate_lead_tracker_csv(leads_data: list) -> str:
         email = lead.get("Email") or lead.get("Contact Email") or ""
         email_status = normalize_email_status(lead.get("Email Status") or lead.get("Email Verification") or "", email)
 
-        priority = normalize_priority(
-            lead.get("Priority") or opps.get("priority") or opps.get("priority_tier") or
-            scoring.get("priority") or scoring.get("research_priority")
-        )
-
-        score_raw = lead.get("Lead Score") or opps.get("lead_score") or scoring.get("research_score") or 0
-        try:
-            lead_score = int(score_raw)
-        except (ValueError, TypeError):
-            lead_score = 0
-
-        main_opp = lead.get("Main Opportunity") or opps.get("main_gap") or scoring.get("main_identified_gap") or ""
-        notes = lead.get("Notes") or scoring.get("priority_reason") or ""
+        priority, lead_score, main_opp, notes = resolve_lead_summary_fields(lead, website)
 
         rows.append({
             "Business Name": biz_name,

@@ -124,8 +124,18 @@ def scrape_api():
                         logger.info(f"[Enrichment {idx}/{total_leads}] Successfully enriched '{biz_name}' (Email: {lead['Email'] or 'None'}, Priority: {lead['Priority']})")
                     except Exception as e:
                         logger.warning(f"[Enrichment {idx}/{total_leads}] Website enrichment failed for '{biz_name}' ({clean_website}): {e}. Retaining Maps lead data.")
+                        lead.setdefault("Website Status", "Crawl failed")
+                        lead.setdefault("Priority", "Manual Review")
+                        lead.setdefault("Lead Score", 0)
+                        lead.setdefault("Main Opportunity", "Website inspection failed — manual review required")
+                        lead.setdefault("Notes", f"Website audit failed: {e}")
                 else:
                     logger.info(f"[Enrichment {idx}/{total_leads}] No valid external website for '{biz_name}'. Retaining Maps lead data.")
+                    lead.setdefault("Website Status", "Not checked")
+                    lead.setdefault("Priority", "Manual Review")
+                    lead.setdefault("Lead Score", 0)
+                    lead.setdefault("Main Opportunity", "No website provided — manual review required")
+                    lead.setdefault("Notes", "No valid external website available for automated audit.")
 
                 enriched_leads.append(lead)
 
