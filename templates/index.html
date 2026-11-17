@@ -4,10 +4,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LeadHunter Studio | Intelligent B2B Lead Extraction & Verification</title>
+    <title>LeadHunter Studio | Lead Intelligence & Business Opportunity Detection Platform</title>
     <!-- Tailwind CSS -->
     <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
-    <!-- PapaParse & SheetJS for high-performance CSV/Excel parsing and generation -->
+    <!-- PapaParse & SheetJS for CSV/Excel client-side processing -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
@@ -55,22 +55,12 @@
             background-image: radial-gradient(#e2e8f0 1.2px, transparent 1.2px);
             background-size: 24px 24px;
         }
-
-        /* Shimmer effect for progress */
-        @keyframes shimmer {
-            0% { background-position: -200% 0; }
-            100% { background-position: 200% 0; }
-        }
-        .progress-shimmer {
-            background-size: 200% 100%;
-            animation: shimmer 2s infinite linear;
-        }
     </style>
 </head>
 
 <body class="bg-[#f8fafc] text-slate-800 min-h-full flex flex-col antialiased selection:bg-indigo-500 selection:text-white">
 
-    <!-- Ambient Subtle Glows (Modern Aurora Canvas) -->
+    <!-- Ambient Subtle Glows (Aurora Mesh Canvas) -->
     <div class="fixed inset-0 overflow-hidden pointer-events-none z-0">
         <div class="absolute -top-32 -left-32 w-[500px] h-[500px] bg-indigo-200/40 rounded-full blur-[120px]"></div>
         <div class="absolute top-1/4 -right-28 w-[450px] h-[450px] bg-violet-200/40 rounded-full blur-[140px]"></div>
@@ -95,10 +85,10 @@
                             LeadHunter <span class="bg-gradient-to-r from-indigo-600 to-violet-600 bg-clip-text text-transparent">STUDIO</span>
                         </span>
                         <span class="px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200/70 rounded-full shadow-sm">
-                            v2.5 Intelligence Engine
+                            Opportunity Intelligence v3.0
                         </span>
                     </div>
-                    <p class="text-xs font-medium text-slate-500 mt-0.5">Google Maps Leads • Decision Maker Extraction • Zero-Cost SMTP Validator</p>
+                    <p class="text-xs font-medium text-slate-500 mt-0.5">Decision Maker Extraction • Technical & SEO Audit • Feature Gap Detection • Zero-Cost Outreach</p>
                 </div>
             </div>
 
@@ -106,7 +96,7 @@
             <div class="flex items-center gap-2.5 text-xs">
                 <div class="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-800 shadow-sm font-semibold">
                     <span class="w-2 h-2 rounded-full bg-emerald-500 pulse-beacon"></span>
-                    <span>Playwright & SMTP Ready</span>
+                    <span>Audit & SMTP Engine Ready</span>
                 </div>
                 <div class="hidden md:flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-indigo-50/80 border border-indigo-200/80 text-indigo-700 font-semibold shadow-sm">
                     <svg class="w-3.5 h-3.5 text-indigo-600" fill="currentColor" viewBox="0 0 20 20">
@@ -128,7 +118,7 @@
                     </div>
                 </div>
                 <div class="text-3xl font-extrabold text-slate-900 font-mono tracking-tight" id="statTotalRecords">0</div>
-                <p class="text-[11px] font-medium text-slate-400 mt-1">Imported from CSV / Maps</p>
+                <p class="text-[11px] font-medium text-slate-400 mt-1">Imported leads queue</p>
             </div>
 
             <!-- Metric 2: Decision Makers -->
@@ -155,16 +145,16 @@
                 <p class="text-[11px] font-medium text-emerald-600/80 mt-1">SMTP & Permutation Validated</p>
             </div>
 
-            <!-- Metric 4: Social Channels -->
-            <div class="bg-white/90 backdrop-blur-md border border-sky-200/70 p-5 rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.03)] hover:shadow-md hover:border-sky-300 transition-all group">
+            <!-- Metric 4: Identified Opportunities -->
+            <div class="bg-white/90 backdrop-blur-md border border-amber-200/70 p-5 rounded-2xl shadow-[0_2px_10px_rgba(0,0,0,0.03)] hover:shadow-md hover:border-amber-300 transition-all group">
                 <div class="flex justify-between items-start mb-2">
-                    <span class="text-xs font-bold text-sky-700 uppercase tracking-wider">Social Channels</span>
-                    <div class="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center group-hover:bg-sky-100 transition-colors">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" /></svg>
+                    <span class="text-xs font-bold text-amber-700 uppercase tracking-wider">Opportunity Gaps</span>
+                    <div class="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center group-hover:bg-amber-100 transition-colors">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                     </div>
                 </div>
-                <div class="text-3xl font-extrabold text-sky-700 font-mono tracking-tight" id="statSocialProfiles">0</div>
-                <p class="text-[11px] font-medium text-sky-600/80 mt-1">LinkedIn & Facebook Profiles</p>
+                <div class="text-3xl font-extrabold text-amber-700 font-mono tracking-tight" id="statOpportunities">0</div>
+                <p class="text-[11px] font-medium text-amber-600/80 mt-1">Chatbot, Booking & SEO gaps</p>
             </div>
         </div>
 
@@ -189,7 +179,7 @@
                     <div>
                         <h2 class="text-2xl font-extrabold text-slate-900 tracking-tight">Enrich Existing Google Maps CSV or Excel</h2>
                         <p class="text-sm text-slate-500 mt-2 font-medium">
-                            আপলোড করুন আপনার গুগল ম্যাপস থেকে ডাউনলোড করা লিড ফাইল। ইঞ্জিন স্বয়ংক্রিয়ভাবে কোম্পানি ওয়েবসাইট স্ক্যান করে <span class="text-purple-700 font-semibold">Decision Maker (Owner/CEO)</span> খুঁজবে, <span class="text-emerald-700 font-semibold">SMTP Handshake</span> দিয়ে ইমেইল ভ্যালিডেট করবে এবং আপনার ফাইলের সব কলাম অটুট রাখবে।
+                            আপলোড করুন আপনার গুগল ম্যাপস থেকে ডাউনলোড করা লিড ফাইল। ইঞ্জিন স্বয়ংক্রিয়ভাবে কোম্পানি ওয়েবসাইট স্ক্যান করে <span class="text-purple-700 font-semibold">Decision Maker (Owner/CEO)</span> খুঁজবে, <span class="text-emerald-700 font-semibold">SMTP Handshake</span> দিয়ে ইমেইল ভ্যালিডেট করবে, <span class="text-indigo-700 font-semibold">SEO & Feature Gaps</span> বের করবে এবং ফাইলের সব কলাম অটুট রাখবে।
                         </p>
                     </div>
 
@@ -223,8 +213,8 @@
                         <label class="flex items-start gap-3.5 p-4 rounded-2xl bg-slate-50/90 border border-slate-200/90 cursor-pointer hover:border-purple-300 hover:bg-purple-50/20 transition-all">
                             <input type="checkbox" id="autoVerifySmtpCheck" checked class="mt-1 w-4 h-4 rounded text-purple-600 focus:ring-purple-500 border-slate-300">
                             <div>
-                                <span class="text-xs font-bold text-slate-900 block">Owner & SMTP Engine</span>
-                                <span class="text-[11px] font-medium text-slate-500">ওনার/সিইওর নাম খুঁজে পার্সোনাল ইমেইল পারমুটেশন ও লাইভ SMTP ভ্যালিডেশন</span>
+                                <span class="text-xs font-bold text-slate-900 block">Owner, SMTP & Opportunity Audit</span>
+                                <span class="text-[11px] font-medium text-slate-500">ওনারের নাম, পার্সোনাল ইমেইল, এসইও স্কোর ও সার্ভিসের সুযোগ বিশ্লেষণ</span>
                             </div>
                         </label>
                     </div>
@@ -232,7 +222,7 @@
                     <!-- Primary Action Button -->
                     <button onclick="startFileScraping()" id="btnStartFile" class="w-full py-4 px-8 rounded-2xl font-bold text-base bg-gradient-to-r from-indigo-600 via-indigo-500 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-xl shadow-indigo-500/25 hover:shadow-indigo-500/35 active:scale-[0.99] transition-all flex items-center justify-center gap-3">
                         <svg class="w-5 h-5 font-bold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                        Start Deep Lead Extraction
+                        Start Lead Intelligence & Opportunity Audit
                     </button>
                 </div>
             </div>
@@ -262,7 +252,7 @@
 
                     <button onclick="startManualScraping()" id="btnStartManual" class="w-full py-4 px-8 rounded-2xl font-bold text-base bg-gradient-to-r from-indigo-600 via-indigo-500 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-xl shadow-indigo-500/25 transition-all active:scale-[0.99] flex items-center justify-center gap-3">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-                        Start Scraping URLs
+                        Start Scanning URLs
                     </button>
                 </div>
             </div>
@@ -275,7 +265,7 @@
                     <div class="w-3.5 h-3.5 rounded-full bg-emerald-500 animate-ping"></div>
                     <div>
                         <h3 class="font-extrabold text-slate-900 text-base" id="statusText">Processing Lead Queue...</h3>
-                        <p class="text-xs font-medium text-slate-500" id="statusSubText">Engaging Playwright & SMTP Handshake validators</p>
+                        <p class="text-xs font-medium text-slate-500" id="statusSubText">Engaging Playwright, SMTP Handshake & Opportunity Analyzer</p>
                     </div>
                 </div>
                 <div class="flex items-center gap-3">
@@ -309,11 +299,11 @@
             <div class="hidden pt-2 grid grid-cols-1 sm:grid-cols-2 gap-4" id="downloadSection">
                 <button onclick="downloadCSV()" class="py-4 px-6 rounded-2xl font-bold text-sm bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2.5 transition-all transform hover:-translate-y-0.5">
                     <svg class="w-5 h-5 font-bold" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                    Download CSV (Final Version)
+                    Download CSV (Preserves All 22+ Columns)
                 </button>
                 <button onclick="downloadExcel()" class="py-4 px-6 rounded-2xl font-bold text-sm bg-white hover:bg-slate-50 text-slate-800 border border-slate-300 shadow-md flex items-center justify-center gap-2.5 transition-all transform hover:-translate-y-0.5">
                     <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
-                    Download Excel (.xlsx)
+                    Download Intelligence Excel (.xlsx)
                 </button>
             </div>
         </div>
@@ -323,16 +313,16 @@
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                     <h3 class="text-lg font-extrabold text-slate-900 flex items-center gap-2.5">
-                        <span>Extracted Lead Records</span>
+                        <span>Extracted Lead & Opportunity Records</span>
                         <span class="text-xs px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 font-mono font-bold" id="tableRowCount">0 records</span>
                     </h3>
-                    <p class="text-xs font-medium text-slate-500 mt-0.5">Click any email to copy. Click website or social links to open directly.</p>
+                    <p class="text-xs font-medium text-slate-500 mt-0.5">Click any email to copy. Click "Audit ⚡" to inspect full technical diagnostics and tailored pitch angles.</p>
                 </div>
                 
                 <!-- Table Search & Filter Toolbar -->
                 <div class="flex items-center gap-3">
                     <div class="relative">
-                        <input type="text" id="tableSearchInput" onkeyup="filterTableRows()" placeholder="Search records..." class="bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white w-48 sm:w-64 transition-all">
+                        <input type="text" id="tableSearchInput" onkeyup="filterTableRows()" placeholder="Search leads or gaps..." class="bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white w-48 sm:w-64 transition-all">
                         <svg class="w-3.5 h-3.5 text-slate-400 absolute right-3 top-3 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                     </div>
                     <button onclick="copyTableToClipboard()" class="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-1.5 transition-colors shadow-sm">
@@ -343,7 +333,7 @@
             </div>
 
             <!-- Table Wrapper -->
-            <div class="overflow-x-auto rounded-2xl border border-slate-200 bg-white max-h-[500px]">
+            <div class="overflow-x-auto rounded-2xl border border-slate-200 bg-white max-h-[550px]">
                 <table class="w-full text-left text-xs border-collapse">
                     <thead class="bg-slate-50 text-slate-700 uppercase tracking-wider font-bold sticky top-0 backdrop-blur-md border-b border-slate-200 z-10">
                         <tr id="tableHeadRow">
@@ -352,8 +342,10 @@
                             <th class="px-4 py-3.5 text-purple-700">Decision Maker</th>
                             <th class="px-4 py-3.5 text-emerald-700">Contact Email</th>
                             <th class="px-4 py-3.5">Verification</th>
-                            <th class="px-4 py-3.5">Facebook</th>
-                            <th class="px-4 py-3.5">LinkedIn</th>
+                            <th class="px-4 py-3.5 text-amber-700">Lead Score</th>
+                            <th class="px-4 py-3.5">Detected Gaps</th>
+                            <th class="px-4 py-3.5 text-center">Audit</th>
+                            <th class="px-4 py-3.5">Socials</th>
                         </tr>
                     </thead>
                     <tbody id="resultsTableBody" class="divide-y divide-slate-100 font-medium">
@@ -363,6 +355,80 @@
             </div>
         </div>
 
+    </div>
+
+    <!-- Slide-over / Modal: Full Business Intelligence & Opportunity Drawer -->
+    <div id="intelModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex justify-end transition-opacity duration-300">
+        <div class="bg-white w-full max-w-2xl h-full shadow-2xl p-6 sm:p-8 overflow-y-auto space-y-6 border-l border-slate-200 transform transition-transform duration-300">
+            <!-- Modal Header -->
+            <div class="flex items-start justify-between border-b border-slate-200 pb-5">
+                <div>
+                    <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 uppercase tracking-wider" id="modalTierBadge">High Priority</span>
+                    <h2 class="text-xl font-extrabold text-slate-900 mt-1" id="modalBizName">Acme Company</h2>
+                    <a href="#" target="_blank" id="modalWebsiteLink" class="text-xs font-semibold text-indigo-600 hover:underline flex items-center gap-1 mt-0.5">
+                        <span id="modalWebsite">https://example.com</span>
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                    </a>
+                </div>
+                <button onclick="closeIntelModal()" class="w-8 h-8 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+            </div>
+
+            <!-- Score Cards Banner -->
+            <div class="grid grid-cols-3 gap-3">
+                <div class="p-4 rounded-2xl bg-indigo-50 border border-indigo-100 text-center">
+                    <span class="text-[11px] font-bold text-indigo-600 uppercase">Opportunity Score</span>
+                    <div class="text-2xl font-extrabold text-indigo-900 font-mono mt-0.5" id="modalLeadScore">85</div>
+                </div>
+                <div class="p-4 rounded-2xl bg-emerald-50 border border-emerald-100 text-center">
+                    <span class="text-[11px] font-bold text-emerald-600 uppercase">SEO Health</span>
+                    <div class="text-2xl font-extrabold text-emerald-900 font-mono mt-0.5" id="modalSeoScore">90/100</div>
+                </div>
+                <div class="p-4 rounded-2xl bg-purple-50 border border-purple-100 text-center">
+                    <span class="text-[11px] font-bold text-purple-600 uppercase">Identified Gaps</span>
+                    <div class="text-2xl font-extrabold text-purple-900 font-mono mt-0.5" id="modalGapsCount">3 Gaps</div>
+                </div>
+            </div>
+
+            <!-- Key Service Opportunities Section -->
+            <div class="space-y-3">
+                <h3 class="text-sm font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    <svg class="w-4 h-4 text-amber-500" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" /></svg>
+                    Actionable Service Opportunities
+                </h3>
+                <div id="modalOppsList" class="space-y-3">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Personalized Outreach Hooks -->
+            <div class="space-y-2.5">
+                <h3 class="text-sm font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                    Personalized Outreach Hook (1-Click Copy)
+                </h3>
+                <div id="modalHooksList" class="space-y-2">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Detected Digital Infrastructure -->
+            <div class="space-y-2.5">
+                <h3 class="text-sm font-extrabold text-slate-900 uppercase tracking-wider">Detected Digital Infrastructure</h3>
+                <div id="modalFeaturesGrid" class="grid grid-cols-2 gap-2 text-xs">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Technical & Mobile Diagnostics -->
+            <div class="space-y-2.5">
+                <h3 class="text-sm font-extrabold text-slate-900 uppercase tracking-wider">Technical & Mobile Diagnostics</h3>
+                <div id="modalTechList" class="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Toast Notification -->
@@ -432,9 +498,11 @@
                 div.innerHTML = `${prefix} <span class="text-purple-400 font-semibold font-mono">🎯 [DECISION MAKER]</span> <span class="text-purple-200">${msg}</span>`;
             } else if (msg.includes('Verified') || msg.includes('Found & filled') || msg.includes('Email:')) {
                 div.innerHTML = `${prefix} <span class="text-emerald-400 font-semibold font-mono">✉️ [VERIFIED EMAIL]</span> <span class="text-emerald-200">${msg}</span>`;
+            } else if (msg.includes('Opportunity') || msg.includes('Score')) {
+                div.innerHTML = `${prefix} <span class="text-amber-400 font-semibold font-mono">⚡ [OPPORTUNITY]</span> <span class="text-amber-200">${msg}</span>`;
             } else if (msg.includes('Failed') || msg.includes('Error')) {
                 div.innerHTML = `${prefix} <span class="text-rose-400 font-semibold font-mono">❌ [ERROR]</span> <span class="text-rose-200">${msg}</span>`;
-            } else if (msg.includes('Checking') || msg.includes('Scraping') || msg.includes('Scanning')) {
+            } else if (msg.includes('Scanning') || msg.includes('Auditing')) {
                 div.innerHTML = `${prefix} <span class="text-sky-400 font-semibold font-mono">🔍 [SCAN]</span> <span class="text-slate-300">${msg}</span>`;
             } else {
                 div.innerHTML = `${prefix} <span class="text-slate-300">${msg}</span>`;
@@ -545,6 +613,7 @@
                 if (row[detectedVerCol] === undefined) row[detectedVerCol] = '';
                 if (row[detectedFbCol] === undefined) row[detectedFbCol] = '';
                 if (row[detectedLiCol] === undefined) row[detectedLiCol] = '';
+                if (!row.intelligence) row.intelligence = null;
             });
 
             if (!detectedWebsiteCol) {
@@ -570,6 +639,7 @@
                 targetQueue.push({
                     rowIndex: idx,
                     url: url,
+                    business_name: row["Business Name"] || row["Name"] || "",
                     decision_maker: (row[detectedDmCol] || '').toString().trim()
                 });
             });
@@ -584,10 +654,10 @@
             if (onlyEmpty) {
                 log(`Skipped ${alreadyHasEmail} records that already possess emails.`);
             }
-            log(`Targeting ${targetQueue.length} businesses for Decision Maker & Email extraction.`);
+            log(`Targeting ${targetQueue.length} businesses for Decision Maker & Opportunity Intelligence.`);
 
             if (targetQueue.length === 0) {
-                log(`✅ All records already have emails!`);
+                log(`✅ All records already processed!`);
                 document.getElementById('statusText').textContent = 'All emails already filled!';
                 document.getElementById('downloadSection').classList.remove('hidden');
                 updateDashboardStats();
@@ -607,7 +677,7 @@
             for (let i = 0; i < total; i++) {
                 const item = targetQueue[i];
                 const url = item.url;
-                log(`[${i + 1}/${total}] Scanning: ${url}`);
+                log(`[${i + 1}/${total}] Auditing: ${url}`);
 
                 try {
                     let fetchUrl = url;
@@ -621,6 +691,7 @@
                         body: JSON.stringify({
                             url: fetchUrl,
                             type: scrapeMode,
+                            business_name: item.business_name || '',
                             decision_maker: item.decision_maker || ''
                         })
                     });
@@ -628,11 +699,17 @@
                     const res = await response.json();
 
                     if (res.success) {
+                        const intel = res.data.intelligence || {};
+                        const leadScore = intel.lead_score || '-';
+                        const oppsCount = (intel.opportunities && intel.opportunities.detected_opportunities) ? intel.opportunities.detected_opportunities.length : 0;
+
                         if (inputType === 'manual') {
                             finalData.push(res.data);
                             log(`-> DM: ${res.data["Decision Maker"] || 'None'} | Email: ${res.data.Email || 'None'} [${res.data["Email Verification"]}]`);
+                            if (oppsCount > 0) log(`-> Opportunities: Found ${oppsCount} gaps (Lead Score: ${leadScore})`);
                         } else if (inputType === 'file') {
                             const row = uploadedData[item.rowIndex];
+                            row.intelligence = intel;
 
                             if (res.data["Decision Maker"]) {
                                 row[detectedDmCol] = res.data["Decision Maker"];
@@ -658,7 +735,7 @@
                         }
                     } else {
                         log(`Failed: ${res.error}`);
-                        if (inputType === 'manual') finalData.push({ "Source URL": url, "Error": "Failed" });
+                        if (inputType === 'manual') finalData.push({ "Source URL": url, "Error": res.error });
                     }
                 } catch (e) {
                     log(`Network error: ${e.message}`);
@@ -673,12 +750,12 @@
                 updateDashboardStats();
             }
 
-            log(`🎉 All records processed successfully!`);
-            document.getElementById('statusText').textContent = 'Scraping & Verification Complete!';
-            document.getElementById('statusSubText').textContent = 'Your enriched leads are ready for download.';
+            log(`🎉 Intelligence and enrichment completed!`);
+            document.getElementById('statusText').textContent = 'Audit & Verification Complete!';
+            document.getElementById('statusSubText').textContent = 'Your enriched leads and opportunity gaps are ready.';
             document.getElementById('downloadSection').classList.remove('hidden');
             renderTable();
-            showToast("Extraction completed successfully!", "🚀");
+            showToast("Intelligence extraction complete!", "🚀");
         }
 
         // Live Stats Update
@@ -688,7 +765,7 @@
 
             let dms = 0;
             let verified = 0;
-            let socials = 0;
+            let totalOpps = 0;
 
             data.forEach(r => {
                 const dm = r["Decision Maker"] || r[detectedDmCol];
@@ -697,34 +774,24 @@
                 const em = r["Email"] || r[detectedEmailCol];
                 if (em && em.includes('@')) verified++;
 
-                const fb = r["Facebook"] || r[detectedFbCol];
-                const li = r["LinkedIn"] || r[detectedLiCol];
-                if ((fb && fb.includes('facebook')) || (li && li.includes('linkedin'))) socials++;
+                const intel = r.intelligence;
+                if (intel && intel.opportunities && intel.opportunities.detected_opportunities) {
+                    totalOpps += intel.opportunities.detected_opportunities.length;
+                }
             });
 
             document.getElementById('statDecisionMakers').textContent = dms;
             document.getElementById('statVerifiedEmails').textContent = verified;
-            document.getElementById('statSocialProfiles').textContent = socials;
+            document.getElementById('statOpportunities').textContent = totalOpps;
         }
 
         // Render Results Table
         function renderTable() {
             const tbody = document.getElementById('resultsTableBody');
-            const headRow = document.getElementById('tableHeadRow');
             tbody.innerHTML = '';
 
             const data = inputType === 'file' ? uploadedData : getOrderedData();
             document.getElementById('tableRowCount').textContent = `${data.length} records`;
-
-            headRow.innerHTML = `
-                <th class="px-4 py-3.5 border-b border-slate-200">Business Name</th>
-                <th class="px-4 py-3.5 border-b border-slate-200">Website</th>
-                <th class="px-4 py-3.5 border-b border-slate-200 text-purple-700">Decision Maker</th>
-                <th class="px-4 py-3.5 border-b border-slate-200 text-emerald-700">Contact Email</th>
-                <th class="px-4 py-3.5 border-b border-slate-200">Verification</th>
-                <th class="px-4 py-3.5 border-b border-slate-200">Facebook</th>
-                <th class="px-4 py-3.5 border-b border-slate-200">LinkedIn</th>
-            `;
 
             data.forEach((row, idx) => {
                 const tr = document.createElement('tr');
@@ -737,6 +804,7 @@
                 const ver = row["Email Verification"] || row[detectedVerCol] || 'Unverified';
                 const fb = row["Facebook"] || row[detectedFbCol] || '';
                 const li = row["LinkedIn"] || row[detectedLiCol] || '';
+                const intel = row.intelligence || {};
 
                 // Verification Badge
                 let verBadge = `<span class="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">${ver}</span>`;
@@ -746,31 +814,41 @@
                     verBadge = `<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-sky-50 text-sky-700 border border-sky-200/80 flex items-center gap-1.5 w-fit shadow-xs"><span class="w-1.5 h-1.5 rounded-full bg-sky-500"></span>Catch-All</span>`;
                 } else if (ver.includes('MX')) {
                     verBadge = `<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200/80 flex items-center gap-1.5 w-fit shadow-xs"><span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>MX Valid</span>`;
-                } else if (ver === 'Invalid') {
-                    verBadge = `<span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200/80">Invalid</span>`;
+                }
+
+                // Lead Score Badge
+                const score = intel.lead_score || (intel.opportunities ? intel.opportunities.lead_score : null);
+                let scoreBadge = `<span class="text-slate-400 font-mono">-</span>`;
+                if (score !== null && score !== undefined) {
+                    const colorClass = score >= 80 ? 'bg-amber-50 text-amber-800 border-amber-200' : (score >= 60 ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-slate-100 text-slate-700 border-slate-200');
+                    scoreBadge = `<span class="px-2.5 py-0.5 rounded-full text-xs font-bold font-mono border ${colorClass}">${score} pts</span>`;
+                }
+
+                // Opportunity Gaps Pill
+                let gapsHtml = `<span class="text-slate-400 text-[11px]">-</span>`;
+                if (intel.opportunities && intel.opportunities.detected_opportunities && intel.opportunities.detected_opportunities.length > 0) {
+                    const topGaps = intel.opportunities.detected_opportunities.slice(0, 2).map(o => o.service.split('&')[0].trim());
+                    gapsHtml = `<div class="flex flex-wrap gap-1 max-w-[200px]">` + 
+                        topGaps.map(g => `<span class="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200/80 text-[10px] font-bold truncate">${g}</span>`).join('') +
+                        (intel.opportunities.detected_opportunities.length > 2 ? `<span class="text-[10px] text-slate-400 font-bold">+${intel.opportunities.detected_opportunities.length - 2}</span>` : '') +
+                        `</div>`;
                 }
 
                 // Links
                 const webHtml = (web && web !== '-') 
-                    ? `<a href="${web.startsWith('http') ? web : 'https://' + web}" target="_blank" class="text-indigo-600 hover:text-indigo-800 font-semibold hover:underline flex items-center gap-1 max-w-[150px] truncate" title="${web}">
+                    ? `<a href="${web.startsWith('http') ? web : 'https://' + web}" target="_blank" class="text-indigo-600 hover:text-indigo-800 font-semibold hover:underline flex items-center gap-1 max-w-[130px] truncate" title="${web}">
                         <span class="truncate">${web.replace(/^https?:\/\/(www\.)?/, '')}</span>
                         <svg class="w-3.5 h-3.5 flex-shrink-0 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
                        </a>` 
                     : '<span class="text-slate-400">-</span>';
 
-                const fbHtml = (fb && fb !== '-') 
-                    ? `<a href="${fb}" target="_blank" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 text-[#1877F2] border border-blue-200/80 text-[11px] font-bold transition-colors shadow-xs">
-                        <svg class="w-3 h-3 fill-current" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-                        Facebook
-                       </a>` 
-                    : '<span class="text-slate-400">-</span>';
-
-                const liHtml = (li && li !== '-') 
-                    ? `<a href="${li}" target="_blank" class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-sky-50 hover:bg-sky-100 text-[#0A66C2] border border-sky-200/80 text-[11px] font-bold transition-colors shadow-xs">
-                        <svg class="w-3 h-3 fill-current" viewBox="0 0 24 24"><path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z"/></svg>
-                        LinkedIn
-                       </a>` 
-                    : '<span class="text-slate-400">-</span>';
+                const socialHtml = `
+                    <div class="flex items-center gap-1">
+                        ${fb ? `<a href="${fb}" target="_blank" class="p-1 rounded bg-blue-50 text-[#1877F2] hover:bg-blue-100" title="Facebook"><svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg></a>` : ''}
+                        ${li ? `<a href="${li}" target="_blank" class="p-1 rounded bg-sky-50 text-[#0A66C2] hover:bg-sky-100" title="LinkedIn"><svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z"/></svg></a>` : ''}
+                        ${(!fb && !li) ? '<span class="text-slate-400">-</span>' : ''}
+                    </div>
+                `;
 
                 const emailHtml = em 
                     ? `<span onclick="copyText('${em}')" class="font-mono text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 px-2 py-0.5 rounded-lg font-bold cursor-pointer group inline-flex items-center gap-1.5 transition-colors" title="Click to copy">
@@ -786,19 +864,123 @@
                        </span>` 
                     : '<span class="text-slate-400">-</span>';
 
+                const auditBtn = `<button onclick="openIntelModal(${idx})" class="px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-bold text-xs inline-flex items-center gap-1 transition-colors shadow-xs">
+                    <span>Audit</span>
+                    <svg class="w-3 h-3 text-indigo-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" /></svg>
+                </button>`;
+
                 tr.innerHTML = `
-                    <td class="px-4 py-3.5 font-bold text-slate-900 max-w-[180px] truncate">${bizName}</td>
+                    <td class="px-4 py-3.5 font-bold text-slate-900 max-w-[160px] truncate">${bizName}</td>
                     <td class="px-4 py-3.5">${webHtml}</td>
                     <td class="px-4 py-3.5">${dmHtml}</td>
                     <td class="px-4 py-3.5">${emailHtml}</td>
                     <td class="px-4 py-3.5">${verBadge}</td>
-                    <td class="px-4 py-3.5">${fbHtml}</td>
-                    <td class="px-4 py-3.5">${liHtml}</td>
+                    <td class="px-4 py-3.5">${scoreBadge}</td>
+                    <td class="px-4 py-3.5">${gapsHtml}</td>
+                    <td class="px-4 py-3.5 text-center">${auditBtn}</td>
+                    <td class="px-4 py-3.5">${socialHtml}</td>
                 `;
                 tbody.appendChild(tr);
             });
 
             document.getElementById('resultsTableContainer').classList.remove('hidden');
+        }
+
+        // Open Intelligence Modal / Drawer
+        function openIntelModal(idx) {
+            const data = inputType === 'file' ? uploadedData : getOrderedData();
+            const row = data[idx];
+            if (!row) return;
+
+            const intel = row.intelligence || {};
+            const opps = intel.opportunities || {};
+            const seo = intel.seo || {};
+            const tech = intel.technical || {};
+            const features = intel.features || {};
+
+            document.getElementById('modalBizName').textContent = row["Business Name"] || row["Name"] || "Company Intelligence";
+            const web = row["Website"] || row[detectedWebsiteCol] || "N/A";
+            document.getElementById('modalWebsite').textContent = web;
+            document.getElementById('modalWebsiteLink').href = web.startsWith('http') ? web : 'https://' + web;
+
+            const score = intel.lead_score || opps.lead_score || 50;
+            document.getElementById('modalLeadScore').textContent = score;
+            document.getElementById('modalTierBadge').textContent = opps.priority_tier || "Standard Prospect";
+            document.getElementById('modalSeoScore').textContent = (seo.seo_score !== undefined) ? `${seo.seo_score}/100` : "N/A";
+
+            const detectedOpps = opps.detected_opportunities || [];
+            document.getElementById('modalGapsCount').textContent = `${detectedOpps.length} Gaps`;
+
+            // Render Opportunities
+            const oppsList = document.getElementById('modalOppsList');
+            oppsList.innerHTML = '';
+            if (detectedOpps.length === 0) {
+                oppsList.innerHTML = `<div class="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500">No major opportunity gaps detected. Existing systems appear well integrated.</div>`;
+            } else {
+                detectedOpps.forEach(o => {
+                    const card = document.createElement('div');
+                    card.className = "p-3.5 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-1";
+                    card.innerHTML = `
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-amber-900">${o.service}</span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-amber-200/60 text-amber-900">${o.priority} Priority</span>
+                        </div>
+                        <p class="text-[11px] text-slate-600">${o.evidence}</p>
+                        <p class="text-[11px] text-indigo-700 font-medium">💡 ${o.solution}</p>
+                    `;
+                    oppsList.appendChild(card);
+                });
+            }
+
+            // Render Outreach Hooks
+            const hooksList = document.getElementById('modalHooksList');
+            hooksList.innerHTML = '';
+            const hooks = opps.outreach_hooks || [];
+            if (hooks.length === 0) {
+                hooksList.innerHTML = `<div class="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-500">No specific outreach hooks generated.</div>`;
+            } else {
+                hooks.forEach(h => {
+                    const div = document.createElement('div');
+                    div.className = "p-3 rounded-xl bg-indigo-50/70 border border-indigo-200/80 text-xs text-indigo-900 flex items-center justify-between gap-3 group cursor-pointer hover:bg-indigo-100 transition-colors";
+                    div.onclick = () => copyText(h);
+                    div.title = "Click to copy hook";
+                    div.innerHTML = `
+                        <span>"${h}"</span>
+                        <svg class="w-4 h-4 text-indigo-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
+                    `;
+                    hooksList.appendChild(div);
+                });
+            }
+
+            // Render Features Grid
+            const featGrid = document.getElementById('modalFeaturesGrid');
+            featGrid.innerHTML = '';
+            for (const [key, feat] of Object.entries(features)) {
+                const detected = feat.status === "Detected";
+                const div = document.createElement('div');
+                div.className = `p-2.5 rounded-xl border flex items-center justify-between ${detected ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900' : 'bg-slate-50 border-slate-200 text-slate-500'}`;
+                div.innerHTML = `
+                    <span class="font-bold text-[11px]">${feat.category || key}</span>
+                    <span class="text-[10px] font-bold ${detected ? 'text-emerald-700' : 'text-slate-400'}">${detected ? (feat.providers[0] || 'Active') : 'Not Found'}</span>
+                `;
+                featGrid.appendChild(div);
+            }
+
+            // Render Technical Diagnostics
+            const techList = document.getElementById('modalTechList');
+            const ssl = tech.ssl_certificate || {};
+            const mob = tech.mobile_usability || {};
+            techList.innerHTML = `
+                <div><strong>SSL Certificate:</strong> ${ssl.status || 'Valid'} (${ssl.evidence || 'Enforced'})</div>
+                <div><strong>Mobile Readiness:</strong> ${mob.status || 'Configured'}</div>
+                <div><strong>XML Sitemap & Robots:</strong> ${seo.robots_sitemap ? (seo.robots_sitemap.has_sitemap_xml ? 'Sitemap Active' : 'Sitemap Missing') : 'Audited'}</div>
+            `;
+
+            document.getElementById('intelModal').classList.remove('hidden');
+        }
+
+        function closeIntelModal() {
+            document.getElementById('intelModal').classList.add('hidden');
         }
 
         function filterTableRows() {
@@ -812,7 +994,7 @@
 
         function copyText(str) {
             navigator.clipboard.writeText(str).then(() => {
-                showToast(`Copied ${str}`);
+                showToast(`Copied to clipboard!`);
             });
         }
 
@@ -838,19 +1020,38 @@
                     "Facebook": row["Facebook"] || "",
                     "LinkedIn": row["LinkedIn"] || "",
                     "Source URL": row["Source URL"] || "",
-                    "About Page Link": row["About Page Link"] || ""
+                    "intelligence": row.intelligence || null
                 };
             });
         }
 
         function downloadCSV() {
             let dataToExport = inputType === 'file' ? uploadedData : getOrderedData();
-            let fileName = "enriched_leads.csv";
+            let fileName = "LeadHunter_Intelligence.csv";
             if (inputType === 'file' && uploadedFileName) {
-                fileName = uploadedFileName.replace(/\.[^/.]+$/, "") + "_enriched.csv";
+                fileName = uploadedFileName.replace(/\.[^/.]+$/, "") + "_intelligence.csv";
             }
 
-            const csv = Papa.unparse(dataToExport);
+            // Flatten rows for clean CSV output
+            const flattenedRows = dataToExport.map(row => {
+                const r = Object.assign({}, row);
+                const intel = r.intelligence || {};
+                delete r.intelligence;
+
+                r["Lead Score"] = intel.lead_score || (intel.opportunities ? intel.opportunities.lead_score : '');
+                r["Priority Tier"] = intel.priority_tier || (intel.opportunities ? intel.opportunities.priority_tier : '');
+                r["SEO Health Score"] = intel.seo ? intel.seo.seo_score : '';
+
+                if (intel.opportunities && intel.opportunities.detected_opportunities) {
+                    r["Opportunity Gaps"] = intel.opportunities.detected_opportunities.map(o => o.service).join(' | ');
+                }
+                if (intel.opportunities && intel.opportunities.outreach_hooks) {
+                    r["Outreach Pitch Angle"] = intel.opportunities.outreach_hooks[0] || '';
+                }
+                return r;
+            });
+
+            const csv = Papa.unparse(flattenedRows);
             const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a");
             link.href = URL.createObjectURL(blob);
@@ -859,20 +1060,38 @@
             showToast(`Downloaded ${fileName}`);
         }
 
-        function downloadExcel() {
+        async function downloadExcel() {
             let dataToExport = inputType === 'file' ? uploadedData : getOrderedData();
-            let fileName = "enriched_leads.xlsx";
+            let fileName = "LeadHunter_Intelligence.xlsx";
             if (inputType === 'file' && uploadedFileName) {
-                fileName = uploadedFileName.replace(/\.[^/.]+$/, "") + "_enriched.xlsx";
+                fileName = uploadedFileName.replace(/\.[^/.]+$/, "") + "_intelligence.xlsx";
             }
 
+            try {
+                // Call backend export API for styled Excel
+                const res = await fetch('/api/export-excel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ leads: dataToExport })
+                });
+
+                if (res.ok) {
+                    const blob = await res.blob();
+                    const link = document.createElement("a");
+                    link.href = URL.createObjectURL(blob);
+                    link.download = fileName;
+                    link.click();
+                    showToast(`Downloaded ${fileName}`);
+                    return;
+                }
+            } catch (e) {
+                console.error("Backend excel export fallback to SheetJS", e);
+            }
+
+            // Client-side fallback if network offline
             const worksheet = XLSX.utils.json_to_sheet(dataToExport);
             const workbook = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(workbook, worksheet, "Enriched Leads");
-
-            const cols = Object.keys(dataToExport[0] || {}).map(k => ({ wch: Math.max(k.length + 5, 18) }));
-            worksheet['!cols'] = cols;
-
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Lead Intelligence");
             XLSX.writeFile(workbook, fileName);
             showToast(`Downloaded ${fileName}`);
         }

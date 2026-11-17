@@ -5,4 +5,5 @@ requests
 pandas
 openpyxl
 email-validator
+dnspython
 gunicorn; sys_platform != 'win32'
