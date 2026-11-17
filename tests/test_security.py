@@ -807,5 +807,250 @@ class TestGoogleMapsPlaywrightSecurity(unittest.TestCase):
         mock_upstream.close.assert_called_once()
         mock_client.close.assert_called_once()
 
+    def test_chunked_body_with_extensions_and_trailers_preserved(self):
+        """
+        Verify that chunk sizes with chunk extensions and trailer headers following the
+        zero-sized terminal chunk are parsed correctly, preserved, and forwarded upstream.
+        """
+        pinned_ip = '142.250.190.46'
+
+        def public_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (pinned_ip, port))]
+
+        sent_upstream = []
+        mock_upstream = MagicMock()
+        mock_upstream.sendall.side_effect = lambda data: sent_upstream.append(data)
+        mock_upstream.recv.side_effect = [b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK", b""]
+
+        chunked_request = (
+            b"POST http://www.google.com/maps/api/collect HTTP/1.1\r\n"
+            b"Host: www.google.com\r\n"
+            b"Transfer-Encoding: chunked\r\n"
+            b"\r\n"
+            b"4;ext=1;opt=val\r\n"
+            b"wiki\r\n"
+            b"5;name=extra\r\n"
+            b"pedia\r\n"
+            b"0;final=true\r\n"
+            b"X-Checksum: sha256-mock123\r\n"
+            b"X-Trailer: trailer-value\r\n"
+            b"\r\n"
+        )
+
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [chunked_request, b""]
+
+        proxy = SafeBrowserProxy()
+        proxy.running = True
+        try:
+            with patch('socket.getaddrinfo', side_effect=public_getaddrinfo), \
+                 patch('services.security.socket.socket', return_value=mock_upstream):
+                proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        upstream_req = b"".join(sent_upstream)
+        self.assertTrue(upstream_req.startswith(b"POST /maps/api/collect HTTP/1.1\r\n"))
+        self.assertIn(b"Transfer-Encoding: chunked", upstream_req)
+        self.assertIn(b"4;ext=1;opt=val\r\nwiki\r\n", upstream_req)
+        self.assertIn(b"5;name=extra\r\npedia\r\n", upstream_req)
+        self.assertIn(b"0;final=true\r\n", upstream_req)
+        self.assertIn(b"X-Checksum: sha256-mock123\r\n", upstream_req)
+        self.assertIn(b"X-Trailer: trailer-value\r\n\r\n", upstream_req)
+
+    def test_chunked_body_incomplete_chunk_rejected(self):
+        """
+        Verify that an incomplete chunk body due to premature client disconnect
+        returns 400 Bad Request and does not hang.
+        """
+        client_sent = []
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [
+            b"POST http://www.google.com/maps/api HTTP/1.1\r\nHost: www.google.com\r\nTransfer-Encoding: chunked\r\n\r\n10\r\nshort",
+            b""
+        ]
+        mock_client.sendall.side_effect = lambda data: client_sent.append(data)
+
+        proxy = SafeBrowserProxy()
+        try:
+            proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        response = b"".join(client_sent)
+        self.assertIn(b"400 Bad Request", response)
+
+    def test_chunked_body_missing_crlf_after_chunk_rejected(self):
+        """
+        Verify that malformed chunk framing missing CRLF after data returns 400 Bad Request.
+        """
+        client_sent = []
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [
+            b"POST http://www.google.com/maps/api HTTP/1.1\r\nHost: www.google.com\r\nTransfer-Encoding: chunked\r\n\r\n4\r\ntestXX0\r\n\r\n",
+            b""
+        ]
+        mock_client.sendall.side_effect = lambda data: client_sent.append(data)
+
+        proxy = SafeBrowserProxy()
+        try:
+            proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        response = b"".join(client_sent)
+        self.assertIn(b"400 Bad Request", response)
+
+    def test_chunked_body_oversized_rejected_with_413(self):
+        """
+        Verify that chunked requests exceeding MAX_REQUEST_BODY_BYTES return 413 Payload Too Large.
+        """
+        client_sent = []
+        mock_client = MagicMock()
+        # Single chunk claiming 10 MB (> 5 MB limit)
+        mock_client.recv.side_effect = [
+            b"POST http://www.google.com/maps/api HTTP/1.1\r\nHost: www.google.com\r\nTransfer-Encoding: chunked\r\n\r\nA00000\r\n",
+            b""
+        ]
+        mock_client.sendall.side_effect = lambda data: client_sent.append(data)
+
+        proxy = SafeBrowserProxy()
+        try:
+            proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        response = b"".join(client_sent)
+        self.assertIn(b"413 Payload Too Large", response)
+
+    def test_multiple_validated_public_ips_fallback_success(self):
+        """
+        Verify that when a domain resolves to multiple validated public IPs:
+        1. It tries each validated IP in order.
+        2. Closes the failed socket before trying the next candidate.
+        3. Succeeds on the second candidate without triggering any additional DNS lookups.
+        4. Relays traffic successfully.
+        """
+        ip1 = "142.250.190.10"
+        ip2 = "142.250.190.20"
+
+        dns_lookup_count = 0
+        def tracking_getaddrinfo(host, port, *args, **kwargs):
+            nonlocal dns_lookup_count
+            dns_lookup_count += 1
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, '', (ip1, port)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, '', (ip2, port))
+            ]
+
+        sock1 = MagicMock(name="sock_ip1")
+        sock1.connect.side_effect = OSError("Connection refused on ip1")
+
+        sock2 = MagicMock(name="sock_ip2")
+        sock2.recv.side_effect = [b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nDONE", b""]
+
+        created_sockets = [sock1, sock2]
+        def socket_factory(*args, **kwargs):
+            return created_sockets.pop(0)
+
+        client_sent = []
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [
+            b"GET http://maps.google.com/test HTTP/1.1\r\nHost: maps.google.com\r\n\r\n",
+            b""
+        ]
+        mock_client.sendall.side_effect = lambda data: client_sent.append(data)
+
+        proxy = SafeBrowserProxy()
+        proxy.running = True
+        try:
+            with patch('socket.getaddrinfo', side_effect=tracking_getaddrinfo), \
+                 patch('services.security.socket.socket', side_effect=socket_factory):
+                proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        # 1. First candidate was attempted with ip1 and closed upon failure
+        sock1.connect.assert_called_once_with((ip1, 80))
+        sock1.close.assert_called_once()
+
+        # 2. Second candidate was attempted with ip2 and succeeded
+        sock2.connect.assert_called_once_with((ip2, 80))
+
+        # 3. Exactly 1 DNS lookup was performed (zero lookups during fallback)
+        self.assertEqual(dns_lookup_count, 1)
+
+        # 4. Client received response from second upstream
+        client_resp = b"".join(client_sent)
+        self.assertIn(b"HTTP/1.1 200 OK", client_resp)
+        self.assertIn(b"DONE", client_resp)
+
+    def test_multiple_validated_public_ips_all_fail_returns_502(self):
+        """
+        Verify that when all resolved public IPs fail to connect,
+        all candidate sockets are closed and 502 Bad Gateway is returned.
+        """
+        ip1 = "142.250.190.10"
+        ip2 = "142.250.190.20"
+
+        def getaddrinfo_stub(host, port, *args, **kwargs):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, '', (ip1, port)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, '', (ip2, port))
+            ]
+
+        sock1 = MagicMock(name="sock1")
+        sock1.connect.side_effect = OSError("refused 1")
+        sock2 = MagicMock(name="sock2")
+        sock2.connect.side_effect = OSError("refused 2")
+
+        created = [sock1, sock2]
+        def socket_factory(*args, **kwargs):
+            return created.pop(0)
+
+        client_sent = []
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [
+            b"GET http://maps.google.com/test HTTP/1.1\r\nHost: maps.google.com\r\n\r\n",
+            b""
+        ]
+        mock_client.sendall.side_effect = lambda data: client_sent.append(data)
+
+        proxy = SafeBrowserProxy()
+        try:
+            with patch('socket.getaddrinfo', side_effect=getaddrinfo_stub), \
+                 patch('services.security.socket.socket', side_effect=socket_factory):
+                proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        sock1.close.assert_called_once()
+        sock2.close.assert_called_once()
+        mock_client.close.assert_called_once()
+
+        response = b"".join(client_sent)
+        self.assertIn(b"502 Bad Gateway", response)
+
+    def test_content_length_oversized_rejected_with_413(self):
+        """
+        Verify that requests with Content-Length exceeding MAX_REQUEST_BODY_BYTES return 413.
+        """
+        client_sent = []
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [
+            b"POST http://maps.google.com/api HTTP/1.1\r\nHost: maps.google.com\r\nContent-Length: 10000000\r\n\r\n",
+            b""
+        ]
+        mock_client.sendall.side_effect = lambda data: client_sent.append(data)
+
+        proxy = SafeBrowserProxy()
+        try:
+            proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        response = b"".join(client_sent)
+        self.assertIn(b"413 Payload Too Large", response)
+
 if __name__ == '__main__':
     unittest.main()

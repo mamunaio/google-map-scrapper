@@ -9,9 +9,12 @@ import ipaddress
 import re
 import threading
 import select
+import logging
 from urllib.parse import urlparse, urljoin
 import requests
 from urllib3.util import connection as urllib3_connection
+
+logger = logging.getLogger("leadhunter.security")
 
 # Blocked IP ranges: Private, Loopback, Link-Local (Cloud Metadata), Carrier NAT, Multicast, Reserved
 BLOCKED_IP_NETWORKS = [
@@ -35,6 +38,7 @@ BLOCKED_IP_NETWORKS = [
 
 DEFAULT_TIMEOUT = (4, 10)  # (connect_timeout, read_timeout)
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB max response body to prevent memory exhaustion
+MAX_REQUEST_BODY_BYTES = 5 * 1024 * 1024  # 5 MB max request body limit
 
 class SecurityError(Exception):
     """Raised when a security validation, SSRF check, or DNS rebinding attempt fails."""
@@ -344,7 +348,7 @@ def resolve_and_validate_hostname(hostname: str, port: int = 443) -> tuple[bool,
 
     try:
         addr_info = socket.getaddrinfo(clean_host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
-        resolved_ips = [item[4][0] for item in addr_info]
+        resolved_ips = list(dict.fromkeys(item[4][0] for item in addr_info))
         if not resolved_ips:
             return False, f"Could not resolve host: {clean_host}", []
 
@@ -434,6 +438,99 @@ def is_safe_browser_url(url: str, is_main_document: bool = False) -> tuple[bool,
 
     return True, "OK"
 
+def _read_chunked_body(client_sock, initial_buf: bytes, max_body_size: int = MAX_REQUEST_BODY_BYTES) -> tuple[bytes | None, str | None]:
+    """
+    Reads a complete chunked HTTP request body from client_sock starting with initial_buf.
+    Parses chunk sizes, supports chunk extensions, preserves trailers, and enforces max_body_size
+    and read timeouts to prevent memory exhaustion or hanging on malformed bodies.
+    Returns (raw_chunked_bytes, error_message_or_none).
+    """
+    buf = bytearray(initial_buf)
+    cursor = 0
+    total_data_bytes = 0
+
+    while True:
+        # 1. Read until CRLF for the chunk header line (chunk-size [; chunk-ext])
+        while b"\r\n" not in buf[cursor:]:
+            try:
+                chunk = client_sock.recv(4096)
+            except socket.timeout:
+                return None, "408 Request Timeout"
+            except Exception as e:
+                return None, f"400 Bad Request: Socket error: {e}"
+            if not chunk:
+                return None, "400 Bad Request: Incomplete chunked body (unexpected EOF in chunk header)"
+            buf.extend(chunk)
+            if len(buf) > max_body_size + 65536:
+                return None, "413 Payload Too Large"
+
+        crlf_idx = buf.find(b"\r\n", cursor)
+        line = bytes(buf[cursor:crlf_idx])
+        cursor = crlf_idx + 2  # Position cursor at start of chunk data (or trailers)
+
+        # Parse chunk size (ignore chunk extensions following semicolon)
+        size_part = line.split(b";")[0].strip()
+        try:
+            chunk_size = int(size_part, 16)
+        except ValueError:
+            return None, "400 Bad Request: Invalid hex chunk size"
+
+        if chunk_size < 0:
+            return None, "400 Bad Request: Negative chunk size"
+
+        # 2. Check for terminal chunk (chunk_size == 0)
+        if chunk_size == 0:
+            # Read trailers until terminating empty line (CRLF)
+            # If cursor is immediately followed by CRLF, there are no trailers.
+            # Otherwise, trailers exist up to the terminating CRLF CRLF.
+            while True:
+                if len(buf) >= cursor + 2 and buf[cursor:cursor+2] == b"\r\n":
+                    cursor += 2
+                    break
+                idx = buf.find(b"\r\n\r\n", cursor)
+                if idx != -1:
+                    cursor = idx + 4
+                    break
+                try:
+                    chunk = client_sock.recv(4096)
+                except socket.timeout:
+                    return None, "408 Request Timeout"
+                except Exception as e:
+                    return None, f"400 Bad Request: Socket error: {e}"
+                if not chunk:
+                    return None, "400 Bad Request: Incomplete chunked trailers (unexpected EOF)"
+                buf.extend(chunk)
+                if len(buf) > max_body_size + 65536:
+                    return None, "413 Payload Too Large"
+
+            # Entire chunked body successfully parsed
+            return bytes(buf[:cursor]), None
+
+        # 3. For chunk_size > 0: validate data limit
+        total_data_bytes += chunk_size
+        if total_data_bytes > max_body_size:
+            return None, "413 Payload Too Large"
+
+        # Need chunk_size bytes of data PLUS 2 bytes trailing CRLF
+        needed = cursor + chunk_size + 2
+        while len(buf) < needed:
+            try:
+                chunk = client_sock.recv(min(needed - len(buf), 16384))
+            except socket.timeout:
+                return None, "408 Request Timeout"
+            except Exception as e:
+                return None, f"400 Bad Request: Socket error: {e}"
+            if not chunk:
+                return None, "400 Bad Request: Incomplete chunk data (unexpected EOF)"
+            buf.extend(chunk)
+
+        # Verify trailing CRLF after chunk data
+        if buf[cursor + chunk_size : cursor + chunk_size + 2] != b"\r\n":
+            return None, "400 Bad Request: Missing CRLF after chunk data"
+
+        cursor += chunk_size + 2
+
+
 class SafeBrowserProxy:
     """
     Local TCP tunneling proxy for Playwright browser contexts.
@@ -492,12 +589,17 @@ class SafeBrowserProxy:
             client_sock.settimeout(15.0)
             data = b""
             while b"\r\n\r\n" not in data:
-                chunk = client_sock.recv(4096)
+                try:
+                    chunk = client_sock.recv(4096)
+                except socket.timeout:
+                    logger.debug("SafeBrowserProxy: Timeout reading initial headers from client")
+                    return
                 if not chunk:
                     break
                 data += chunk
 
             if not data or b"\r\n\r\n" not in data:
+                logger.debug("SafeBrowserProxy: Client closed connection or sent incomplete headers")
                 return
 
             header_end_idx = data.find(b"\r\n\r\n")
@@ -508,6 +610,7 @@ class SafeBrowserProxy:
             first_line = req_lines[0].decode('latin1', errors='replace')
             parts = first_line.split()
             if len(parts) < 2:
+                logger.warning("SafeBrowserProxy: Malformed HTTP request line: %r", first_line)
                 client_sock.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBad Request\r\n")
                 return
 
@@ -517,6 +620,7 @@ class SafeBrowserProxy:
             # Validate HTTP method
             allowed_methods = {"GET", "POST", "HEAD", "PUT", "DELETE", "OPTIONS", "PATCH", "TRACE", "CONNECT"}
             if method not in allowed_methods:
+                logger.warning("SafeBrowserProxy: Unsupported HTTP method: %r", method)
                 client_sock.sendall(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nMethod Not Allowed\r\n")
                 return
 
@@ -591,6 +695,7 @@ class SafeBrowserProxy:
                         host, port = '', 80
 
             if not host:
+                logger.warning("SafeBrowserProxy: Missing destination host in request target: %r", target)
                 client_sock.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBad Request: Missing Host\r\n")
                 return
 
@@ -598,24 +703,44 @@ class SafeBrowserProxy:
 
             # 1. Domain Authorization Filter
             if not (is_google_maps_domain(clean_host) or is_authorized_maps_subresource_host(clean_host)):
+                logger.warning("SafeBrowserProxy: Domain authorization rejected host %s (target: %s)", clean_host, target)
                 client_sock.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nForbidden: Unauthorized destination\r\n")
                 return
 
             # 2. DNS Resolution & Rebinding Check
             is_safe, reason, resolved_ips = resolve_and_validate_hostname(clean_host, port=port)
             if not is_safe or not resolved_ips:
+                logger.warning("SafeBrowserProxy: DNS validation failed for host %s:%d: %s", clean_host, port, reason)
                 client_sock.sendall(f"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nForbidden: {reason}\r\n".encode())
                 return
 
-            pinned_ip = resolved_ips[0]
+            # 3. Connect Upstream Socket to Validated Public IPs (in order with fallback)
+            upstream_sock = None
+            connection_error = None
+            for pinned_ip in resolved_ips:
+                family = socket.AF_INET6 if ':' in pinned_ip else socket.AF_INET
+                candidate_sock = socket.socket(family, socket.SOCK_STREAM)
+                candidate_sock.settimeout(10.0)
+                try:
+                    candidate_sock.connect((pinned_ip, port))
+                    upstream_sock = candidate_sock
+                    break
+                except Exception as e:
+                    connection_error = e
+                    logger.warning(
+                        "SafeBrowserProxy: Upstream connection to %s at %s:%d failed: %s. Trying next address.",
+                        clean_host, pinned_ip, port, e
+                    )
+                    try:
+                        candidate_sock.close()
+                    except Exception:
+                        pass
 
-            # 3. Connect Upstream Socket Directly to Pinned Public IP
-            family = socket.AF_INET6 if ':' in pinned_ip else socket.AF_INET
-            upstream_sock = socket.socket(family, socket.SOCK_STREAM)
-            upstream_sock.settimeout(10.0)
-            try:
-                upstream_sock.connect((pinned_ip, port))
-            except Exception:
+            if not upstream_sock:
+                logger.error(
+                    "SafeBrowserProxy: All %d validated upstream destinations failed for %s:%d. Last error: %s",
+                    len(resolved_ips), clean_host, port, connection_error
+                )
                 client_sock.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBad Gateway\r\n")
                 return
 
@@ -626,7 +751,8 @@ class SafeBrowserProxy:
                 while self.running:
                     try:
                         readable, _, exceptional = select.select(sockets, [], sockets, 3.0)
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("SafeBrowserProxy: Select exception during CONNECT relay: %s", e)
                         break
                     if exceptional:
                         break
@@ -637,7 +763,8 @@ class SafeBrowserProxy:
                             if not buf:
                                 return
                             other.sendall(buf)
-                        except Exception:
+                        except Exception as e:
+                            logger.debug("SafeBrowserProxy: Socket I/O exception during CONNECT relay: %s", e)
                             return
             else:
                 # HTTP Forward Proxy Request:
@@ -651,20 +778,42 @@ class SafeBrowserProxy:
 
                 # Receive full request body if Content-Length was specified
                 body = initial_body
-                if content_length is not None and content_length > len(body):
-                    bytes_needed = content_length - len(body)
-                    while bytes_needed > 0:
-                        chunk = client_sock.recv(min(bytes_needed, 16384))
-                        if not chunk:
-                            break
-                        body += chunk
+                if content_length is not None:
+                    if content_length > MAX_REQUEST_BODY_BYTES:
+                        logger.warning("SafeBrowserProxy: Request Content-Length %d exceeds limit %d", content_length, MAX_REQUEST_BODY_BYTES)
+                        client_sock.sendall(b"HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nPayload Too Large\r\n")
+                        return
+                    if content_length > len(body):
                         bytes_needed = content_length - len(body)
-                elif is_chunked and b"0\r\n\r\n" not in body:
-                    while b"0\r\n\r\n" not in body:
-                        chunk = client_sock.recv(16384)
-                        if not chunk:
-                            break
-                        body += chunk
+                        while bytes_needed > 0:
+                            try:
+                                chunk = client_sock.recv(min(bytes_needed, 16384))
+                            except socket.timeout:
+                                logger.warning("SafeBrowserProxy: Timeout reading request body for %s", clean_host)
+                                client_sock.sendall(b"HTTP/1.1 408 Request Timeout\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nRequest Timeout\r\n")
+                                return
+                            except Exception as e:
+                                logger.warning("SafeBrowserProxy: Socket error reading body for %s: %s", clean_host, e)
+                                client_sock.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBad Request\r\n")
+                                return
+                            if not chunk:
+                                logger.warning("SafeBrowserProxy: Incomplete body for %s (client disconnected)", clean_host)
+                                client_sock.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBad Request\r\n")
+                                return
+                            body += chunk
+                            bytes_needed = content_length - len(body)
+                elif is_chunked:
+                    chunked_body, chunk_err = _read_chunked_body(client_sock, initial_body, max_body_size=MAX_REQUEST_BODY_BYTES)
+                    if chunk_err:
+                        logger.warning("SafeBrowserProxy: Chunked request error for %s: %s", clean_host, chunk_err)
+                        if "413" in chunk_err:
+                            client_sock.sendall(b"HTTP/1.1 413 Payload Too Large\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nPayload Too Large\r\n")
+                        elif "408" in chunk_err:
+                            client_sock.sendall(b"HTTP/1.1 408 Request Timeout\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nRequest Timeout\r\n")
+                        else:
+                            client_sock.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBad Request\r\n")
+                        return
+                    body = chunked_body
 
                 # Build rewritten origin-form request
                 new_req_line = f"{method} {origin_target} {http_version}\r\n".encode("latin1")
@@ -679,21 +828,23 @@ class SafeBrowserProxy:
                         if not chunk:
                             break
                         client_sock.sendall(chunk)
-                    except (socket.timeout, ConnectionResetError, BrokenPipeError):
+                    except (socket.timeout, ConnectionResetError, BrokenPipeError) as e:
+                        logger.debug("SafeBrowserProxy: Upstream relay disconnect for %s: %s", clean_host, e)
                         break
-                    except Exception:
+                    except Exception as e:
+                        logger.debug("SafeBrowserProxy: Upstream relay error for %s: %s", clean_host, e)
                         break
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("SafeBrowserProxy: Unhandled exception handling client: %s", e, exc_info=True)
         finally:
             if upstream_sock:
                 try:
                     upstream_sock.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("SafeBrowserProxy: Error closing upstream socket: %s", e)
             try:
                 client_sock.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("SafeBrowserProxy: Error closing client socket: %s", e)
 

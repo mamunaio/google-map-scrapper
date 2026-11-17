@@ -317,3 +317,44 @@
     - `test_http_forward_proxy_missing_host_rejected`: `400 Bad Request` on missing Host.
     - `test_http_forward_proxy_upstream_error_handled_cleanly`: `502 Bad Gateway` and socket cleanup.
   - Total automated test suite expanded from 89 to **96 tests** (100% passing).
+
+---
+
+## Phase 13: SafeBrowserProxy Standards-Compliant Chunked Body, Multi-IP Fallback, & Diagnostic Logging
+
+### 1. Issue Analysis
+- **Chunked Body RFC 7230 Compliance**: The previous reader stopped strictly on `0\r\n\r\n`, which failed to handle chunk extensions (e.g. `0;ext=val\r\n`) or trailer headers (`Trailer: val\r\n\r\n`) following the terminating chunk. It also lacked strict limits against oversized bodies and read timeouts.
+- **Single Address Pinning Risk**: When a host resolved to multiple public IPs, only `resolved_ips[0]` was selected. If `resolved_ips[0]` was unreachable or experiencing transient failure, the proxy failed immediately without trying the other pre-validated public IPs.
+- **Diagnostic Logging**: Broad exception handlers masked root-cause diagnostics without server-side log output.
+
+### 2. Implementation Overview
+- **Standards-Compliant Chunked Body Reader (`services/security.py`):**
+  - Implemented `_read_chunked_body(client_sock, initial_buf, max_body_size)`.
+  - Parses chunk size hex values and correctly ignores chunk extensions.
+  - Verifies CRLF framing after each chunk's payload.
+  - Correctly reads trailers following zero-sized terminal chunk (`0\r\n...[trailers]\r\n\r\n`).
+  - Enforces `MAX_REQUEST_BODY_BYTES` (5 MB) across chunked and `Content-Length` requests, returning `413 Payload Too Large`.
+  - Enforces socket read timeouts, returning `408 Request Timeout`.
+  - Returns `400 Bad Request` upon premature client disconnect or malformed chunk boundaries.
+  - Preserves raw chunk framing and trailers when forwarding upstream.
+- **Multiple Validated Public IP Fallback (`services/security.py`):**
+  - Deduplicates resolved addresses while preserving DNS response order via `dict.fromkeys()`.
+  - Iterates through all pre-validated public IPs in order upon connection failure.
+  - Never triggers secondary DNS lookups during fallback.
+  - Never falls back to unvalidated hostname connections.
+  - Closes candidate sockets before attempting the next IP address.
+  - Emits `502 Bad Gateway` only if all candidate addresses fail.
+- **Diagnostic Logging (`services/security.py`):**
+  - Configured `logging.getLogger("leadhunter.security")`.
+  - Logs warnings for domain authorization rejection, DNS validation/rebinding failure, malformed requests, unsupported methods, oversized payloads, chunk errors, and candidate IP connection failures.
+  - Logs unhandled exceptions with traceback at ERROR level while returning sanitized standard HTTP status codes (`400`, `403`, `405`, `408`, `413`, `502`) to the browser client.
+- **Automated Regression Test Suite (`tests/test_security.py`):**
+  - Added 7 dedicated regression tests:
+    1. `test_chunked_body_with_extensions_and_trailers_preserved`: Preserves chunk extensions and trailing headers.
+    2. `test_chunked_body_incomplete_chunk_rejected`: Returns 400 on premature client disconnect.
+    3. `test_chunked_body_missing_crlf_after_chunk_rejected`: Returns 400 on malformed chunk framing.
+    4. `test_chunked_body_oversized_rejected_with_413`: Returns 413 when cumulative chunk data exceeds 5 MB.
+    5. `test_multiple_validated_public_ips_fallback_success`: First IP fails, second IP succeeds with 0 extra DNS lookups and closed candidate sockets.
+    6. `test_multiple_validated_public_ips_all_fail_returns_502`: All IPs fail, all sockets closed, returns 502.
+    7. `test_content_length_oversized_rejected_with_413`: Returns 413 when Content-Length exceeds 5 MB.
+  - Total automated test suite expanded from 96 to **103 tests** (100% passing).
