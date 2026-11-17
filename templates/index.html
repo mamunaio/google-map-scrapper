@@ -296,22 +296,22 @@
                     <span id="selectedCountBadge" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">Exporting all leads</span>
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <!-- Format A: Source Preserved -->
-                    <button onclick="downloadFormatA()" class="p-4 rounded-2xl bg-white hover:bg-slate-50 border border-slate-300 shadow-md text-left transition-all transform hover:-translate-y-0.5 group">
-                        <div class="flex items-center justify-between mb-1">
-                            <span class="text-xs font-bold text-slate-900">Format A: Source-Preserved Tracker</span>
-                            <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-600">CSV & Excel</span>
-                        </div>
-                        <p class="text-[11px] text-slate-500">Preserves all 22+ original source columns, values, and order, with appended contacts.</p>
-                    </button>
-
                     <!-- Format B: Standard 3-Sheet Lead Intelligence -->
                     <button onclick="downloadFormatB()" class="p-4 rounded-2xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white shadow-lg shadow-indigo-600/20 text-left transition-all transform hover:-translate-y-0.5 group">
                         <div class="flex items-center justify-between mb-1">
-                            <span class="text-xs font-bold text-white">Format B: Standard 3-Sheet Intelligence</span>
+                            <span class="text-xs font-bold text-white">Download 3-Sheet Intelligence Workbook (.xlsx)</span>
                             <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-white/20 text-white">.xlsx</span>
                         </div>
-                        <p class="text-[11px] text-indigo-100">Generates Sheet 01 (Lead Tracker), Sheet 02 (Website Audit), and Sheet 03 (Opportunities).</p>
+                        <p class="text-[11px] text-indigo-100">Sheet 01 (16 Lead Tracker fields), Sheet 02 (Website Audit), and Sheet 03 (Opportunities).</p>
+                    </button>
+
+                    <!-- Format A: Lead Tracker CSV -->
+                    <button onclick="downloadFormatA()" class="p-4 rounded-2xl bg-white hover:bg-slate-50 border border-slate-300 shadow-md text-left transition-all transform hover:-translate-y-0.5 group">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-xs font-bold text-slate-900">Export Lead Tracker (.csv)</span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-600">.csv</span>
+                        </div>
+                        <p class="text-[11px] text-slate-500">16 essential fields: contacts, normalized ratings, verification status, priority score, and notes.</p>
                     </button>
                 </div>
             </div>
@@ -799,19 +799,40 @@
         // Live Stats Update
         function updateDashboardStats() {
             const data = inputType === 'manual' ? finalData : uploadedData;
-            document.getElementById('statTotalRecords').textContent = data.length;
 
+            // Unique businesses set
+            const uniqueBiz = new Set();
+            let websitesScanned = 0;
+            let successfulAudits = 0;
+            let failedAudits = 0;
             let dms = 0;
             let verified = 0;
             let totalOpps = 0;
             let highPri = 0;
 
             data.forEach(r => {
-                const dm = r["Decision Maker"] || r[detectedDmCol];
+                const bName = (r["Business Name"] || r["Name"] || Object.values(r)[0] || "").trim().toLowerCase();
+                const web = (r["Website"] || r[detectedWebsiteCol] || "").trim();
+                const phone = (r["Phone"] || r["Phone Number"] || "").replace(/\D/g, '');
+                const uniqueKey = bName ? `${bName}|${web || phone || bName}` : `row_${Math.random()}`;
+                uniqueBiz.add(uniqueKey);
+
+                const hasWeb = web && web !== '-' && web.startsWith('http');
+                if (hasWeb && r.intelligence) {
+                    websitesScanned++;
+                    const isFailed = r.intelligence?.technical?.status === 'Scan Failed' || r.intelligence?.seo?.status === 'Scan Failed';
+                    if (isFailed) failedAudits++; else successfulAudits++;
+                }
+
+                const dm = r["Contact Person"] || r["Decision Maker"] || r[detectedDmCol];
                 if (dm && dm.trim() !== '' && dm !== '-') dms++;
 
-                const em = r["Email"] || r[detectedEmailCol];
-                if (em && em.includes('@')) verified++;
+                // Strict email verification status check - ONLY 'Verified' (not MX Only or Unverified)
+                const em = r["Email"] || r["Contact Email"] || r[detectedEmailCol];
+                const ver = String(r["Email Status"] || r["Email Verification"] || r[detectedVerCol] || '').toLowerCase();
+                if (em && em.includes('@') && (ver === 'verified' || ver.includes('smtp verified') || ver.includes('smtp valid'))) {
+                    verified++;
+                }
 
                 const intel = r.intelligence;
                 if (intel) {
@@ -819,11 +840,17 @@
                     if (opps.detected_opportunities) {
                         totalOpps += opps.detected_opportunities.length;
                     }
-                    const priority = intel.priority_tier || opps.priority_tier;
-                    if (priority === "High Priority") highPri++;
+                    const priority = r["Priority"] || intel.priority_tier || opps.priority_tier;
+                    if (priority === "High Priority" || priority === "High") highPri++;
+                } else if (r["Priority"] === "High" || r["Priority"] === "High Priority") {
+                    highPri++;
                 }
             });
 
+            document.getElementById('statTotalRecords').textContent = uniqueBiz.size;
+            document.getElementById('statWebsitesScanned').textContent = websitesScanned;
+            document.getElementById('statSuccessfulAudits').textContent = successfulAudits;
+            document.getElementById('statFailedAudits').textContent = failedAudits;
             document.getElementById('statVerifiedEmails').textContent = verified;
             document.getElementById('statOpportunities').textContent = totalOpps;
             document.getElementById('statHighPriority').textContent = highPri;
@@ -1097,62 +1124,80 @@
         function getOrderedData() {
             const rawData = inputType === 'manual' ? finalData : uploadedData;
             return rawData.map(row => {
+                const intel = row.intelligence || {};
+                const opps = intel.opportunities || {};
+                const scoring = opps.scoring_details || {};
                 return {
-                    "Business Name": row["Business Name"] || "",
+                    "Business Name": row["Business Name"] || row["Name"] || "",
+                    "Category": row["Category"] || row["Google Category"] || "Unknown",
+                    "City": row["City"] || "Unknown",
+                    "State": row["State"] || "Unknown",
+                    "Phone": row["Phone"] || row["Phone Number"] || "",
                     "Website": row["Website"] || "",
-                    "Decision Maker": row["Decision Maker"] || "",
-                    "Contact Email": row["Email"] || row["Contact Email"] || "",
-                    "Email Verification": row["Email Verification"] || "",
-                    "Phone": row["Phone Number"] || row["Phone"] || "",
-                    "Rating": row["Rating"] || "",
-                    "Reviews Count": row["Reviews Count"] || "",
-                    "Address": row["Address"] || "",
+                    "Google Maps URL": row["Google Maps URL"] || row["Google Maps Profile"] || row["Source URL"] || "",
+                    "Rating": row["Rating"] !== undefined ? row["Rating"] : (row["Google Rating"] !== undefined ? row["Google Rating"] : ""),
+                    "Reviews": row["Reviews"] !== undefined ? row["Reviews"] : (row["Review Count"] !== undefined ? row["Review Count"] : ""),
+                    "Contact Person": row["Contact Person"] || row["Decision Maker"] || "",
+                    "Email": row["Email"] || row["Contact Email"] || "",
+                    "Email Status": row["Email Status"] || row["Email Verification"] || "Not Found",
+                    "Priority": row["Priority"] || opps.priority || (intel.priority_tier === "High Priority" ? "High" : "Low"),
+                    "Lead Score": row["Lead Score"] !== undefined ? row["Lead Score"] : (opps.lead_score || intel.lead_score || 0),
+                    "Main Opportunity": row["Main Opportunity"] || opps.main_gap || scoring.main_identified_gap || "",
+                    "Notes": row["Notes"] || scoring.priority_reason || "",
+                    // Backward-compatibility
+                    "Decision Maker": row["Contact Person"] || row["Decision Maker"] || "",
+                    "Email Verification": row["Email Status"] || row["Email Verification"] || "Not Found",
                     "Facebook": row["Facebook"] || "",
+                    "Instagram": row["Instagram"] || "",
                     "LinkedIn": row["LinkedIn"] || "",
-                    "Source URL": row["Source URL"] || "",
                     "intelligence": row.intelligence || null
                 };
             });
         }
 
-        // Format A Export (Source Preserved Lead Tracker)
+        // Format A: Lead Tracker CSV Export (16 Essential Fields)
         async function downloadFormatA() {
             const leads = getLeadsForExport();
             if (!leads || leads.length === 0) return alert("No lead records available to export.");
 
             try {
-                const res = await fetch('/api/export-excel', {
+                const res = await fetch('/api/export-csv', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ leads: leads, format_type: 'source_compatible' })
+                    body: JSON.stringify({ leads: leads })
                 });
 
                 if (res.ok) {
                     const blob = await res.blob();
                     const link = document.createElement("a");
                     link.href = URL.createObjectURL(blob);
-                    link.download = "LeadHunter_Source_Preserved.xlsx";
+                    link.download = "LeadHunter_Lead_Tracker.csv";
                     link.click();
-                    showToast(`Downloaded Format A Excel (${leads.length} leads)`);
+                    showToast(`Downloaded Lead Tracker CSV (${leads.length} leads)`);
                     return;
                 }
             } catch (e) {
                 console.error("Format A export error", e);
             }
 
-            // Fallback CSV download
+            // Fallback CSV download with exact 16 columns
+            const cols = [
+                "Business Name", "Category", "City", "State", "Phone",
+                "Website", "Google Maps URL", "Rating", "Reviews", "Contact Person",
+                "Email", "Email Status", "Priority", "Lead Score", "Main Opportunity", "Notes"
+            ];
             const flattened = leads.map(r => {
-                const row = Object.assign({}, r);
-                delete row.intelligence;
+                const row = {};
+                cols.forEach(c => row[c] = r[c] !== undefined ? r[c] : "");
                 return row;
             });
             const csv = Papa.unparse(flattened);
             const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a");
             link.href = URL.createObjectURL(blob);
-            link.download = "LeadHunter_Source_Preserved.csv";
+            link.download = "LeadHunter_Lead_Tracker.csv";
             link.click();
-            showToast(`Downloaded Format A CSV (${leads.length} leads)`);
+            showToast(`Downloaded Lead Tracker CSV (${leads.length} leads)`);
         }
 
         // Format B Export (Standard 3-Sheet Lead Intelligence Workbook)
@@ -1171,7 +1216,7 @@
                     const blob = await res.blob();
                     const link = document.createElement("a");
                     link.href = URL.createObjectURL(blob);
-                    link.download = "LeadHunter_Standard_3Sheet_Intelligence.xlsx";
+                    link.download = "LeadHunter_3Sheet_Intelligence.xlsx";
                     link.click();
                     showToast(`Downloaded 3-Sheet Workbook (${leads.length} leads)`);
                     return;

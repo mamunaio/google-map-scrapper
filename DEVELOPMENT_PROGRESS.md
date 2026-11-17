@@ -17,6 +17,7 @@
 | **Phase 06** | Lead Scoring Engine (9 Configurable Dimensions = 100 Pts) | **COMPLETED & VERIFIED** | 5 Scoring Matrix Tests Passing |
 | **Phase 07** | Dashboard & Selective Export (7 Metrics, Row Select, Dual Buttons) | **COMPLETED & VERIFIED** | UI Verified & API Tests Passing |
 | **Phase 08** | Dual Export Engine (Format A Source-Preserved + Format B 3-Sheet) | **COMPLETED & VERIFIED** | 3 OpenPyXL Dual-Format Tests Passing |
+| **Phase 14** | Lead Data Quality, Essential Fields Schema & Export Modernization | **COMPLETED & VERIFIED** | 109 Automated Tests Passing |
 
 ---
 
@@ -358,3 +359,60 @@
     6. `test_multiple_validated_public_ips_all_fail_returns_502`: All IPs fail, all sockets closed, returns 502.
     7. `test_content_length_oversized_rejected_with_413`: Returns 413 when Content-Length exceeds 5 MB.
   - Total automated test suite expanded from 96 to **103 tests** (100% passing).
+
+---
+
+## Phase 14: Lead Data Quality, Essential Fields Schema & Export Modernization
+
+### 1. Product Decision & Architecture Realignment
+- **Deprecation of Legacy 22-Column CSV**: Abandoned the legacy 22-column CSV schema in favor of an essential, actionable data model tailored specifically for lead generation and business development.
+- **Unified 16-Field Lead Tracker (Sheet 01 & CSV)**:
+  `Business Name`, `Category`, `City`, `State`, `Phone`, `Website`, `Google Maps URL`, `Rating`, `Reviews`, `Contact Person`, `Email`, `Email Status`, `Priority`, `Lead Score`, `Main Opportunity`, `Notes`.
+- **Unified 15-Field Website Audit (Sheet 02)**:
+  `Business Name`, `Website`, `Website Status`, `Page Title`, `Meta Description Status`, `Canonical Status`, `Indexability / Robots Status`, `H1 Status`, `Image Alt Status`, `Mobile / Viewport Status`, `HTTPS Status`, `Performance Status`, `Key SEO Issues`, `Technical Issues`, `Audit Summary`.
+- **Unified 7-Field Business Opportunities (Sheet 03)**:
+  `Business Name`, `Opportunity Category`, `Finding`, `Evidence`, `Confidence`, `Research Status`, `Recommended Service`.
+
+### 2. Core Implementation Highlights
+- **Rating & Reviews Normalization (`services/maps_scraper.py`)**:
+  - `normalize_rating()`: Extracts numeric float (`0.0` to `5.0`), handles comma decimals (`4,8` -> `4.8`), and translates Bengali numerals (`৪.৯` -> `4.9`).
+  - `normalize_review_count()`: Extracts integer, handles commas in numbers (`1,250` -> `1250`), strips parentheses (`(185)` -> `185`), and translates Bengali numerals (`১৮৫` -> `185`).
+- **Location & Category Extraction (`services/maps_scraper.py`)**:
+  - `parse_city_state()`: Accurately identifies City and US State from address lines, defaulting to `"Unknown"` when unresolved without guessing or hardcoding.
+  - `extract_category_from_text()`: Identifies business category from listing card bullets.
+- **Strict Separation of Contact Person & Business Name (`services/email_service.py`, `services/website_crawler.py`)**:
+  - Rejects candidate names matching or strongly resembling the business name.
+  - Filters out common commercial/trade terms from human name fields.
+  - Leaves `Contact Person` empty/null if no legitimate human name is discovered.
+- **Standardized Email Deliverability Statuses (`services/email_service.py`)**:
+  - `Verified`: Server confirmed recipient mailbox with SMTP 250 OK and verified non-catch-all.
+  - `MX Only`: Catch-all domain or port-25 timeout / ISP block with valid MX records.
+  - `Invalid`: Mailbox rejected with 550 or domain lacks MX records.
+  - `Not Found`: No email address present.
+  - `Unverified`: Verification inconclusive.
+- **Explainable Lead Scoring & Priority Thresholds (`services/lead_scoring.py`)**:
+  - Supported configurable priority thresholds (`DEFAULT_PRIORITY_THRESHOLDS = {"high": 68, "medium": 40}`).
+  - Added `priority_reason` field detailing exact justification for assigned priority, mapped to the `Notes` column.
+- **Deduplication & Phantom Record Elimination (`services/export_service.py`)**:
+  - Leads in Sheet 01 and Sheet 02 deduplicated by `(Business Name, Website/Phone/Maps URL)`.
+  - Sheet 03: Zero rows emitted for businesses with 0 detected opportunities (no empty or placeholder rows).
+  - OpenPyXL numeric formatting applied: Rating (`0.0`), Reviews (`#,##0`), Lead Score (`0`), and active hyperlinks for URLs.
+- **Frontend Dashboard & Metrics (`templates/index.html`)**:
+  - `statTotalRecords`: Displays unique businesses count.
+  - `statVerifiedEmails`: Strictly counts `Verified` emails (excludes `MX Only` and `Unverified`).
+  - `statWebsitesScanned`: Tracks live website audits.
+  - Rebranded export buttons to "Download 3-Sheet Intelligence Workbook (.xlsx)" and "Export Lead Tracker (.csv)".
+  - Added dedicated `/api/export-csv` backend endpoint serving 16-field Lead Tracker CSV.
+
+### 3. Automated Test Suite Verification
+- **Test Suite Results**:
+  - `tests/test_api.py`: 11 tests passing.
+  - `tests/test_email_service.py`: 7 tests passing.
+  - `tests/test_export_service.py`: 6 tests passing.
+  - `tests/test_feature_detector.py`: 5 tests passing.
+  - `tests/test_lead_scoring.py`: 11 tests passing.
+  - `tests/test_maps_scraper.py`: 14 tests passing.
+  - `tests/test_opportunity_analyzer.py`: 3 tests passing.
+  - `tests/test_security.py`: 50 tests passing.
+  - `tests/test_seo_audit.py`: 2 tests passing.
+  - **Total: 109 / 109 automated unit & integration tests passing (100% success rate)**.

@@ -33,13 +33,16 @@ def analyze_business_opportunities(
         opportunities.append({
             "Business Name": biz,
             "Opportunity Category": "Workflow Automation",
+            "Finding": "No Public Booking Widget Detected",
+            "Evidence": "No self-service scheduling scripts or embedded booking widgets (Calendly, Acuity, ServiceTitan, etc.) identified on scanned pages.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Online Booking & Appointment Scheduling Integration",
             "Related Finding": "Missing Online Scheduling Widget",
             "Evidence URL": evidence_url,
             "Evidence Description": "No self-service scheduling scripts or embedded booking widgets (Calendly, Acuity, ServiceTitan, etc.) identified on scanned pages.",
             "Potential Business Impact": "Prospective clients seeking immediate appointment scheduling cannot self-book and must wait for manual callback.",
-            "Recommended Service": "Online Booking & Appointment Scheduling Integration",
-            "Confidence Level": "High",
-            "Research Status": "Identified"
+            "Confidence Level": "Medium"
         })
         outreach_hooks.append(
             f"Noticed {biz}'s website currently requires phone calls or plain emails for appointments—adding self-service online scheduling allows customers to book directly."
@@ -51,13 +54,16 @@ def analyze_business_opportunities(
         opportunities.append({
             "Business Name": biz,
             "Opportunity Category": "AI Automation",
+            "Finding": "No Public Chatbot Detected",
+            "Evidence": "No conversational widget scripts or live chat providers detected in page DOM.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "24/7 AI Chatbot & Conversational Lead Capture",
             "Related Finding": "Absence of Live Chat / Chatbot Widget",
             "Evidence URL": evidence_url,
             "Evidence Description": "No conversational widget scripts or live chat providers detected in page DOM.",
             "Potential Business Impact": "Inquiries outside standard operating hours may go unanswered if visitors do not wish to leave a static contact form submission.",
-            "Recommended Service": "24/7 AI Chatbot & Conversational Lead Capture",
-            "Confidence Level": "High",
-            "Research Status": "Identified"
+            "Confidence Level": "Medium"
         })
         outreach_hooks.append(
             f"Observed that {biz}'s website doesn't have an interactive chat widget—deploying an automated concierge can capture and qualify after-hours inquiries."
@@ -69,13 +75,16 @@ def analyze_business_opportunities(
         opportunities.append({
             "Business Name": biz,
             "Opportunity Category": "AI Voice Automation",
+            "Finding": "No Public AI Phone Integration Detected",
+            "Evidence": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "AI Voice Receptionist & Missed Call Follow-Up Automation",
             "Related Finding": "No AI Phone Integration Detected",
             "Evidence URL": evidence_url,
             "Evidence Description": "No telephony automation or AI voice agent provider markers identified in page assets.",
             "Potential Business Impact": "Inbound callers during field work or peak hours may reach standard voicemail, delaying quote response time.",
-            "Recommended Service": "AI Voice Receptionist & Missed Call Follow-Up Automation",
-            "Confidence Level": "Medium",
-            "Research Status": "Needs Review"
+            "Confidence Level": "Medium"
         })
 
     # Opportunity 4: CRM Integration & Pipeline Tracking
@@ -84,13 +93,16 @@ def analyze_business_opportunities(
         opportunities.append({
             "Business Name": biz,
             "Opportunity Category": "CRM Integration",
+            "Finding": "No Public CRM Tracker Detected",
+            "Evidence": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Centralized CRM Integration & Lead Workflow Automation",
             "Related Finding": "No CRM Tracking or Forms Detected",
             "Evidence URL": evidence_url,
             "Evidence Description": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
             "Potential Business Impact": "Inbound leads may require manual copying into spreadsheets, increasing risk of delayed lead follow-ups.",
-            "Recommended Service": "Centralized CRM Integration & Lead Workflow Automation",
-            "Confidence Level": "Medium",
-            "Research Status": "Needs Review"
+            "Confidence Level": "Medium"
         })
 
     # Opportunity 5: Review & Reputation Management Automation
@@ -99,13 +111,16 @@ def analyze_business_opportunities(
         opportunities.append({
             "Business Name": biz,
             "Opportunity Category": "Reputation Automation",
+            "Finding": "No Public Review Widget Detected",
+            "Evidence": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Automated Review Request & Reputation Management System",
             "Related Finding": "Missing Review Widget / Automation",
             "Evidence URL": evidence_url,
             "Evidence Description": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
             "Potential Business Impact": "Relying strictly on manual review requests often leads to slower feedback collection compared to automated post-service flows.",
-            "Recommended Service": "Automated Review Request & Reputation Management System",
-            "Confidence Level": "High",
-            "Research Status": "Identified"
+            "Confidence Level": "Medium"
         })
         outreach_hooks.append(
             f"Setting up an automated SMS review collection flow for {biz} can help systematically collect feedback from satisfied clients right after service completion."
@@ -120,13 +135,16 @@ def analyze_business_opportunities(
         opportunities.append({
             "Business Name": biz,
             "Opportunity Category": "Technical SEO",
+            "Finding": primary_issue,
+            "Evidence": evidence_text,
+            "Confidence": "High",
+            "Research Status": "Detected",
+            "Recommended Service": "Technical SEO Optimization & Structured Data Implementation",
             "Related Finding": primary_issue,
             "Evidence URL": evidence_url,
             "Evidence Description": evidence_text,
             "Potential Business Impact": "Search engine crawlers may fail to index important service keywords, limiting organic search discoverability.",
-            "Recommended Service": "Technical SEO Optimization & Structured Data Implementation",
-            "Confidence Level": "High",
-            "Research Status": "Verified"
+            "Confidence Level": "High"
         })
         outreach_hooks.append(
             f"Spotted a couple of technical on-page items on {biz}'s website (like {primary_issue.lower()}) that search engines look for when ranking local service queries."
@@ -138,13 +156,16 @@ def analyze_business_opportunities(
         opportunities.append({
             "Business Name": biz,
             "Opportunity Category": "Website Development",
+            "Finding": "Mobile Viewport / Formatting Issues",
+            "Evidence": "Missing viewport meta tag or fixed pixel widths detected causing horizontal overflow risks on mobile viewports.",
+            "Confidence": "High",
+            "Research Status": "Detected",
+            "Recommended Service": "Mobile-Responsive Layout Optimization",
             "Related Finding": "Mobile Viewport / Formatting Issues",
             "Evidence URL": evidence_url,
             "Evidence Description": "Missing viewport meta tag or fixed pixel widths detected causing horizontal overflow risks on mobile viewports.",
             "Potential Business Impact": "Mobile visitors may experience horizontal scrolling or layout truncation, reducing form submission completion.",
-            "Recommended Service": "Mobile-Responsive Layout Optimization",
-            "Confidence Level": "High",
-            "Research Status": "Verified"
+            "Confidence Level": "High"
         })
 
     # Opportunity 8: SSL Security & HTTPS Enforcement
@@ -153,13 +174,16 @@ def analyze_business_opportunities(
         opportunities.append({
             "Business Name": biz,
             "Opportunity Category": "Website Security",
+            "Finding": f"SSL Status: {ssl_info.get('status')}",
+            "Evidence": ssl_info.get("evidence", "Certificate is expired or plain HTTP is served."),
+            "Confidence": "High",
+            "Research Status": "Detected",
+            "Recommended Service": "SSL Certificate Renewal & HTTPS 301 Enforcement",
             "Related Finding": f"SSL Status: {ssl_info.get('status')}",
             "Evidence URL": evidence_url,
             "Evidence Description": ssl_info.get("evidence", "Certificate is expired or plain HTTP is served."),
             "Potential Business Impact": "Modern browsers mark the website as 'Not Secure', discouraging visitors from entering contact details.",
-            "Recommended Service": "SSL Certificate Renewal & HTTPS 301 Enforcement",
-            "Confidence Level": "High",
-            "Research Status": "Verified"
+            "Confidence Level": "High"
         })
 
     # Build mock container for lead scoring calculation

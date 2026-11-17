@@ -159,5 +159,34 @@ class TestLeadScoring(unittest.TestCase):
         self.assertEqual(res["research_priority"], "Low Priority")
         self.assertIn("well-optimized", res["dimension_explanations"]["technical_seo"])
 
+    def test_configurable_priority_thresholds(self):
+        lead_data = {
+            "Website": "https://midpriorityhvac.com",
+            "Phone": "+1-214-555-9000",
+            "intelligence": {
+                "performance": {"mobile_score": 60},
+                "seo": {"seo_score": 70},
+                "features": {
+                    "lead_capture": {"status": "Detected"},
+                    "booking": {"status": "Not Detected"}, # Gap
+                    "chatbot": {"status": "Detected"},
+                    "voice_agent": {"status": "Detected"}
+                },
+                "technical": {"ssl_certificate": {"status": "Valid"}, "mobile_usability": {"status": "Good"}}
+            }
+        }
+        # With default thresholds (high: 68, medium: 40)
+        res_default = calculate_lead_score(lead_data)
+        score = res_default["research_score"]
+
+        # Custom aggressive thresholds where high threshold is lower than score
+        custom_thresholds = {"high": score - 5, "medium": score - 15}
+        res_custom = calculate_lead_score(lead_data, priority_thresholds=custom_thresholds)
+
+        self.assertEqual(res_custom["research_priority"], "High Priority")
+        self.assertEqual(res_custom["priority"], "High")
+        self.assertIn("priority_reason", res_custom)
+        self.assertTrue(len(res_custom["priority_reason"]) > 10)
+
 if __name__ == '__main__':
     unittest.main()

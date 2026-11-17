@@ -156,7 +156,7 @@ def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_na
 
     if response_text:
         if not dm_name:
-            dm_name, dm_role = find_decision_maker_from_html(response_text)
+            dm_name, dm_role = find_decision_maker_from_html(response_text, business_name=business_name)
 
         candidates = find_candidate_pages(response_text, final_url, max_candidates=4)
         for curl in candidates:
@@ -171,7 +171,7 @@ def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_na
                     if c_resp.status_code == 200:
                         c_email, c_fb, c_insta, c_linkedin, _ = extract_emails_and_socials(c_resp.text, base_url=final_url)
                         if not dm_name:
-                            dm_name, dm_role = find_decision_maker_from_html(c_resp.text)
+                            dm_name, dm_role = find_decision_maker_from_html(c_resp.text, business_name=business_name)
                         email = email or c_email
                         fb = fb or c_fb
                         insta = insta or c_insta
@@ -207,18 +207,18 @@ def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_na
 
     # Step 5: Permutation & SMTP Handshake Verification
     domain = urlparse(final_url).netloc.lower().replace('www.', '').strip('/')
-    verification_status = "Unverified"
+    verification_status = "Not Found" if not email else "Unverified"
 
     if dm_name and domain:
         perms = generate_email_permutations(dm_name, domain)
         for perm in perms:
             is_valid, v_status = verify_email_smtp(perm)
-            if is_valid and "Valid" in v_status:
+            if is_valid and v_status == "Verified":
                 email = perm
                 verification_status = v_status
                 break
 
-    if email and verification_status == "Unverified":
+    if email and verification_status in ["Unverified", "Not Found"]:
         _, v_status = verify_email_smtp(email)
         verification_status = v_status
 
@@ -249,6 +249,8 @@ def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_na
         # Core existing fields
         "Website": final_url,
         "Email": email,
+        "Email Status": verification_status,
+        "Contact Person": dm_name or "",
         "Decision Maker": decision_maker_str,
         "Email Verification": verification_status,
         "Facebook": fb,

@@ -7,7 +7,11 @@ from services.maps_scraper import (
     extract_search_listing_card,
     scrape_maps_search_feed,
     scrape_maps_place_detail,
-    scrape_google_maps
+    scrape_google_maps,
+    normalize_rating,
+    normalize_review_count,
+    parse_city_state,
+    extract_category_from_text
 )
 
 class TestMapsScraper(unittest.TestCase):
@@ -95,8 +99,9 @@ class TestMapsScraper(unittest.TestCase):
         self.assertEqual(lead["Business Name"], "Dallas Pro HVAC")
         self.assertEqual(lead["Phone Number"], "(214) 555-0199")
         self.assertEqual(lead["Website"], "https://dallasprohvac.com/")
-        self.assertEqual(lead["Rating"], "4.9")
-        self.assertEqual(lead["Review Count"], "185")
+        self.assertEqual(lead["Rating"], 4.9)
+        self.assertEqual(lead["Reviews"], 185)
+        self.assertEqual(lead["Category"], "HVAC contractor")
         self.assertEqual(lead["Google Maps Profile"], "https://www.google.com/maps/place/Dallas+Pro+HVAC/data=!123")
 
     def test_extract_search_listing_card_missing_optional_fields(self):
@@ -122,8 +127,8 @@ class TestMapsScraper(unittest.TestCase):
         self.assertEqual(lead["Business Name"], "Lone Star Heating")
         self.assertEqual(lead["Phone Number"], "")
         self.assertEqual(lead["Website"], "")
-        self.assertEqual(lead["Rating"], "")
-        self.assertEqual(lead["Review Count"], "")
+        self.assertIsNone(lead["Rating"])
+        self.assertIsNone(lead["Reviews"])
 
     def test_scrape_maps_search_feed_multiple_and_deduplication(self):
         page = MagicMock()
@@ -234,8 +239,48 @@ class TestMapsScraper(unittest.TestCase):
         self.assertEqual(lead["Business Name"], "Dallas Master Heating")
         self.assertEqual(lead["Website"], "https://dallasheating.com")
         self.assertEqual(lead["Phone Number"], "(214) 555-9988")
-        self.assertEqual(lead["Rating"], "4.8")
-        self.assertEqual(lead["Review Count"], "320")
+        self.assertEqual(lead["Rating"], 4.8)
+        self.assertEqual(lead["Reviews"], 320)
+
+    def test_rating_and_review_normalization_bengali_and_comma(self):
+        # Bengali digits
+        self.assertEqual(normalize_rating("৪.৯"), 4.9)
+        self.assertEqual(normalize_review_count("১৮৫"), 185)
+        self.assertEqual(normalize_review_count("১,২৫০"), 1250)
+
+        # Comma decimals & strings with parentheses
+        self.assertEqual(normalize_rating("4,8"), 4.8)
+        self.assertEqual(normalize_review_count("(185)"), 185)
+        self.assertEqual(normalize_review_count("1,250 reviews"), 1250)
+
+        # Invalid or empty
+        self.assertIsNone(normalize_rating(""))
+        self.assertIsNone(normalize_rating(None))
+        self.assertIsNone(normalize_review_count(""))
+        self.assertIsNone(normalize_review_count(None))
+
+    def test_parse_city_state_extraction(self):
+        # Valid addresses
+        city, state = parse_city_state("123 Main St, Dallas, TX 75201")
+        self.assertEqual(city, "Dallas")
+        self.assertEqual(state, "TX")
+
+        city2, state2 = parse_city_state("· Fort Worth, TX · (817) 555-0100")
+        self.assertEqual(city2, "Fort Worth")
+        self.assertEqual(state2, "TX")
+
+        # Fallback to Unknown without fabrication
+        city_unk, state_unk = parse_city_state("No location available here")
+        self.assertEqual(city_unk, "Unknown")
+        self.assertEqual(state_unk, "Unknown")
+
+    def test_extract_category_from_text(self):
+        card_text = "Dallas Pro HVAC\n4.9 (185) · HVAC contractor · Open 24 hours\n(214) 555-0199"
+        cat = extract_category_from_text(card_text)
+        self.assertEqual(cat, "HVAC contractor")
+
+        cat_empty = extract_category_from_text("Just some random text with no bullets")
+        self.assertEqual(cat_empty, "Unknown")
 
     @patch('services.maps_scraper.sync_playwright')
     def test_scrape_google_maps_search_url_honest_success(self, mock_playwright):

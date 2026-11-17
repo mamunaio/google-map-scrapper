@@ -212,13 +212,46 @@ def extract_name_from_email_prefix(email: str) -> str:
         return " ".join(words)
     return ""
 
-def find_decision_maker_from_html(html_text: str):
+def find_decision_maker_from_html(html_text: str, business_name: str = ""):
     """
     Discovers business Owner / Founder / CEO from Schema.org and high-confidence page cues.
     Returns (name, role) or (None, None).
+    Strictly verifies that the discovered name is a human name and distinct from the business name.
     """
     if not html_text:
         return None, None
+
+    normalized_biz = re.sub(r'[^a-zA-Z0-9\s]', '', business_name or "").lower().strip()
+    biz_words = set(normalized_biz.split()) if normalized_biz else set()
+
+    def is_valid_human_name(name_cand: str) -> bool:
+        if not name_cand or not isinstance(name_cand, str):
+            return False
+        clean = re.sub(r'[^a-zA-Z\s]', '', name_cand).strip()
+        parts = clean.split()
+        if not (1 <= len(parts) <= 3):
+            return False
+        # Cannot be predominantly lowercase or uppercase single letters
+        if any(len(p) == 1 and not p.isalpha() for p in parts):
+            return False
+        # Reject if matches business name
+        cand_lower = clean.lower()
+        if normalized_biz and (cand_lower == normalized_biz or normalized_biz in cand_lower):
+            return False
+        # Reject if significant token overlap with business name
+        cand_words = set(cand_lower.split())
+        if biz_words and len(cand_words.intersection(biz_words)) >= max(1, len(cand_words) // 2):
+            if any(w in cand_words for w in ['hvac', 'air', 'heating', 'cooling', 'plumbing', 'roofing', 'service', 'company', 'services']):
+                return False
+        blacklist = {
+            'call', 'contact', 'about', 'service', 'services', 'home', 'privacy', 'terms', 'hvac', 'houston',
+            'dallas', 'air', 'heating', 'cooling', 'conditioning', 'schedule', 'read', 'more', 'our', 'business',
+            'company', 'plumbing', 'electric', 'contractor', 'contractors', 'emergency', 'repair', 'installation',
+            'solutions', 'group', 'team', 'technicians', 'pro', 'pros', 'experts', 'reviews', 'request', 'quote'
+        }
+        if any(w.lower() in blacklist for w in parts):
+            return False
+        return True
 
     try:
         soup = BeautifulSoup(html_text, 'html.parser')
@@ -232,15 +265,20 @@ def find_decision_maker_from_html(html_text: str):
                         # Explicit founder attribute
                         if obj.get('@type') in ['Person', 'Organization'] and obj.get('founder'):
                             f = obj.get('founder')
-                            if isinstance(f, str): return f, "Founder"
-                            if isinstance(f, dict) and f.get('name'): return f['name'], "Founder"
+                            if isinstance(f, str) and is_valid_human_name(f):
+                                return f.strip(), "Founder"
+                            if isinstance(f, dict) and f.get('name') and is_valid_human_name(f['name']):
+                                return f['name'].strip(), "Founder"
                         # Person with job title
                         if obj.get('@type') == 'Person' and obj.get('name') and obj.get('jobTitle'):
-                            return obj.get('name'), obj.get('jobTitle')
+                            if is_valid_human_name(obj.get('name')):
+                                return obj.get('name').strip(), str(obj.get('jobTitle')).strip()
                         for k, v in obj.items():
                             if k.lower() in ['founder', 'owner', 'ceo', 'president']:
-                                if isinstance(v, str): return v, k.title()
-                                if isinstance(v, dict) and v.get('name'): return v['name'], v.get('jobTitle', k.title())
+                                if isinstance(v, str) and is_valid_human_name(v):
+                                    return v.strip(), k.title()
+                                if isinstance(v, dict) and v.get('name') and is_valid_human_name(v.get('name')):
+                                    return v['name'].strip(), str(v.get('jobTitle', k.title())).strip()
                             res = search_schema_people(v)
                             if res: return res
                     elif isinstance(obj, list):
@@ -262,15 +300,12 @@ def find_decision_maker_from_html(html_text: str):
             r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s*[,-–|]\s*(?:Owner|Founder|Co-Founder|President|CEO|Principal)',
             r'Meet\s+(?:the\s+Owner|our\s+Founder|the\s+Founder)\s*[:\-–]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})'
         ]
-        blacklist = ['Call', 'Contact', 'About', 'Service', 'Home', 'Privacy', 'Terms', 'HVAC', 'Houston',
-                     'Air', 'Heating', 'Conditioning', 'Schedule', 'Read', 'More', 'Our', 'Business', 'Company']
 
         for pat in patterns:
             matches = re.findall(pat, text)
             for m in matches:
                 candidate = m.strip()
-                parts = candidate.split()
-                if 1 <= len(parts) <= 3 and not any(b in candidate for b in blacklist):
+                if is_valid_human_name(candidate):
                     return candidate, "Owner / Decision Maker"
 
     except Exception:
@@ -305,16 +340,15 @@ def generate_email_permutations(full_name: str, domain: str) -> list:
 def verify_email_smtp(email: str, timeout: int = 5):
     """
     Rigorously verifies email deliverability via direct DNS MX lookup and SMTP handshake.
-    Distinguishes:
-      - 'Valid (SMTP Verified)': Server confirmed recipient with 250 OK and is NOT catch-all
-      - 'Valid (Catch-All)': Server accepts all incoming addresses
-      - 'Valid (MX Only)': MX records exist, but SMTP handshake timed out or was blocked
-      - 'Invalid (Mailbox Not Found)': Server rejected recipient (550 code)
-      - 'Invalid (No MX Record)': Domain has no mail exchangers
-      - 'Unverified': Invalid format or probe aborted
+    Standardized status values:
+      - 'Verified': Server confirmed recipient with 250 OK and is NOT catch-all
+      - 'MX Only': Catch-all server or MX records exist but SMTP handshake timed out/blocked
+      - 'Invalid': Domain has no MX or mailbox rejected (550 code)
+      - 'Not Found': Missing email or malformed address
+      - 'Unverified': Verification inconclusive
     """
     if not email or '@' not in email:
-        return False, "Invalid"
+        return False, "Not Found"
 
     domain = email.split('@')[-1].lower()
 
@@ -322,12 +356,12 @@ def verify_email_smtp(email: str, timeout: int = 5):
     try:
         answers = sorted(dns.resolver.resolve(domain, 'MX'), key=lambda x: x.preference)
         if not answers:
-            return False, "Invalid (No MX Record)"
+            return False, "Invalid"
         mx_host = str(answers[0].exchange).rstrip('.')
     except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.resolver.NoNameservers):
-        return False, "Invalid (No MX Record)"
+        return False, "Invalid"
     except Exception:
-        return False, "Invalid (No MX Record)"
+        return False, "Invalid"
 
     # 2. SMTP Handshake
     try:
@@ -348,18 +382,18 @@ def verify_email_smtp(email: str, timeout: int = 5):
             pass
 
         if is_catchall:
-            return True, "Valid (Catch-All)"
+            return True, "MX Only"
         elif code_target == 250:
-            return True, "Valid (SMTP Verified)"
+            return True, "Verified"
         elif code_target in [550, 551, 552, 553, 554]:
-            return False, "Invalid (Mailbox Not Found)"
+            return False, "Invalid"
         else:
-            return True, "Valid (MX Only)"
+            return True, "MX Only"
 
     except smtplib.SMTPConnectError:
-        return True, "Valid (MX Only)"
+        return True, "MX Only"
     except (socket.timeout, smtplib.SMTPServerDisconnected, OSError):
-        # Port 25 may be blocked by local ISP or cloud provider; fallback cleanly to MX Valid
-        return True, "Valid (MX Only)"
+        # Port 25 may be blocked by local ISP or cloud provider; fallback cleanly to MX Only
+        return True, "MX Only"
     except Exception:
-        return True, "Valid (MX Only)"
+        return False, "Unverified"

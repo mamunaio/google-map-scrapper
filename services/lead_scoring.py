@@ -18,12 +18,18 @@ DEFAULT_SCORING_WEIGHTS = {
     "mobile_ssl_security": 5          # Mobile viewport & valid HTTPS/SSL
 }
 
+DEFAULT_PRIORITY_THRESHOLDS = {
+    "high": 68,
+    "medium": 40
+}
+
 def calculate_lead_score(
     audit_data: dict,
     weights: dict = None,
     business_name: str = "",
     google_rating: float = None,
-    review_count: int = None
+    review_count: int = None,
+    priority_thresholds: dict = None
 ) -> dict:
     """
     Computes an explainable research priority score (0-100) across 9 dimensions.
@@ -314,24 +320,37 @@ def calculate_lead_score(
     )
     is_insufficient_data = (not intel) or (all_critical_unknown and seo_score is None and mobile_score is None)
 
+    high_threshold = (priority_thresholds or {}).get("high", DEFAULT_PRIORITY_THRESHOLDS["high"])
+    medium_threshold = (priority_thresholds or {}).get("medium", DEFAULT_PRIORITY_THRESHOLDS["medium"])
+
+    main_gap = gaps_identified[0][1] if gaps_identified else "No critical opportunity gaps identified."
+
     if is_failed_audit or is_insufficient_data:
         priority_label = "Manual Review"
+        priority_short = "Manual Review"
+        priority_reason = "Crawler data incomplete or website unreachable; requires manual review."
         action = "Perform manual domain inspection; automated crawler data is incomplete or unreachable."
-    elif final_score >= 68:
+    elif final_score >= high_threshold:
         priority_label = "High Priority"
+        priority_short = "High"
+        priority_reason = f"High opportunity score ({final_score}/100) with key gaps in {main_gap}."
         action = "Initiate personalized multi-channel outreach targeting verified decision maker."
-    elif final_score >= 45:
+    elif final_score >= medium_threshold:
         priority_label = "Medium Priority"
+        priority_short = "Medium"
+        priority_reason = f"Moderate score ({final_score}/100); several digital infrastructure gaps identified."
         action = "Nurture lead; research missing decision-maker contact details before cold outreach."
     else:
         priority_label = "Low Priority"
+        priority_short = "Low"
+        priority_reason = f"Low score ({final_score}/100); digital infrastructure is largely up to date."
         action = "Archive or monitor; business digital infrastructure is largely up to date."
-
-    main_gap = gaps_identified[0][1] if gaps_identified else "No critical opportunity gaps identified."
 
     return {
         "research_score": final_score,
         "research_priority": priority_label,
+        "priority": priority_short,
+        "priority_reason": priority_reason,
         "dimension_scores": dimension_scores,
         "dimension_explanations": dimension_explanations,
         "weights_applied": w,

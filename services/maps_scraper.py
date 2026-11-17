@@ -21,6 +21,82 @@ from services.security import (
 
 PHONE_REGEX = re.compile(r'(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}')
 
+BENGALI_DIGITS = str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789')
+
+STATE_ABBRS = {
+    'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+    'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+    'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
+    'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+    'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC'
+}
+
+def normalize_rating(rating_raw) -> float | None:
+    """Normalizes rating string/numeric into a float (0.0 to 5.0) or None."""
+    if rating_raw is None or rating_raw == "":
+        return None
+    if isinstance(rating_raw, (int, float)):
+        return float(rating_raw) if 0 <= rating_raw <= 5 else None
+    s = str(rating_raw).translate(BENGALI_DIGITS).replace(',', '.').strip()
+    m = re.search(r'\b([0-5](?:\.[0-9])?)\b', s)
+    if m:
+        try:
+            val = float(m.group(1))
+            if 0.0 <= val <= 5.0:
+                return round(val, 1)
+        except ValueError:
+            pass
+    return None
+
+def normalize_review_count(reviews_raw) -> int | None:
+    """Normalizes review count into an integer or None."""
+    if reviews_raw is None or reviews_raw == "":
+        return None
+    if isinstance(reviews_raw, int):
+        return reviews_raw
+    if isinstance(reviews_raw, float):
+        return int(reviews_raw)
+    s = str(reviews_raw).translate(BENGALI_DIGITS).strip()
+    s = re.sub(r'(?<=\d),(?=\d)', '', s)
+    m = re.search(r'(?<!\.)\b(\d+)\b(?!\.)', s)
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            pass
+    return None
+
+def parse_city_state(text: str) -> tuple[str, str]:
+    """
+    Extracts City and State from address strings.
+    Returns ('Unknown', 'Unknown') if no reliable address components found.
+    Never fabricates city or state.
+    """
+    if not text:
+        return "Unknown", "Unknown"
+    matches = re.findall(r'(?:[,\n·]\s*|^)([A-Za-z\s.-]+),\s*([A-Za-z]{2})\b(?:\s+\d{5})?', text)
+    for city_cand, state_cand in reversed(matches):
+        state_upper = state_cand.upper()
+        if state_upper in STATE_ABBRS:
+            city_clean = city_cand.strip().split('\n')[-1].split(',')[-1].split('·')[-1].strip()
+            city_clean = re.sub(r'^\d+\s+[A-Za-z0-9\s.-]+?\s+(?=[A-Z][a-z])', '', city_clean).strip()
+            if city_clean and len(city_clean) >= 2 and not any(ch.isdigit() for ch in city_clean):
+                return city_clean, state_upper
+    return "Unknown", "Unknown"
+
+def extract_category_from_text(card_text: str) -> str:
+    """Extracts business category from Google Maps card text lines."""
+    if not card_text:
+        return "Unknown"
+    for line in card_text.split('\n'):
+        if '·' in line:
+            parts = [p.strip() for p in line.split('·') if p.strip()]
+            for p in parts:
+                if not re.search(r'^[0-5]\.[0-9]|^\(?\d+\)?|open|closed|\$|hours|am|pm|min|miles|\b[A-Z]{2}\b', p, re.IGNORECASE):
+                    if len(p) >= 3 and not any(ch.isdigit() for ch in p):
+                        return p
+    return "Unknown"
+
 def is_maps_search_url(url: str) -> bool:
     """Detects whether a URL is a Google Maps search results query URL."""
     if not url or not isinstance(url, str):
@@ -120,29 +196,55 @@ def extract_search_listing_card(card) -> dict:
             raw_href = web_el.first.get_attribute('href') or ""
             website = clean_google_redirect_url(raw_href)
 
-        # 4. Text lines for Phone, Category, and Rating
+        # 4. Text lines for Phone, Category, Location, and Rating
         card_text = card.inner_text()
         phone_match = PHONE_REGEX.search(card_text)
         phone = phone_match.group(0) if phone_match else ""
 
         # Rating
         rating_el = card.locator('span.MW4etd')
-        rating = rating_el.inner_text().strip() if rating_el.count() > 0 else ""
+        rating_raw = rating_el.inner_text().strip() if rating_el.count() > 0 else ""
+        rating = normalize_rating(rating_raw)
 
         # Reviews Count
         rev_el = card.locator('span.UY7F9')
-        reviews = rev_el.inner_text().strip().strip('()') if rev_el.count() > 0 else ""
+        reviews_raw = rev_el.inner_text().strip().strip('()') if rev_el.count() > 0 else ""
+        reviews = normalize_review_count(reviews_raw)
+
+        if rating is None:
+            rating = normalize_rating(card_text)
+        if reviews is None:
+            reviews = normalize_review_count(card_text)
+
+        category = extract_category_from_text(card_text)
+        city, state = parse_city_state(card_text)
 
         return {
             "Business Name": name,
-            "Phone Number": phone,
+            "Category": category,
+            "City": city,
+            "State": state,
+            "Phone": phone,
             "Website": website,
+            "Google Maps URL": place_url,
             "Rating": rating,
-            "Review Count": reviews,
+            "Reviews": reviews,
+            "Contact Person": "",
+            "Email": "",
+            "Email Status": "Not Found",
+            "Priority": "Low",
+            "Lead Score": 0,
+            "Main Opportunity": "",
+            "Notes": "",
+
+            # Backward-compatibility aliases
+            "Google Category": category,
+            "Phone Number": phone,
+            "Google Rating": rating if rating is not None else "",
+            "Review Count": reviews if reviews is not None else "",
             "Google Maps Profile": place_url,
             "Decision Maker": "",
-            "Email": "",
-            "Email Verification": "Unverified",
+            "Email Verification": "Not Found",
             "Facebook": "",
             "Instagram": "",
             "LinkedIn": "",
@@ -240,26 +342,68 @@ def scrape_maps_place_detail(page, url: str) -> dict:
             pass
 
     # 4. Rating & Reviews
-    rating = ""
+    rating_raw = ""
     rating_loc = page.locator('div.F7nice span[aria-hidden="true"], span.ceNzKf')
     if rating_loc.count() > 0:
-        rating = rating_loc.first.inner_text().strip()
+        rating_raw = rating_loc.first.inner_text().strip()
+    rating = normalize_rating(rating_raw)
 
-    reviews = ""
+    reviews_raw = ""
     rev_loc = page.locator('div.F7nice span span[aria-label*="review" i]')
     if rev_loc.count() > 0:
-        reviews = rev_loc.first.inner_text().strip().strip('()')
+        reviews_raw = rev_loc.first.inner_text().strip().strip('()')
+    reviews = normalize_review_count(reviews_raw)
+
+    # 5. Category
+    category = "Unknown"
+    cat_loc = page.locator('button.DkEaL, button[jsaction*="category"], span.YhemCb')
+    if cat_loc.count() > 0:
+        category = cat_loc.first.inner_text().strip() or "Unknown"
+
+    # 6. City and State
+    city, state = "Unknown", "Unknown"
+    addr_loc = page.locator('button[data-item-id="address"], button[aria-label*="Address" i]')
+    if addr_loc.count() > 0:
+        addr_text = addr_loc.first.inner_text().strip()
+        city, state = parse_city_state(addr_text)
+
+    # Fallback to page text for category / location if needed
+    if city == "Unknown" or category == "Unknown":
+        try:
+            main_text = page.locator('div[role="main"]').inner_text()
+            if city == "Unknown":
+                city, state = parse_city_state(main_text)
+            if category == "Unknown":
+                category = extract_category_from_text(main_text)
+        except Exception:
+            pass
 
     return {
         "Business Name": name,
-        "Phone Number": phone,
+        "Category": category,
+        "City": city,
+        "State": state,
+        "Phone": phone,
         "Website": website,
+        "Google Maps URL": url,
         "Rating": rating,
-        "Review Count": reviews,
+        "Reviews": reviews,
+        "Contact Person": "",
+        "Email": "",
+        "Email Status": "Not Found",
+        "Priority": "Low",
+        "Lead Score": 0,
+        "Main Opportunity": "",
+        "Notes": "",
+
+        # Backward-compatibility aliases
+        "Google Category": category,
+        "Phone Number": phone,
+        "Google Rating": rating if rating is not None else "",
+        "Review Count": reviews if reviews is not None else "",
         "Google Maps Profile": url,
         "Decision Maker": "",
-        "Email": "",
-        "Email Verification": "Unverified",
+        "Email Verification": "Not Found",
         "Facebook": "",
         "Instagram": "",
         "LinkedIn": "",

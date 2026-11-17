@@ -3,6 +3,7 @@ LeadHunter Studio - Lead Intelligence & Business Opportunity Detection Platform
 Flask Application & API Gateway
 """
 
+import io
 import time
 import random
 from flask import Flask, render_template, request, jsonify, send_file
@@ -10,7 +11,7 @@ from playwright.sync_api import sync_playwright
 
 from services.security import SecurityError, validate_google_maps_url
 from services.website_crawler import crawl_and_audit_website
-from services.export_service import generate_styled_excel
+from services.export_service import generate_styled_excel, generate_lead_tracker_csv
 from services.maps_scraper import scrape_google_maps
 
 app = Flask(__name__)
@@ -86,13 +87,23 @@ def scrape_api():
                         )
                         lead["Website"] = audit_data.get("Website", lead["Website"])
                         lead["Email"] = audit_data.get("Email", "")
+                        lead["Contact Person"] = audit_data.get("Contact Person") or audit_data.get("Decision Maker", "")
                         lead["Decision Maker"] = audit_data.get("Decision Maker", "")
-                        lead["Email Verification"] = audit_data.get("Email Verification", "Unverified")
+                        lead["Email Status"] = audit_data.get("Email Status") or audit_data.get("Email Verification", "Not Found")
+                        lead["Email Verification"] = audit_data.get("Email Verification", "Not Found")
                         lead["Facebook"] = audit_data.get("Facebook", "")
                         lead["Instagram"] = audit_data.get("Instagram", "")
                         lead["LinkedIn"] = audit_data.get("LinkedIn", "")
                         lead["About Page Link"] = audit_data.get("About Page Link", "")
                         lead["intelligence"] = audit_data.get("intelligence")
+
+                        intel = audit_data.get("intelligence") or {}
+                        opps = intel.get("opportunities") or {}
+                        scoring = opps.get("scoring_details") or {}
+                        lead["Priority"] = opps.get("priority") or "Low"
+                        lead["Lead Score"] = opps.get("lead_score") or 0
+                        lead["Main Opportunity"] = opps.get("main_gap") or ""
+                        lead["Notes"] = scoring.get("priority_reason") or ""
                     except Exception as e:
                         print(f"Website enrichment error for {lead.get('Website')}: {e}")
 
@@ -110,11 +121,24 @@ def scrape_api():
             # Option B: Direct Website Intelligence & Contact Enrichment
             result = {
                 "Business Name": data.get("business_name", ""),
+                "Category": "Unknown",
+                "City": "Unknown",
+                "State": "Unknown",
+                "Phone": "",
                 "Phone Number": "",
                 "Website": url,
+                "Google Maps URL": "",
+                "Rating": None,
+                "Reviews": None,
+                "Contact Person": "",
                 "Decision Maker": "",
                 "Email": "",
-                "Email Verification": "Unverified",
+                "Email Status": "Not Found",
+                "Email Verification": "Not Found",
+                "Priority": "Low",
+                "Lead Score": 0,
+                "Main Opportunity": "",
+                "Notes": "",
                 "Facebook": "",
                 "Instagram": "",
                 "LinkedIn": "",
@@ -131,13 +155,23 @@ def scrape_api():
 
             result["Website"] = audit_data.get("Website", url)
             result["Email"] = audit_data.get("Email", "")
+            result["Contact Person"] = audit_data.get("Contact Person") or audit_data.get("Decision Maker", "")
             result["Decision Maker"] = audit_data.get("Decision Maker", "")
-            result["Email Verification"] = audit_data.get("Email Verification", "Unverified")
+            result["Email Status"] = audit_data.get("Email Status") or audit_data.get("Email Verification", "Not Found")
+            result["Email Verification"] = audit_data.get("Email Verification", "Not Found")
             result["Facebook"] = audit_data.get("Facebook", "")
             result["Instagram"] = audit_data.get("Instagram", "")
             result["LinkedIn"] = audit_data.get("LinkedIn", "")
             result["About Page Link"] = audit_data.get("About Page Link", "")
             result["intelligence"] = audit_data.get("intelligence")
+
+            intel = audit_data.get("intelligence") or {}
+            opps = intel.get("opportunities") or {}
+            scoring = opps.get("scoring_details") or {}
+            result["Priority"] = opps.get("priority") or "Low"
+            result["Lead Score"] = opps.get("lead_score") or 0
+            result["Main Opportunity"] = opps.get("main_gap") or ""
+            result["Notes"] = scoring.get("priority_reason") or ""
 
             return jsonify({
                 "success": True,
@@ -190,6 +224,26 @@ def export_excel_api():
             as_attachment=True,
             download_name=filename,
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/export-csv', methods=['POST'])
+def export_csv_api():
+    """Generates and serves the standardized 16-field Lead Tracker CSV."""
+    data = request.json or {}
+    leads = data.get('leads', [])
+    if not leads:
+        return jsonify({"success": False, "error": "No lead records provided"}), 400
+
+    try:
+        csv_str = generate_lead_tracker_csv(leads)
+        csv_buffer = io.BytesIO(csv_str.encode('utf-8-sig'))
+        return send_file(
+            csv_buffer,
+            as_attachment=True,
+            download_name="LeadHunter_Lead_Tracker.csv",
+            mimetype="text/csv; charset=utf-8"
         )
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
