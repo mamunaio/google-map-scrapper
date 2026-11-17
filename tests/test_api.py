@@ -1,5 +1,6 @@
 import unittest
 import json
+from unittest.mock import patch
 from app import app
 
 class TestAppAPI(unittest.TestCase):
@@ -22,6 +23,135 @@ class TestAppAPI(unittest.TestCase):
         data = json.loads(response.data)
         self.assertFalse(data["success"])
         self.assertIn("Security restriction", data["error"])
+
+    @patch('app.scrape_google_maps')
+    @patch('app.crawl_and_audit_website')
+    def test_scrape_api_maps_search_url_multi_lead(self, mock_crawl, mock_maps):
+        mock_maps.return_value = {
+            "success": True,
+            "is_search": True,
+            "leads": [
+                {"Business Name": "Dallas Pro HVAC", "Website": "https://dallasprohvac.com", "Phone Number": "(214) 555-0101"},
+                {"Business Name": "Lone Star Air", "Website": "https://lonestarair.com", "Phone Number": "(214) 555-0102"},
+                {"Business Name": "Texas Cooling", "Website": "", "Phone Number": "(214) 555-0103"}
+            ],
+            "count": 3,
+            "data": {"Business Name": "Dallas Pro HVAC", "Website": "https://dallasprohvac.com"}
+        }
+
+        mock_crawl.side_effect = lambda url, **kwargs: {
+            "Website": url,
+            "Email": f"contact@{url.replace('https://', '')}",
+            "Decision Maker": "John Doe",
+            "Email Verification": "SMTP Valid",
+            "Facebook": "",
+            "Instagram": "",
+            "LinkedIn": "",
+            "About Page Link": "",
+            "intelligence": {"lead_score": 80, "priority_tier": "High Priority Prospect"}
+        }
+
+        response = self.client.post('/api/scrape', json={
+            "url": "https://www.google.com/maps/search/HVAC+contractors+in+Dallas,+TX",
+            "type": "maps"
+        })
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue(data["success"])
+        self.assertTrue(data["is_search"])
+        self.assertEqual(data["count"], 3)
+        self.assertEqual(len(data["leads"]), 3)
+        self.assertEqual(data["leads"][0]["Business Name"], "Dallas Pro HVAC")
+        self.assertEqual(data["leads"][0]["Email"], "contact@dallasprohvac.com")
+        self.assertEqual(data["leads"][0]["Email Verification"], "SMTP Valid")
+        self.assertEqual(data["data"]["Business Name"], "Dallas Pro HVAC")
+
+    @patch('app.scrape_google_maps')
+    def test_scrape_api_maps_empty_failure_honest_422(self, mock_maps):
+        mock_maps.return_value = {
+            "success": False,
+            "error": "No business listings found at the provided Google Maps search URL.",
+            "leads": [],
+            "count": 0,
+            "is_search": True,
+            "data": None
+        }
+
+        response = self.client.post('/api/scrape', json={
+            "url": "https://www.google.com/maps/search/HVAC+contractors+in+Dallas,+TX",
+            "type": "maps"
+        })
+
+        self.assertEqual(response.status_code, 422)
+        data = json.loads(response.data)
+        self.assertFalse(data["success"])
+        self.assertEqual(data["count"], 0)
+        self.assertEqual(data["leads"], [])
+        self.assertIsNone(data["data"])
+        self.assertIn("No business listings found", data["error"])
+
+    @patch('app.scrape_google_maps')
+    def test_scrape_api_maps_place_url_single_lead(self, mock_maps):
+        mock_maps.return_value = {
+            "success": True,
+            "is_search": False,
+            "leads": [{
+                "Business Name": "Dallas Master Heating",
+                "Website": "",
+                "Phone Number": "(214) 555-9988",
+                "Rating": "4.8",
+                "Review Count": "320"
+            }],
+            "count": 1,
+            "data": {
+                "Business Name": "Dallas Master Heating",
+                "Website": "",
+                "Phone Number": "(214) 555-9988"
+            }
+        }
+
+        response = self.client.post('/api/scrape', json={
+            "url": "https://www.google.com/maps/place/Dallas+Master+Heating",
+            "type": "maps"
+        })
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue(data["success"])
+        self.assertFalse(data["is_search"])
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(len(data["leads"]), 1)
+        self.assertEqual(data["leads"][0]["Business Name"], "Dallas Master Heating")
+
+    @patch('app.crawl_and_audit_website')
+    def test_scrape_api_website_type_preserves_contract(self, mock_crawl):
+        mock_crawl.return_value = {
+            "Website": "https://acmeair.com",
+            "Email": "info@acmeair.com",
+            "Decision Maker": "Steve Smith",
+            "Email Verification": "SMTP Valid",
+            "Facebook": "https://facebook.com/acmeair",
+            "Instagram": "",
+            "LinkedIn": "https://linkedin.com/company/acmeair",
+            "About Page Link": "",
+            "intelligence": {"lead_score": 75}
+        }
+
+        response = self.client.post('/api/scrape', json={
+            "url": "https://acmeair.com",
+            "type": "website",
+            "business_name": "Acme Air"
+        })
+
+        self.assertEqual(response.status_code, 200)
+        data = json.loads(response.data)
+        self.assertTrue(data["success"])
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(len(data["leads"]), 1)
+        self.assertEqual(data["leads"][0]["Business Name"], "Acme Air")
+        self.assertEqual(data["leads"][0]["Email"], "info@acmeair.com")
+        self.assertEqual(data["data"]["Email"], "info@acmeair.com")
 
     def test_export_excel_api_validation(self):
         response = self.client.post('/api/export-excel', json={"leads": []})

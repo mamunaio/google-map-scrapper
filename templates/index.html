@@ -688,7 +688,7 @@
             let successCount = 0;
             let failCount = 0;
             const total = targetQueue.length;
-            document.getElementById('progressCount').textContent = `0 / ${total}`;
+            document.getElementById('progressCount').textContent = `0 / ${total} URLs (0 Leads)`;
 
             for (let i = 0; i < total; i++) {
                 const item = targetQueue[i];
@@ -714,56 +714,70 @@
 
                     const res = await response.json();
 
-                    if (res.success) {
+                    const incomingLeads = (res.leads && Array.isArray(res.leads)) 
+                        ? res.leads 
+                        : (res.data ? [res.data] : []);
+
+                    const validLeads = incomingLeads.filter(l => l && (l["Business Name"] || l["Website"]));
+
+                    if (res.success && validLeads.length > 0) {
                         successCount++;
-                        const intel = res.data.intelligence || {};
-                        const leadScore = intel.lead_score || '-';
-                        const oppsCount = (intel.opportunities && intel.opportunities.detected_opportunities) ? intel.opportunities.detected_opportunities.length : 0;
 
                         if (inputType === 'manual') {
-                            finalData.push(res.data);
-                            log(`-> DM: ${res.data["Decision Maker"] || 'None'} | Email: ${res.data.Email || 'None'} [${res.data["Email Verification"]}]`);
-                            if (oppsCount > 0) log(`-> Opportunities: Found ${oppsCount} gaps (Priority: ${intel.priority_tier || 'Standard'})`);
+                            validLeads.forEach(lead => {
+                                finalData.push(lead);
+                                const intel = lead.intelligence || {};
+                                const oppsCount = (intel.opportunities && intel.opportunities.detected_opportunities) ? intel.opportunities.detected_opportunities.length : 0;
+                                log(`[+] Extracted: ${lead["Business Name"] || 'Unknown'} | DM: ${lead["Decision Maker"] || 'None'} | Email: ${lead.Email || 'None'} [${lead["Email Verification"] || 'Unverified'}]`);
+                                if (oppsCount > 0) log(`    -> Opportunities: Found ${oppsCount} gaps (Priority: ${intel.priority_tier || 'Standard'})`);
+                            });
+                            log(`[✓] Completed: ${validLeads.length} lead(s) extracted from ${url}`);
                         } else if (inputType === 'file') {
+                            const lead = validLeads[0];
                             const row = uploadedData[item.rowIndex];
+                            const intel = lead.intelligence || {};
                             row.intelligence = intel;
 
-                            if (res.data["Decision Maker"]) {
-                                row[detectedDmCol] = res.data["Decision Maker"];
-                                log(`Found Decision Maker: ${res.data["Decision Maker"]}`);
+                            if (lead["Business Name"] && (!row["Business Name"] || row["Business Name"] === '-')) {
+                                row["Business Name"] = lead["Business Name"];
                             }
 
-                            if (res.data.Email) {
-                                row[detectedEmailCol] = res.data.Email;
-                                log(`Verified Email: ${res.data.Email}`);
+                            if (lead["Decision Maker"]) {
+                                row[detectedDmCol] = lead["Decision Maker"];
+                                log(`Found Decision Maker: ${lead["Decision Maker"]}`);
                             }
 
-                            if (res.data["Email Verification"]) {
-                                row[detectedVerCol] = res.data["Email Verification"];
+                            if (lead.Email) {
+                                row[detectedEmailCol] = lead.Email;
+                                log(`Verified Email: ${lead.Email}`);
                             }
 
-                            if (res.data.Facebook && (!row[detectedFbCol] || row[detectedFbCol] === '-')) {
-                                row[detectedFbCol] = res.data.Facebook;
+                            if (lead["Email Verification"]) {
+                                row[detectedVerCol] = lead["Email Verification"];
                             }
 
-                            if (res.data.LinkedIn && (!row[detectedLiCol] || row[detectedLiCol] === '-')) {
-                                row[detectedLiCol] = res.data.LinkedIn;
+                            if (lead.Facebook && (!row[detectedFbCol] || row[detectedFbCol] === '-')) {
+                                row[detectedFbCol] = lead.Facebook;
+                            }
+
+                            if (lead.LinkedIn && (!row[detectedLiCol] || row[detectedLiCol] === '-')) {
+                                row[detectedLiCol] = lead.LinkedIn;
                             }
                         }
                     } else {
                         failCount++;
-                        log(`Failed: ${res.error}`);
-                        if (inputType === 'manual') finalData.push({ "Source URL": url, "Error": res.error });
+                        const errMsg = res.error || (incomingLeads.length === 0 ? 'No business listings found' : 'Extraction failed');
+                        log(`[!] Failed: ${errMsg}`);
                     }
                 } catch (e) {
                     failCount++;
-                    log(`Network error: ${e.message}`);
-                    if (inputType === 'manual') finalData.push({ "Source URL": url, "Error": e.message });
+                    log(`[!] Network error: ${e.message}`);
                 }
 
                 completed++;
                 const pct = Math.round((completed / total) * 100);
-                document.getElementById('progressCount').textContent = `${completed} / ${total}`;
+                const totalLeads = inputType === 'manual' ? finalData.length : uploadedData.length;
+                document.getElementById('progressCount').textContent = `${completed} / ${total} URLs (${totalLeads} Leads)`;
                 document.getElementById('progressPercentage').textContent = `${pct}%`;
                 document.getElementById('progressBar').style.width = `${pct}%`;
 
@@ -1090,6 +1104,9 @@
                     "Contact Email": row["Email"] || row["Contact Email"] || "",
                     "Email Verification": row["Email Verification"] || "",
                     "Phone": row["Phone Number"] || row["Phone"] || "",
+                    "Rating": row["Rating"] || "",
+                    "Reviews Count": row["Reviews Count"] || "",
+                    "Address": row["Address"] || "",
                     "Facebook": row["Facebook"] || "",
                     "LinkedIn": row["LinkedIn"] || "",
                     "Source URL": row["Source URL"] || "",

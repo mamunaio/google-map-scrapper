@@ -182,3 +182,33 @@
 - Execution Time: ~2.28s
 - Security Verification: Live Requests & urllib3 integration tests for DNS rebinding, localhost, cloud metadata, private IPv4/IPv6, link-local, proxy bypass prevention (trust_env=False), public proxy isolation, redirect SSRF, TLS failure, and 5MB size limits.
 - Backward Compatibility: Original Google Maps crawler, CSV/Excel upload, email extraction, and original 22+ columns completely preserved.
+
+---
+
+## Phase 09: Google Maps Scraper Fix (Search URLs + Place URLs + Honest Validation)
+
+### 1. Root Cause Identification
+- Previous scraper relied exclusively on single-place DOM selectors (`h1.DUwDvf`, `a[data-item-id="authority"]`, etc.) which fail on Google Maps Search URLs (`/maps/search/` or queries with listing cards in `div.Nv2PK`).
+- When search URLs returned 0 place details, `app.py` previously returned an empty record with `success: True`, causing the frontend to report 100% success and display blank phantom leads.
+
+### 2. Implementation Overview
+- **Dedicated Maps Scraper (`services/maps_scraper.py`):**
+  - `is_maps_search_url()`: Identifies `/maps/search/`, `?q=`, and Google Maps query patterns distinct from place detail pages.
+  - `scrape_maps_search_feed()`: Navigates Google Maps search feeds, locates listing cards (`div.Nv2PK`), extracts Business Name (`div.qBF1Pd`), Place URL (`a.hfpxzc`), Website (`a.lcr4fd`, `a[data-value*="Website"]`), Phone (`PHONE_REGEX`), Rating (`span.MW4etd`), and Review Count (`span.UY7F9`).
+  - Supports bounded scrolling and deduplication by normalized place URL.
+  - `scrape_maps_place_detail()`: Preserves single-lead place detail extraction for `/maps/place/` URLs.
+  - Consent dialog auto-dismissal for headless browsing.
+  - Honest extraction validation: Returns `success: False` with descriptive error if 0 businesses are found.
+- **Backend API Integration (`app.py`):**
+  - Updated `/api/scrape` for `type == 'maps'`.
+  - If 0 listings are extracted, returns HTTP 422 with `{"success": False, "leads": [], "count": 0, "error": ...}`.
+  - If N listings are extracted, runs website intelligence and contact enrichment for each lead with a website.
+  - Returns `{"success": True, "is_search": is_search, "leads": enriched_leads, "count": len(enriched_leads), "data": enriched_leads[0]}` ensuring full backward compatibility with single-lead callers.
+- **Frontend Real-time UI & Honest Progress Tracking (`templates/index.html`):**
+  - Separate progress tracking: `${completed} / ${total} URLs (${totalLeads} Leads)`.
+  - For manual search queries, expands multi-lead batches into `finalData` and displays all extracted businesses.
+  - When extraction yields 0 listings or errors occur, increments failure counter, logs failure in activity console, and **never** pushes blank/phantom rows to `finalData`.
+- **Test Suite (`tests/test_maps_scraper.py` & `tests/test_api.py`):**
+  - 10 new dedicated maps scraper tests covering URL detection, redirect cleanup, search card parsing, feed deduplication, place detail extraction, and honest empty failure.
+  - 4 API integration tests verifying multi-lead search scraping, place URL scraping, HTTP 422 empty failure, and website fallback contracts.
+  - Total automated test suite expanded from 59 to **73 tests** (100% passing).
