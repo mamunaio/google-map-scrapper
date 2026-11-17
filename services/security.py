@@ -496,18 +496,66 @@ class SafeBrowserProxy:
                 if not chunk:
                     break
                 data += chunk
-            if not data:
-                client_sock.close()
+
+            if not data or b"\r\n\r\n" not in data:
                 return
 
-            req_line = data.split(b"\r\n")[0].decode('latin1', errors='replace')
-            parts = req_line.split()
+            header_end_idx = data.find(b"\r\n\r\n")
+            header_bytes = data[:header_end_idx]
+            initial_body = data[header_end_idx + 4:]
+
+            req_lines = header_bytes.split(b"\r\n")
+            first_line = req_lines[0].decode('latin1', errors='replace')
+            parts = first_line.split()
             if len(parts) < 2:
-                client_sock.close()
+                client_sock.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBad Request\r\n")
                 return
 
             method, target = parts[0].upper(), parts[1]
+            http_version = parts[2] if len(parts) >= 3 and parts[2].startswith("HTTP/") else "HTTP/1.1"
 
+            # Validate HTTP method
+            allowed_methods = {"GET", "POST", "HEAD", "PUT", "DELETE", "OPTIONS", "PATCH", "TRACE", "CONNECT"}
+            if method not in allowed_methods:
+                client_sock.sendall(b"HTTP/1.1 405 Method Not Allowed\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nMethod Not Allowed\r\n")
+                return
+
+            raw_headers = req_lines[1:]
+            content_length = None
+            is_chunked = False
+            host_header_val = None
+            forward_headers = []
+
+            for h_line in raw_headers:
+                if not h_line or b":" not in h_line:
+                    continue
+                h_name, h_val = h_line.split(b":", 1)
+                h_name_lower = h_name.strip().lower()
+                h_val_stripped = h_val.strip()
+
+                if h_name_lower == b"host":
+                    host_header_val = h_val_stripped.decode('latin1', errors='replace')
+                    forward_headers.append(h_line)
+                elif h_name_lower == b"proxy-connection":
+                    # Hop-by-hop header, omit from upstream request
+                    continue
+                elif h_name_lower == b"connection":
+                    # Replace connection with close for upstream determinism
+                    continue
+                elif h_name_lower == b"content-length":
+                    try:
+                        content_length = int(h_val_stripped)
+                    except ValueError:
+                        content_length = None
+                    forward_headers.append(h_line)
+                elif h_name_lower == b"transfer-encoding":
+                    if b"chunked" in h_val_stripped.lower():
+                        is_chunked = True
+                    forward_headers.append(h_line)
+                else:
+                    forward_headers.append(h_line)
+
+            # Determine destination host, port, and convert target to origin-form
             if method == 'CONNECT':
                 if ':' in target:
                     host, port_str = target.split(':', 1)
@@ -517,24 +565,46 @@ class SafeBrowserProxy:
                         port = 443
                 else:
                     host, port = target, 443
+                origin_target = target
             else:
                 parsed = urlparse(target)
-                host = parsed.hostname or ''
-                port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+                if parsed.scheme:
+                    # Absolute-form URI (e.g. http://example.com/path?query)
+                    host = parsed.hostname or ''
+                    port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+                    origin_target = parsed.path or '/'
+                    if parsed.query:
+                        origin_target += f"?{parsed.query}"
+                else:
+                    # Already origin-form or asterisk-form
+                    origin_target = target if (target.startswith('/') or target == '*') else f"/{target}"
+                    if host_header_val:
+                        if ':' in host_header_val:
+                            host, port_str = host_header_val.split(':', 1)
+                            try:
+                                port = int(port_str)
+                            except ValueError:
+                                port = 80
+                        else:
+                            host, port = host_header_val, 80
+                    else:
+                        host, port = '', 80
+
+            if not host:
+                client_sock.sendall(b"HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBad Request: Missing Host\r\n")
+                return
 
             clean_host = host.strip("[]").lower()
 
             # 1. Domain Authorization Filter
             if not (is_google_maps_domain(clean_host) or is_authorized_maps_subresource_host(clean_host)):
-                client_sock.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nForbidden: Unauthorized destination\r\n")
-                client_sock.close()
+                client_sock.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nForbidden: Unauthorized destination\r\n")
                 return
 
             # 2. DNS Resolution & Rebinding Check
             is_safe, reason, resolved_ips = resolve_and_validate_hostname(clean_host, port=port)
             if not is_safe or not resolved_ips:
-                client_sock.sendall(f"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nForbidden: {reason}\r\n".encode())
-                client_sock.close()
+                client_sock.sendall(f"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nForbidden: {reason}\r\n".encode())
                 return
 
             pinned_ip = resolved_ips[0]
@@ -546,9 +616,7 @@ class SafeBrowserProxy:
             try:
                 upstream_sock.connect((pinned_ip, port))
             except Exception:
-                client_sock.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\n\r\nBad Gateway\r\n")
-                client_sock.close()
-                upstream_sock.close()
+                client_sock.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nBad Gateway\r\n")
                 return
 
             # 4. Stream Relay
@@ -572,16 +640,47 @@ class SafeBrowserProxy:
                         except Exception:
                             return
             else:
-                upstream_sock.sendall(data)
+                # HTTP Forward Proxy Request:
+                # Ensure Host header exists
+                if not host_header_val:
+                    host_h_str = clean_host if port in (80, 443) else f"{clean_host}:{port}"
+                    forward_headers.insert(0, f"Host: {host_h_str}".encode("latin1"))
+
+                # Set Connection: close for upstream determinism
+                forward_headers.append(b"Connection: close")
+
+                # Receive full request body if Content-Length was specified
+                body = initial_body
+                if content_length is not None and content_length > len(body):
+                    bytes_needed = content_length - len(body)
+                    while bytes_needed > 0:
+                        chunk = client_sock.recv(min(bytes_needed, 16384))
+                        if not chunk:
+                            break
+                        body += chunk
+                        bytes_needed = content_length - len(body)
+                elif is_chunked and b"0\r\n\r\n" not in body:
+                    while b"0\r\n\r\n" not in body:
+                        chunk = client_sock.recv(16384)
+                        if not chunk:
+                            break
+                        body += chunk
+
+                # Build rewritten origin-form request
+                new_req_line = f"{method} {origin_target} {http_version}\r\n".encode("latin1")
+                reconstructed_req = new_req_line + b"\r\n".join(forward_headers) + b"\r\n\r\n" + body
+
+                upstream_sock.sendall(reconstructed_req)
+
+                # Stream response from upstream to client
                 while self.running:
                     try:
-                        readable, _, _ = select.select([upstream_sock], [], [upstream_sock], 5.0)
-                        if not readable:
-                            break
                         chunk = upstream_sock.recv(16384)
                         if not chunk:
                             break
                         client_sock.sendall(chunk)
+                    except (socket.timeout, ConnectionResetError, BrokenPipeError):
+                        break
                     except Exception:
                         break
 

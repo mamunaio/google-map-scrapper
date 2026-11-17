@@ -308,5 +308,99 @@ class TestMapsScraper(unittest.TestCase):
             self.assertIsNone(result["data"])
             self.assertIn("No business details found", result["error"])
 
+    def test_playwright_and_proxy_lifecycle_sequence(self):
+        """
+        Verify that:
+        1. SafeBrowserProxy starts before Playwright launches.
+        2. Navigation (page.goto) and data extraction happen WHILE Playwright context is active.
+        3. Browser, context, and page are closed while Playwright is still active.
+        4. Playwright context exits before SafeBrowserProxy stops.
+        5. Browser closes BEFORE SafeBrowserProxy stops.
+        """
+        events = []
+
+        class MockProxyContext:
+            def __enter__(self):
+                events.append("proxy_enter")
+                mock_p = MagicMock()
+                mock_p.port = 12345
+                return mock_p
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                events.append("proxy_exit")
+
+        mock_page = MagicMock()
+        mock_context = MagicMock()
+        mock_browser = MagicMock()
+
+        def record_page_goto(*args, **kwargs):
+            events.append("page_goto")
+
+        def record_page_close(*args, **kwargs):
+            events.append("page_close")
+
+        def record_context_close(*args, **kwargs):
+            events.append("context_close")
+
+        def record_browser_close(*args, **kwargs):
+            events.append("browser_close")
+
+        mock_page.goto.side_effect = record_page_goto
+        mock_page.close.side_effect = record_page_close
+        mock_context.close.side_effect = record_context_close
+        mock_browser.close.side_effect = record_browser_close
+
+        mock_context.new_page.return_value = mock_page
+        mock_browser.new_context.return_value = mock_context
+
+        class MockPlaywrightContext:
+            def __enter__(self):
+                events.append("playwright_enter")
+                mock_play = MagicMock()
+                mock_play.chromium.launch.return_value = mock_browser
+                return mock_play
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                events.append("playwright_exit")
+
+        def record_search_feed(*args, **kwargs):
+            events.append("search_feed")
+            return [{"Business Name": "Test HVAC", "Website": "https://testhvac.com"}]
+
+        with patch('services.maps_scraper.SafeBrowserProxy', side_effect=MockProxyContext), \
+             patch('services.maps_scraper.sync_playwright', side_effect=MockPlaywrightContext), \
+             patch('services.maps_scraper.scrape_maps_search_feed', side_effect=record_search_feed):
+
+            res = scrape_google_maps("https://www.google.com/maps/search/HVAC+contractors+in+Dallas,+TX")
+            self.assertTrue(res["success"])
+
+        # Validate complete ordered lifecycle:
+        # proxy_enter -> playwright_enter -> page_goto -> search_feed -> page_close -> context_close -> browser_close -> playwright_exit -> proxy_exit
+        self.assertEqual(events, [
+            "proxy_enter",
+            "playwright_enter",
+            "page_goto",
+            "search_feed",
+            "page_close",
+            "context_close",
+            "browser_close",
+            "playwright_exit",
+            "proxy_exit"
+        ])
+
+        # Explicit assertion checks
+        p_enter = events.index("playwright_enter")
+        p_exit = events.index("playwright_exit")
+        goto_idx = events.index("page_goto")
+        feed_idx = events.index("search_feed")
+        b_close_idx = events.index("browser_close")
+        proxy_exit_idx = events.index("proxy_exit")
+
+        self.assertLess(p_enter, goto_idx, "page.goto must occur inside Playwright context")
+        self.assertLess(goto_idx, p_exit, "page.goto must occur before Playwright exits")
+        self.assertLess(p_enter, feed_idx, "Extraction must occur inside Playwright context")
+        self.assertLess(feed_idx, p_exit, "Extraction must occur before Playwright exits")
+        self.assertLess(b_close_idx, p_exit, "Browser must close before Playwright exits")
+        self.assertLess(b_close_idx, proxy_exit_idx, "Browser must close before SafeBrowserProxy stops")
+        self.assertLess(p_exit, proxy_exit_idx, "Playwright must exit before SafeBrowserProxy stops")
+
 if __name__ == '__main__':
     unittest.main()

@@ -634,5 +634,178 @@ class TestGoogleMapsPlaywrightSecurity(unittest.TestCase):
         self.assertIn((pinned_ip, 443), connected_destinations)
         mock_client.sendall.assert_called_with(b"HTTP/1.1 200 Connection Established\r\n\r\n")
 
+    def test_http_forward_proxy_absolute_to_origin_form_conversion(self):
+        """
+        Verify that non-CONNECT HTTP forward proxy requests convert absolute-form
+        request targets (http://maps.google.com/search?q=test) to origin-form (/search?q=test),
+        preserve Host header, add Connection: close, and stream the upstream response to client.
+        """
+        pinned_ip = '142.250.190.46'
+
+        def public_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (pinned_ip, port))]
+
+        sent_upstream = []
+        mock_upstream = MagicMock()
+        mock_upstream.sendall.side_effect = lambda data: sent_upstream.append(data)
+        mock_upstream.recv.side_effect = [b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK", b""]
+
+        client_sent = []
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [
+            b"GET http://maps.google.com/search?q=test HTTP/1.1\r\nHost: maps.google.com\r\nUser-Agent: Playwright\r\n\r\n",
+            b""
+        ]
+        mock_client.sendall.side_effect = lambda data: client_sent.append(data)
+
+        proxy = SafeBrowserProxy()
+        proxy.running = True
+        try:
+            with patch('socket.getaddrinfo', side_effect=public_getaddrinfo), \
+                 patch('services.security.socket.socket', return_value=mock_upstream):
+                proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        # Check upstream received origin-form request line
+        upstream_req = b"".join(sent_upstream)
+        self.assertTrue(upstream_req.startswith(b"GET /search?q=test HTTP/1.1\r\n"))
+        self.assertIn(b"Host: maps.google.com", upstream_req)
+        self.assertIn(b"Connection: close", upstream_req)
+        self.assertNotIn(b"GET http://", upstream_req)
+
+        # Check client received upstream response
+        client_resp = b"".join(client_sent)
+        self.assertIn(b"HTTP/1.1 200 OK", client_resp)
+        self.assertIn(b"OK", client_resp)
+
+    def test_http_forward_proxy_body_preserved_without_truncation(self):
+        """
+        Verify that request bodies with Content-Length are read completely without
+        silent truncation and forwarded to upstream.
+        """
+        pinned_ip = '142.250.190.46'
+
+        def public_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (pinned_ip, port))]
+
+        body_payload = b"field1=value1&field2=value2&field3=large_payload_content_12345"
+        content_len = len(body_payload)
+
+        sent_upstream = []
+        mock_upstream = MagicMock()
+        mock_upstream.sendall.side_effect = lambda data: sent_upstream.append(data)
+        mock_upstream.recv.side_effect = [b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", b""]
+
+        # Simulate client sending header and body in separate chunks
+        header_chunk = f"POST http://www.google.com/maps/api HTTP/1.1\r\nHost: www.google.com\r\nContent-Length: {content_len}\r\n\r\n".encode()
+        body_chunk = body_payload
+
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [header_chunk, body_chunk, b""]
+
+        proxy = SafeBrowserProxy()
+        try:
+            with patch('socket.getaddrinfo', side_effect=public_getaddrinfo), \
+                 patch('services.security.socket.socket', return_value=mock_upstream):
+                proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        upstream_req = b"".join(sent_upstream)
+        self.assertTrue(upstream_req.startswith(b"POST /maps/api HTTP/1.1\r\n"))
+        self.assertIn(body_payload, upstream_req)
+        self.assertTrue(upstream_req.endswith(body_payload))
+
+    def test_http_forward_proxy_unsupported_method_rejected(self):
+        """
+        Verify that unsupported or arbitrary HTTP methods return 405 Method Not Allowed.
+        """
+        client_sent = []
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [
+            b"FOOBARMETHOD http://maps.google.com/ HTTP/1.1\r\nHost: maps.google.com\r\n\r\n",
+            b""
+        ]
+        mock_client.sendall.side_effect = lambda data: client_sent.append(data)
+
+        proxy = SafeBrowserProxy()
+        try:
+            proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        response = b"".join(client_sent)
+        self.assertIn(b"405 Method Not Allowed", response)
+
+    def test_http_forward_proxy_malformed_request_line_rejected(self):
+        """
+        Verify that malformed or incomplete request lines return 400 Bad Request.
+        """
+        client_sent = []
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [b"MALFORMED_LINE_WITHOUT_SPACES\r\n\r\n", b""]
+        mock_client.sendall.side_effect = lambda data: client_sent.append(data)
+
+        proxy = SafeBrowserProxy()
+        try:
+            proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        response = b"".join(client_sent)
+        self.assertIn(b"400 Bad Request", response)
+
+    def test_http_forward_proxy_missing_host_rejected(self):
+        """
+        Verify that origin-form requests missing both target scheme and Host header return 400 Bad Request.
+        """
+        client_sent = []
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [b"GET /maps HTTP/1.1\r\nUser-Agent: test\r\n\r\n", b""]
+        mock_client.sendall.side_effect = lambda data: client_sent.append(data)
+
+        proxy = SafeBrowserProxy()
+        try:
+            proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        response = b"".join(client_sent)
+        self.assertIn(b"400 Bad Request", response)
+
+    def test_http_forward_proxy_upstream_error_handled_cleanly(self):
+        """
+        Verify that upstream connection failure returns 502 Bad Gateway and cleans up sockets.
+        """
+        pinned_ip = '142.250.190.46'
+
+        def public_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (pinned_ip, port))]
+
+        mock_upstream = MagicMock()
+        mock_upstream.connect.side_effect = OSError("Connection refused")
+
+        client_sent = []
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [
+            b"GET http://maps.google.com/search?q=test HTTP/1.1\r\nHost: maps.google.com\r\n\r\n",
+            b""
+        ]
+        mock_client.sendall.side_effect = lambda data: client_sent.append(data)
+
+        proxy = SafeBrowserProxy()
+        try:
+            with patch('socket.getaddrinfo', side_effect=public_getaddrinfo), \
+                 patch('services.security.socket.socket', return_value=mock_upstream):
+                proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        response = b"".join(client_sent)
+        self.assertIn(b"502 Bad Gateway", response)
+        mock_upstream.close.assert_called_once()
+        mock_client.close.assert_called_once()
+
 if __name__ == '__main__':
     unittest.main()

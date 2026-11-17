@@ -277,3 +277,43 @@
     4. `test_browser_subresource_dns_rebinding_blocked`: Verified subresources resolving to cloud metadata (169.254.169.254) are aborted.
     5. `test_safe_browser_proxy_pins_socket_destination`: Verified upstream socket connects directly to the pinned public IP.
   - Total automated test suite expanded from 84 to **89 tests** (100% passing).
+
+---
+
+## Phase 12: Playwright Lifecycle Scope Correction & HTTP Forward Proxy Enhancements
+
+### 1. Issue Analysis
+- **Playwright Context Early Exit**: In `services/maps_scraper.py`, `with sync_playwright() as p:` exited prematurely immediately after `page.route()`. The subsequent `page.goto()`, consent handling, search/place extraction, and resource cleanup were running outside the Playwright context.
+- **HTTP Forward Proxy Gaps in `SafeBrowserProxy`**:
+  - Absolute-form request targets (`http://host:port/path`) were forwarded directly upstream without conversion to origin-form (`/path`).
+  - Request bodies with `Content-Length` or chunked transfer encoding risked truncation if not fully received in initial header read.
+  - Unsupported HTTP methods and malformed request lines lacked standard HTTP error responses (`405 Method Not Allowed`, `400 Bad Request`).
+  - Socket cleanup required explicit closing of both client and upstream sockets on error conditions.
+
+### 2. Implementation Overview
+- **Playwright Full Lifecycle Nesting (`services/maps_scraper.py`):**
+  - Moved entire browser lifecycle inside `with sync_playwright() as p:` wrapped by `with SafeBrowserProxy() as proxy:`.
+  - Guaranteed `page.goto()`, consent dialog dismissal, search feed extraction, and place detail extraction execute while Playwright is active.
+  - Implemented safe reverse-order resource cleanup in `finally:` block (`page.close()`, `context.close()`, `browser.close()`).
+  - SafeBrowserProxy remains active for the full browser lifecycle and terminates only after Playwright exits.
+- **HTTP Forward Proxy Request Normalization (`services/security.py`):**
+  - Converted absolute-form proxy request targets to origin-form (`/path?query`).
+  - Preserved incoming `Host` header or safely auto-generated `Host: {host}:{port}`.
+  - Replaced incoming `Connection` header with `Connection: close` for deterministic upstream completion.
+  - Implemented complete request body reading based on `Content-Length` and chunked encoding to prevent truncation.
+  - Added method validation rejecting unsupported methods with `405 Method Not Allowed`.
+  - Added malformed request validation returning `400 Bad Request`.
+  - Preserved full HTTPS CONNECT tunneling functionality with bidirectional byte streaming.
+  - Upstream socket connects strictly to pinned, validated public IP addresses.
+- **Automated Regression Test Suite:**
+  - Added `test_playwright_and_proxy_lifecycle_sequence` in `tests/test_maps_scraper.py`:
+    - Verified `proxy_enter` -> `playwright_enter` -> `page_goto` -> data extraction -> `page_close` -> `context_close` -> `browser_close` -> `playwright_exit` -> `proxy_exit`.
+    - Verified browser closes before SafeBrowserProxy stops.
+  - Added 6 dedicated HTTP forward proxy regression tests in `tests/test_security.py`:
+    - `test_http_forward_proxy_absolute_to_origin_form_conversion`: Target conversion and response relay.
+    - `test_http_forward_proxy_body_preserved_without_truncation`: Body preservation with `Content-Length`.
+    - `test_http_forward_proxy_unsupported_method_rejected`: `405 Method Not Allowed`.
+    - `test_http_forward_proxy_malformed_request_line_rejected`: `400 Bad Request`.
+    - `test_http_forward_proxy_missing_host_rejected`: `400 Bad Request` on missing Host.
+    - `test_http_forward_proxy_upstream_error_handled_cleanly`: `502 Bad Gateway` and socket cleanup.
+  - Total automated test suite expanded from 89 to **96 tests** (100% passing).
