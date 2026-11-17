@@ -1,15 +1,23 @@
 import unittest
 from unittest.mock import patch, MagicMock
+import socket
 import requests
+import urllib3
+import urllib3.connection
+import urllib3.util.connection as urllib3_connection
 from services.security import (
     validate_and_sanitize_url,
     is_ip_allowed,
     _safe_create_connection,
     safe_http_get,
+    SafeHTTPAdapter,
     SecurityError
 )
 
 class TestSecurity(unittest.TestCase):
+    # -------------------------------------------------------------
+    # Static URL & IP Sanitization Tests
+    # -------------------------------------------------------------
     def test_blocks_localhost_and_loopback(self):
         with self.assertRaises(SecurityError):
             validate_and_sanitize_url("http://localhost:5000")
@@ -44,48 +52,82 @@ class TestSecurity(unittest.TestCase):
         self.assertFalse(is_ip_allowed("127.0.0.1"))
         self.assertFalse(is_ip_allowed("10.10.10.10"))
         self.assertFalse(is_ip_allowed("169.254.169.254"))
-        self.assertTrue(is_ip_allowed("8.8.8.8"))
-
-    # -------------------------------------------------------------
-    # DNS Rebinding & Socket Connection Tests
-    # -------------------------------------------------------------
-    def test_public_dns_resolution_and_connection(self):
-        with patch('socket.getaddrinfo') as mock_gai, patch('socket.socket') as mock_sock_cls:
-            mock_gai.return_value = [(2, 1, 0, '', ('93.184.216.34', 443))]
-            mock_sock = MagicMock()
-            mock_sock_cls.return_value = mock_sock
-
-            sock = _safe_create_connection(('example.com', 443))
-            self.assertIsNotNone(sock)
-            mock_sock.connect.assert_called_once_with(('93.184.216.34', 443))
-
-    def test_dns_rebinding_to_localhost(self):
-        """Simulate DNS rebinding where domain resolves to 127.0.0.1 at socket connect."""
-        with patch('socket.getaddrinfo') as mock_gai:
-            mock_gai.return_value = [(2, 1, 0, '', ('127.0.0.1', 80))]
-            with self.assertRaises(SecurityError) as ctx:
-                _safe_create_connection(('rebind-local.com', 80))
-            self.assertIn("restricted IP: 127.0.0.1", str(ctx.exception))
-
-    def test_dns_rebinding_to_private_ipv4(self):
-        """Simulate DNS rebinding where domain resolves to internal 10.0.0.1 at socket connect."""
-        with patch('socket.getaddrinfo') as mock_gai:
-            mock_gai.return_value = [(2, 1, 0, '', ('10.0.0.1', 80))]
-            with self.assertRaises(SecurityError) as ctx:
-                _safe_create_connection(('rebind-internal.com', 80))
-            self.assertIn("restricted IP: 10.0.0.1", str(ctx.exception))
-
-    def test_ipv6_private_and_link_local_destinations(self):
-        """Verify IPv6 loopback, link-local and private addresses are rejected."""
         self.assertFalse(is_ip_allowed("::1"))
         self.assertFalse(is_ip_allowed("fe80::1"))
         self.assertFalse(is_ip_allowed("fc00::1"))
-        self.assertFalse(is_ip_allowed("[fe80::1]"))
+        self.assertFalse(is_ip_allowed("::ffff:127.0.0.1"))
+        self.assertFalse(is_ip_allowed("::ffff:169.254.169.254"))
+        self.assertTrue(is_ip_allowed("8.8.8.8"))
+        self.assertTrue(is_ip_allowed("1.1.1.1"))
+        self.assertTrue(is_ip_allowed("2607:f8b0:4004:800::200e"))
 
-        with patch('socket.getaddrinfo') as mock_gai:
-            mock_gai.return_value = [(23, 1, 0, '', ('fe80::1', 80, 0, 0))]
-            with self.assertRaises(SecurityError):
-                _safe_create_connection(('[fe80::1]', 80))
+    # -------------------------------------------------------------
+    # Actual Connection Path Reference Tests
+    # -------------------------------------------------------------
+    def test_urllib3_connection_reference_is_patched(self):
+        """Verify the exact function reference used by urllib3 HTTPConnection points to _safe_create_connection."""
+        self.assertIs(urllib3_connection.create_connection, _safe_create_connection)
+        self.assertIs(urllib3.connection.connection.create_connection, _safe_create_connection)
+
+    # -------------------------------------------------------------
+    # Live requests.Session.get() Execution Path Integration Tests
+    # -------------------------------------------------------------
+    def test_requests_session_get_blocks_dns_rebinding_localhost(self):
+        """Invoke requests.Session.get() and verify DNS rebinding to 127.0.0.1 is blocked before socket connect."""
+        session = requests.Session()
+        with patch('socket.getaddrinfo') as mock_gai, patch('socket.socket') as mock_sock_cls:
+            mock_gai.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', 80))]
+            with self.assertRaises(SecurityError) as ctx:
+                session.get('http://rebind-localhost-test.com', timeout=1)
+            self.assertIn("restricted IP: 127.0.0.1", str(ctx.exception))
+            # Verify socket.socket was never connected
+            mock_sock_cls.return_value.connect.assert_not_called()
+
+    def test_requests_session_get_blocks_dns_rebinding_metadata(self):
+        """Invoke requests.Session.get() and verify DNS rebinding to 169.254.169.254 is blocked."""
+        session = requests.Session()
+        with patch('socket.getaddrinfo') as mock_gai, patch('socket.socket') as mock_sock_cls:
+            mock_gai.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('169.254.169.254', 80))]
+            with self.assertRaises(SecurityError) as ctx:
+                session.get('http://rebind-metadata-test.com', timeout=1)
+            self.assertIn("restricted IP: 169.254.169.254", str(ctx.exception))
+            mock_sock_cls.return_value.connect.assert_not_called()
+
+    def test_requests_session_get_blocks_private_ipv4(self):
+        """Invoke requests.Session.get() and verify DNS rebinding to 10.0.0.1 is blocked."""
+        session = requests.Session()
+        with patch('socket.getaddrinfo') as mock_gai, patch('socket.socket') as mock_sock_cls:
+            mock_gai.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('10.0.0.1', 80))]
+            with self.assertRaises(SecurityError) as ctx:
+                session.get('http://rebind-private-test.com', timeout=1)
+            self.assertIn("restricted IP: 10.0.0.1", str(ctx.exception))
+            mock_sock_cls.return_value.connect.assert_not_called()
+
+    def test_requests_session_get_blocks_ipv6_link_local(self):
+        """Invoke requests.Session.get() and verify DNS rebinding to fe80::1 is blocked."""
+        session = requests.Session()
+        with patch('socket.getaddrinfo') as mock_gai, patch('socket.socket') as mock_sock_cls:
+            mock_gai.return_value = [(socket.AF_INET6, socket.SOCK_STREAM, 6, '', ('fe80::1', 80, 0, 0))]
+            with self.assertRaises(SecurityError) as ctx:
+                session.get('http://rebind-ipv6-test.com', timeout=1)
+            self.assertIn("restricted IP: fe80::1", str(ctx.exception))
+            mock_sock_cls.return_value.connect.assert_not_called()
+
+    def test_requests_session_get_connects_public_ip_with_pinning(self):
+        """Invoke requests.Session.get() and verify connection connects to validated pinned IP."""
+        session = requests.Session()
+        with patch('socket.getaddrinfo') as mock_gai, patch('socket.socket') as mock_sock_cls:
+            mock_gai.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.34', 80))]
+            mock_sock = MagicMock()
+            mock_sock_cls.return_value = mock_sock
+            # Simulate socket connection success then stop before HTTP response parsing
+            mock_sock.connect.side_effect = OSError("Simulated connection verified")
+
+            with self.assertRaises(OSError):
+                session.get('http://safe-public-example.com', timeout=1)
+
+            # Ensure socket.connect was called directly with the verified pinned address tuple
+            mock_sock.connect.assert_called_once_with(('93.184.216.34', 80))
 
     # -------------------------------------------------------------
     # HTTP Redirect & Safe GET Tests
@@ -98,7 +140,6 @@ class TestSecurity(unittest.TestCase):
 
         with patch('requests.Session.get') as mock_get, \
              patch('services.security.validate_and_sanitize_url') as mock_val:
-            # First URL validates, second URL (redirect) raises SecurityError
             mock_val.side_effect = [
                 'https://publicsite.com',
                 SecurityError("Access to private destination '192.168.1.1' is forbidden.")
@@ -142,7 +183,6 @@ class TestSecurity(unittest.TestCase):
         """Verify responses exceeding MAX_RESPONSE_BYTES (5 MB) are terminated."""
         mock_resp = MagicMock()
         mock_resp.is_redirect = False
-        # Return 6 chunks of 1 MB = 6 MB
         mock_resp.iter_content.return_value = [b'X' * (1024 * 1024)] * 6
 
         with patch('services.security.validate_and_sanitize_url') as mock_val, \
@@ -154,6 +194,14 @@ class TestSecurity(unittest.TestCase):
                 safe_http_get('https://large-file.com')
             self.assertIn("Response size exceeded safety limit", str(ctx.exception))
             mock_resp.close.assert_called_once()
+
+    def test_safe_http_adapter_preflight_blocks_invalid_url(self):
+        """Verify SafeHTTPAdapter blocks restricted URLs at the adapter layer."""
+        adapter = SafeHTTPAdapter()
+        req = requests.PreparedRequest()
+        req.url = 'http://127.0.0.1:8000/api'
+        with self.assertRaises(SecurityError):
+            adapter.send(req)
 
 if __name__ == '__main__':
     unittest.main()

@@ -218,6 +218,7 @@ class TestExportService(unittest.TestCase):
         self.assertEqual(ws.cell(row=2, column=6).value, "N/A")
         self.assertEqual(ws.cell(row=2, column=7).value, "N/A")
         self.assertEqual(ws.cell(row=2, column=8).value, "N/A")
+        self.assertEqual(ws.cell(row=2, column=9).value, "No Verified Gap")
 
     def test_unknown_opportunity_status_neutral_row(self):
         lead = {

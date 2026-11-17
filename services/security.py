@@ -176,8 +176,24 @@ def _safe_create_connection(address, timeout=urllib3_connection._DEFAULT_TIMEOUT
         raise err
     raise OSError(f"Failed to establish connection to {clean_host}")
 
-# Install socket-level hook
+# Install socket-level hook on urllib3 connection modules
 urllib3_connection.create_connection = _safe_create_connection
+try:
+    import urllib3.connection
+    if hasattr(urllib3.connection, "connection"):
+        urllib3.connection.connection.create_connection = _safe_create_connection
+except Exception:
+    pass
+
+class SafeHTTPAdapter(requests.adapters.HTTPAdapter):
+    """
+    Custom HTTPAdapter ensuring that every request dispatched by Requests
+    undergoes pre-flight URL and destination validation before reaching the
+    connection pool, complementing the socket-level DNS rebinding defense.
+    """
+    def send(self, request, *args, **kwargs):
+        validate_and_sanitize_url(request.url)
+        return super().send(request, *args, **kwargs)
 
 def safe_http_get(url: str, headers: dict = None, max_bytes: int = MAX_RESPONSE_BYTES, timeout=DEFAULT_TIMEOUT):
     """
@@ -195,6 +211,9 @@ def safe_http_get(url: str, headers: dict = None, max_bytes: int = MAX_RESPONSE_
         default_headers.update(headers)
 
     session = requests.Session()
+    safe_adapter = SafeHTTPAdapter()
+    session.mount("https://", safe_adapter)
+    session.mount("http://", safe_adapter)
     current_url = validated_url
     redirect_count = 0
     max_redirects = 5

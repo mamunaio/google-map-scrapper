@@ -242,7 +242,7 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
                 "N/A",
                 "N/A",
                 "N/A",
-                "Verified",
+                "No Verified Gap",
                 opps_data.get("next_action") or "Monitor lead periodically"
             ])
 

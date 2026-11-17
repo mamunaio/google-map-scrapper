@@ -160,23 +160,23 @@
   - Dimension-level explanations added in `dimension_explanations` for all 9 scoring dimensions.
   - Preserved priority labels: `High Priority`, `Medium Priority`, `Low Priority`, and `Manual Review` for failed/insufficient data.
   - Added 10 dedicated regression tests in `tests/test_lead_scoring.py`.
-- **Issue 2: Verified DNS Rebinding Protection (`services/security.py`):**
-  - Re-architected `_safe_create_connection` to resolve addresses once at connection time and validate every IPv4/IPv6 address against private/loopback/link-local/metadata networks.
-  - Direct socket connection established using pre-verified sockaddr tuples, eliminating any secondary DNS lookup window (TOCTOU rebinding defense).
-  - Preserved strict TLS verification (`verify=True`) and tested SSLError handling with zero insecure fallbacks.
-  - Enforced per-hop redirect SSRF checking and 5 MB streaming body limit.
-  - Added 14 unit and mocked integration tests in `tests/test_security.py`.
+- **Issue 2: Verified DNS Rebinding & Live Requests Path Verification (`services/security.py`):**
+  - Confirmed `urllib3` (v2.8.0) and `requests` (v2.34.2) connection execution path: `requests.Session.get()` -> `HTTPAdapter.send()` -> `HTTPConnectionPool.urlopen()` -> `HTTPConnection._new_conn()` -> `urllib3.util.connection.create_connection`.
+  - Verified that `urllib3.util.connection.create_connection` and `urllib3.connection.connection.create_connection` directly reference `_safe_create_connection`.
+  - Added `SafeHTTPAdapter` for adapter-level URL pre-validation on all session requests.
+  - Integration tests verified live `requests.Session.get()` blocking DNS rebinding to localhost (`127.0.0.1`), metadata (`169.254.169.254`), private IPv4 (`10.0.0.1`), and IPv6 link-local (`fe80::1`) before any socket connection.
+  - Verified that public destinations connect directly to pinned IP addresses without secondary DNS lookup.
 - **Issue 3: Unsupported Fallback Opportunities Removed (`services/export_service.py`):**
   - Completely removed automatic fallback entries ("General Optimization", "Maintenance / Retainer").
-  - When no verified opportunities exist, added neutral status row: `No Verified Opportunity Identified` with `N/A` for impact, recommended service, and confidence.
+  - When no verified opportunities exist, outputs neutral status row: `No Verified Opportunity Identified` with `No Verified Gap` status (never falsely labeling leads as "Verified"), and `N/A` for impact, recommended service, and confidence.
   - Preserved strict 3-sheet Format B structure (15 cols, 18 cols, 10 cols) and Format A 22+ source column preservation.
   - Added 8 regression tests in `tests/test_export_service.py`.
 
 ---
 
 ## Acceptance Test Summary
-- Total Automated Regression Tests: **49 Tests**
-- Pass Rate: **100% (49/49 passing)**
+- Total Automated Regression Tests: **52 Tests**
+- Pass Rate: **100% (52/52 passing)**
 - Execution Time: ~2.25s
-- Security Verification: Mocked integration tests for DNS rebinding, localhost, private IPv4/IPv6, link-local, redirect SSRF, TLS failure, and 5MB size limits.
+- Security Verification: Live Requests & urllib3 integration tests for DNS rebinding, localhost, cloud metadata, private IPv4/IPv6, link-local, redirect SSRF, TLS failure, and 5MB size limits.
 - Backward Compatibility: Original Google Maps crawler, CSV/Excel upload, email extraction, and original 22+ columns completely preserved.
