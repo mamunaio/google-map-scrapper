@@ -276,5 +276,41 @@ class TestSecurity(unittest.TestCase):
             # Verify session was closed at end of lifecycle
             mock_session_close.assert_called_once()
 
+    def test_public_destination_with_proxy_env_does_not_contact_proxy(self):
+        """
+        Verify that when HTTP_PROXY and HTTPS_PROXY are configured in the environment,
+        a request to a public destination connects directly to the target host and
+        never contacts or resolves the configured proxy host because session.trust_env is False.
+        """
+        proxy_host = "unreachable-proxy-server.invalid"
+        resolved_hosts = []
+
+        def tracking_getaddrinfo(host, port, *args, **kwargs):
+            resolved_hosts.append(host)
+            if "example.com" in host:
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.34', port))]
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', port))]
+
+        with patch.dict('os.environ', {
+            'HTTP_PROXY': f'http://{proxy_host}:8080',
+            'HTTPS_PROXY': f'http://{proxy_host}:8080'
+        }):
+            with patch('socket.getaddrinfo', side_effect=tracking_getaddrinfo), \
+                 patch('socket.socket') as mock_sock_cls:
+                mock_sock = MagicMock()
+                mock_sock_cls.return_value = mock_sock
+                mock_sock.connect.side_effect = OSError("Simulated connection verified directly to public host")
+
+                with self.assertRaises(OSError) as ctx:
+                    safe_http_get('https://example.com')
+                self.assertIn("Simulated connection verified", str(ctx.exception))
+
+                # Verify proxy host was never resolved via DNS
+                self.assertNotIn(proxy_host, resolved_hosts)
+                # Verify DNS lookup was performed for the target public host
+                self.assertIn("example.com", resolved_hosts)
+                # Verify socket connected directly to the pinned public IP address
+                mock_sock.connect.assert_called_once_with(('93.184.216.34', 443))
+
 if __name__ == '__main__':
     unittest.main()

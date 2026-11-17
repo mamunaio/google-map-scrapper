@@ -177,8 +177,8 @@
 ---
 
 ## Acceptance Test Summary
-- Total Automated Regression Tests: **58 Tests**
-- Pass Rate: **100% (58/58 passing)**
-- Execution Time: ~2.26s
-- Security Verification: Live Requests & urllib3 integration tests for DNS rebinding, localhost, cloud metadata, private IPv4/IPv6, link-local, proxy bypass prevention (trust_env=False), redirect SSRF, TLS failure, and 5MB size limits.
+- Total Automated Regression Tests: **59 Tests**
+- Pass Rate: **100% (59/59 passing)**
+- Execution Time: ~2.28s
+- Security Verification: Live Requests & urllib3 integration tests for DNS rebinding, localhost, cloud metadata, private IPv4/IPv6, link-local, proxy bypass prevention (trust_env=False), public proxy isolation, redirect SSRF, TLS failure, and 5MB size limits.
 - Backward Compatibility: Original Google Maps crawler, CSV/Excel upload, email extraction, and original 22+ columns completely preserved.
