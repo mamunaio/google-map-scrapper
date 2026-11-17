@@ -36,7 +36,9 @@ INVALID_KEYWORDS = [
     'placeholder@', 'yourname@', 'name@', 'admin@', 'domain@', 'godaddy.com',
     'residence.com', 'wix.com', 'squarespace.com', 'weebly.com', 'sentry.io',
     'schema.org', 'gravatar.com', 'w3.org', 'your_email', 'youremail',
-    'email_here', 'your-email', 'youremailhere', 'example@'
+    'email_here', 'your-email', 'youremailhere', 'example@',
+    'johndoe@', 'john.doe@', 'janedoe@', 'jane.doe@',
+    'first.last@', 'firstname.lastname@', 'your.email@', 'your.name@'
 ]
 
 PUBLIC_EMAIL_DOMAINS = {
@@ -44,6 +46,11 @@ PUBLIC_EMAIL_DOMAINS = {
     'icloud.com', 'live.com', 'msn.com', 'att.net', 'sbcglobal.net',
     'comcast.net', 'me.com', 'mac.com', 'mail.com', 'zoho.com',
     'proton.me', 'protonmail.com'
+}
+
+PUBLIC_EXAMPLE_LOCAL_PARTS = {
+    'jsmith', 'j.smith', 'john.smith', 'johnsmith', 'jane.smith', 'janesmith',
+    'johndoe', 'john.doe', 'janedoe', 'jane.doe', 'email', 'sample', 'example'
 }
 
 def decode_cloudflare_email(cf_hash: str) -> str:
@@ -101,7 +108,14 @@ def clean_and_validate_emails(raw_emails: list, base_url: str = "", base_domain:
             val = validate_email(em_clean, check_deliverability=False)
             norm = val.normalized
             if norm not in seen:
-                em_domain = norm.split('@')[-1].lower()
+                local_part, em_domain = norm.rsplit('@', 1)
+                local_part = local_part.lower()
+                em_domain = em_domain.lower()
+
+                # Reject generic dummy/example local parts on public webmail providers (e.g. jsmith@gmail.com)
+                is_public_provider = em_domain in PUBLIC_EMAIL_DOMAINS
+                if is_public_provider and local_part in PUBLIC_EXAMPLE_LOCAL_PARTS:
+                    continue
 
                 # Unrelated domain check: if base_domain is known, require domain match or legitimate public provider
                 if base_domain:
@@ -111,7 +125,6 @@ def clean_and_validate_emails(raw_emails: list, base_url: str = "", base_domain:
                         em_domain.endswith('.' + base_domain) or
                         base_domain.endswith('.' + em_domain)
                     )
-                    is_public_provider = em_domain in PUBLIC_EMAIL_DOMAINS
                     if not domain_matches and not is_public_provider:
                         # Reject unrelated external private domain (e.g. residence.com, godaddy.com)
                         continue
@@ -159,8 +172,26 @@ def extract_emails_and_socials(html_text: str, base_url: str = ""):
     except Exception:
         clean_html = html_text
 
+    # Exclude HTML form placeholder/value attributes before scanning raw HTML so form examples
+    # (e.g. <input placeholder="jsmith@gmail.com">) are never extracted as business emails.
+    scan_html = clean_html
+    try:
+        sanitized_soup = BeautifulSoup(clean_html, 'html.parser')
+        for form_el in sanitized_soup.find_all(['input', 'textarea', 'select']):
+            for attr in ('placeholder', 'value', 'aria-placeholder', 'data-placeholder'):
+                if form_el.has_attr(attr):
+                    del form_el[attr]
+        scan_html = str(sanitized_soup)
+    except Exception:
+        scan_html = re.sub(
+            r'\b(?:placeholder|value|aria-placeholder|data-placeholder)\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s>]+)',
+            '',
+            clean_html,
+            flags=re.IGNORECASE
+        )
+
     # Decode obfuscated emails like "john [at] domain.com" or "john (at) domain.com"
-    obf = re.sub(r'\[at\]|\(at\)|\s+at\s+', '@', clean_html, flags=re.IGNORECASE)
+    obf = re.sub(r'\[at\]|\(at\)|\s+at\s+', '@', scan_html, flags=re.IGNORECASE)
     obf = re.sub(r'\[dot\]|\(dot\)|\s+dot\s+', '.', obf, flags=re.IGNORECASE)
 
     # Standard regex email scan

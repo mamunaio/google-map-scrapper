@@ -6,7 +6,8 @@ and nuanced mobile usability without false claims.
 
 import ssl
 import socket
-from datetime import datetime
+import certifi
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 import re
@@ -14,12 +15,13 @@ import re
 def inspect_ssl_certificate(hostname: str, port: int = 443, timeout: int = 4):
     """
     Connects to the server over SSL and extracts expiration, issuer, and days remaining.
+    Uses certifi CA bundle with strict certificate verification and preserves the original hostname for SNI.
     """
     if not hostname:
         return {"status": "Unknown", "evidence": "No hostname provided"}
 
-    clean_host = hostname.lower().replace('www.', '').split(':')[0]
-    context = ssl.create_default_context()
+    clean_host = hostname.strip().lower().split(':')[0]
+    context = ssl.create_default_context(cafile=certifi.where())
 
     try:
         with socket.create_connection((clean_host, port), timeout=timeout) as sock:
@@ -32,8 +34,8 @@ def inspect_ssl_certificate(hostname: str, port: int = 443, timeout: int = 4):
                 not_after_str = cert.get('notAfter')
                 if not_after_str:
                     # Format: 'May 20 12:00:00 2026 GMT'
-                    expiry_date = datetime.strptime(not_after_str, '%b %d %H:%M:%S %Y %Z')
-                    days_remaining = (expiry_date - datetime.utcnow()).days
+                    expiry_date = datetime.strptime(not_after_str, '%b %d %H:%M:%S %Y %Z').replace(tzinfo=timezone.utc)
+                    days_remaining = (expiry_date - datetime.now(timezone.utc)).days
 
                     issuer_dict = dict(x[0] for x in cert.get('issuer', []))
                     issuer_org = issuer_dict.get('organizationName', issuer_dict.get('commonName', 'Unknown Issuer'))

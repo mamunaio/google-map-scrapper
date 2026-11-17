@@ -841,3 +841,169 @@ def test_case_20_reachable_site_stale_main_opportunity_aligned_to_sheet_03():
     assert s1_main_opp in s3_findings
 
 
+# -----------------------------------------------------------------------------
+# 21. Google Maps Feed Dynamic Pagination Reaches 30 Unique Businesses
+# -----------------------------------------------------------------------------
+def test_case_21_maps_feed_pagination_reaches_30_unique_businesses():
+    from services.maps_scraper import scrape_maps_search_feed
+
+    # Simulate a Google Maps feed that loads 5 new cards per feed container scroll (up to 35 total)
+    state = {"loaded": 5, "scroll_calls": 0}
+
+    def make_mock_card(idx: int):
+        card = MagicMock()
+        name_loc = MagicMock()
+        name_loc.count.return_value = 1
+        name_loc.inner_text.return_value = f"Dallas HVAC Business #{idx}"
+
+        link_loc = MagicMock()
+        link_loc.count.return_value = 1
+        link_loc.first.get_attribute.return_value = f"https://www.google.com/maps/place/Dallas+HVAC+{idx}/data=!1s0x{idx:04x}"
+
+        empty_loc = MagicMock()
+        empty_loc.count.return_value = 0
+
+        def card_locator(sel):
+            if "div.qBF1Pd" in sel:
+                return name_loc
+            if "a.hfpxzc" in sel:
+                return link_loc
+            return empty_loc
+
+        card.locator.side_effect = card_locator
+        card.inner_text.return_value = f"Dallas HVAC Business #{idx}\n4.8(50) · HVAC contractor\n100 Main St, Dallas, TX 75201\n(214) 555-{idx:04d}"
+        # Prevent click path since City & Phone are already present in card text
+        del card.click
+        return card
+
+    all_cards = [make_mock_card(i) for i in range(1, 36)]
+
+    feed_first = MagicMock()
+    feed_first.inner_text.return_value = "Results list"
+
+    def feed_evaluate(js_expr):
+        assert "scrollTop" in js_expr
+        state["scroll_calls"] += 1
+        state["loaded"] = min(35, state["loaded"] + 5)
+
+    feed_first.evaluate.side_effect = feed_evaluate
+
+    feed_loc = MagicMock()
+    feed_loc.count.return_value = 1
+    feed_loc.first = feed_first
+
+    cards_loc = MagicMock()
+    cards_loc.all.side_effect = lambda: all_cards[:state["loaded"]]
+
+    page = MagicMock()
+
+    def page_locator(sel):
+        if sel == 'div[role="feed"]':
+            return feed_loc
+        if sel == 'div.Nv2PK':
+            return cards_loc
+        m = MagicMock()
+        m.count.return_value = 0
+        return m
+
+    page.locator.side_effect = page_locator
+
+    with patch("services.maps_scraper.time.sleep", return_value=None):
+        leads = scrape_maps_search_feed(page, max_results=30)
+
+    # Must scroll the actual feed container beyond 4 scrolls and reach all 30 unique businesses
+    assert len(leads) == 30
+    assert state["scroll_calls"] >= 5
+    assert len({l["Business Name"] for l in leads}) == 30
+
+
+# -----------------------------------------------------------------------------
+# 22. Email Extraction Excludes Form Placeholders & Keeps Legitimate Emails
+# -----------------------------------------------------------------------------
+def test_case_22_email_extraction_excludes_form_placeholders_and_preserves_legitimate():
+    # Exact pattern observed on askmoss.com + textarea/value examples
+    html_with_form_placeholders = """
+    <html>
+    <body>
+        <form id="contact">
+            <input name="input_2" id="input_1_2" type="email" value="" class="large"
+                   placeholder="jsmith@gmail.com" aria-required="true" autocomplete="email" />
+            <input type="email" value="bob.example@gmail.com" data-placeholder="jane@gmail.com" />
+            <textarea placeholder="Write to sample.owner@gmail.com"></textarea>
+        </form>
+        <p>Call us today at (972) 733-6802.</p>
+    </body>
+    </html>
+    """
+    best, _, _, _, all_valid = extract_emails_and_socials(html_with_form_placeholders, base_url="https://www.askmoss.com/")
+    assert best == ""
+    assert all_valid == []
+
+    # Generic dummy examples on public webmail providers are rejected even outside <input>
+    cleaned_public_examples = clean_and_validate_emails(
+        ["jsmith@gmail.com", "johndoe@gmail.com", "jane.doe@yahoo.com", "acowboyair@yahoo.com"],
+        base_url="https://cowboyair.com/"
+    )
+    assert "jsmith@gmail.com" not in cleaned_public_examples
+    assert "johndoe@gmail.com" not in cleaned_public_examples
+    assert "jane.doe@yahoo.com" not in cleaned_public_examples
+    assert "acowboyair@yahoo.com" in cleaned_public_examples
+
+    # Legitimate company-domain emails (including real owner jsmith@smithhvac.com) must NOT be rejected
+    html_legit = """
+    <html>
+    <body>
+        <form><input type="email" placeholder="jsmith@gmail.com" /></form>
+        <footer>
+            <a href="mailto:sales@hjac.com">Email Sales</a>
+            <p>Owner contact: jsmith@hjac.com</p>
+        </footer>
+    </body>
+    </html>
+    """
+    best_legit, _, _, _, all_legit = extract_emails_and_socials(html_legit, base_url="https://hjac.com/")
+    assert "sales@hjac.com" in all_legit
+    assert "jsmith@hjac.com" in all_legit
+    assert "jsmith@gmail.com" not in all_legit
+    assert best_legit in ("jsmith@hjac.com", "sales@hjac.com")
+
+
+# -----------------------------------------------------------------------------
+# 23. SSL Inspection Uses certifi CA Bundle & Preserves Original SNI Hostname
+# -----------------------------------------------------------------------------
+def test_case_23_ssl_inspection_uses_certifi_and_preserves_original_sni_hostname():
+    import ssl
+    import certifi
+    from services.technical_audit import inspect_ssl_certificate
+
+    fake_cert = {
+        "notAfter": "Jan 13 15:24:55 2028 GMT",
+        "issuer": ((("organizationName", "Sectigo Limited"),),)
+    }
+
+    mock_ssock = MagicMock()
+    mock_ssock.__enter__.return_value = mock_ssock
+    mock_ssock.getpeercert.return_value = fake_cert
+
+    mock_ctx = MagicMock()
+    mock_ctx.verify_mode = ssl.CERT_REQUIRED
+    mock_ctx.check_hostname = True
+    mock_ctx.wrap_socket.return_value = mock_ssock
+
+    mock_sock = MagicMock()
+    mock_sock.__enter__.return_value = mock_sock
+
+    with patch("services.technical_audit.ssl.create_default_context", return_value=mock_ctx) as mock_create_ctx, \
+         patch("services.technical_audit.socket.create_connection", return_value=mock_sock) as mock_connect:
+        res = inspect_ssl_certificate("www.airtron.com")
+
+    # Must pass certifi CA bundle (never disable verification)
+    mock_create_ctx.assert_called_once_with(cafile=certifi.where())
+    # Must preserve original hostname ("www.airtron.com") for both TCP connection and SNI
+    mock_connect.assert_called_once_with(("www.airtron.com", 443), timeout=4)
+    mock_ctx.wrap_socket.assert_called_once_with(mock_sock, server_hostname="www.airtron.com")
+    assert res["status"] == "Valid"
+    assert res["days_remaining"] > 0
+
+
+

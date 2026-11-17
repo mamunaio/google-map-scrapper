@@ -398,11 +398,14 @@ def scrape_maps_search_feed(page, max_results: int = 20) -> list[dict]:
     feed = page.locator('div[role="feed"]')
     has_feed = feed.count() > 0
 
-    # Perform bounded scrolls to load additional listings
+    # Perform bounded dynamic scrolls on the actual feed container until max_results or end-of-list
     scroll_attempts = 0
-    max_scrolls = 4 if max_results > 10 else 2
+    max_scrolls = max(6, min(30, max_results))
+    stagnant_scrolls = 0
+    prev_card_count = 0
 
     while scroll_attempts < max_scrolls:
+        prev_unique_count = len(leads)
         cards = page.locator('div.Nv2PK').all()
         for card in cards:
             if len(leads) >= max_results:
@@ -452,10 +455,37 @@ def scrape_maps_search_feed(page, max_results: int = 20) -> list[dict]:
         if len(leads) >= max_results or not has_feed:
             break
 
-        # Scroll feed down
+        # Stop cleanly if repeated scrolls yield neither new unique businesses nor new DOM cards
+        if len(leads) == prev_unique_count and len(cards) <= prev_card_count:
+            stagnant_scrolls += 1
+            if stagnant_scrolls >= 3:
+                logger.info(f"[Maps Feed] Feed pagination reached end after {scroll_attempts} scroll(s) with {len(leads)} unique lead(s).")
+                break
+        else:
+            stagnant_scrolls = 0
+        prev_card_count = len(cards)
+
+        # Check explicit Google Maps end-of-list marker
         try:
-            page.mouse.wheel(0, 3000)
-            time.sleep(1.2)
+            feed_text = feed.first.inner_text() if hasattr(feed, "first") and hasattr(feed.first, "inner_text") else ""
+            if isinstance(feed_text, str) and "reached the end of the list" in feed_text.lower():
+                logger.info(f"[Maps Feed] Reached end of Google Maps results list ({len(leads)} unique lead(s)).")
+                break
+        except Exception:
+            pass
+
+        # Scroll the actual Google Maps feed container directly (falls back to mouse wheel if unavailable)
+        try:
+            scrolled = False
+            if hasattr(feed, "first") and hasattr(feed.first, "evaluate"):
+                try:
+                    feed.first.evaluate("el => { el.scrollTop = el.scrollHeight; el.dispatchEvent(new Event('scroll')); }")
+                    scrolled = True
+                except Exception:
+                    scrolled = False
+            if not scrolled:
+                page.mouse.wheel(0, 3500)
+            time.sleep(1.5)
         except Exception:
             break
         scroll_attempts += 1
