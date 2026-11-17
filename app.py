@@ -13,7 +13,7 @@ from playwright.sync_api import sync_playwright
 from services.security import SecurityError, validate_google_maps_url
 from services.website_crawler import crawl_and_audit_website
 from services.export_service import generate_styled_excel, generate_lead_tracker_csv
-from services.maps_scraper import scrape_google_maps, clean_external_website_url
+from services.maps_scraper import scrape_google_maps, clean_external_website_url, ensure_english_maps_url
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("leadhunter.app")
@@ -60,7 +60,7 @@ def scrape_api():
     try:
         # Option A: Google Maps Extraction (Search URLs and Place URLs)
         if type_ == 'maps':
-            clean_url = validate_google_maps_url(url)
+            clean_url = ensure_english_maps_url(validate_google_maps_url(url))
             max_res = min(int(data.get('max_results', 20)), 50)
             logger.info(f"[Maps] Starting extraction for URL: {clean_url} (max_results={max_res})")
             maps_res = scrape_google_maps(clean_url, max_results=max_res)

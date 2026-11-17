@@ -20,6 +20,7 @@
 | **Phase 14** | Lead Data Quality, Essential Fields Schema & Export Modernization | **COMPLETED & VERIFIED** | 109 Automated Tests Passing |
 | **Phase 15** | Final Data Integrity Corrections: Unknown Priority & Evidence-Based Opportunity Language | **COMPLETED & VERIFIED** | 112 Automated Tests Passing |
 | **Phase 16** | Google Maps Listing Extraction Hardening, External Website Cleaning & UI Responsiveness | **COMPLETED & VERIFIED** | 123 Automated Tests Passing |
+| **Phase 17** | Phase 08.1 — Export Data Integrity & Extraction Fix (Audit Consistency, Locale & Address) | **COMPLETED & VERIFIED** | 128 Automated Tests Passing |
 
 ---
 
@@ -504,3 +505,46 @@
   - `test_scrape_api_maps_failed_website_enrichment_preserves_maps_lead`
   - `test_scrape_api_maps_aclk_without_adurl_sanitized_and_not_crawled`
 - Expanded overall test suite from 112 to **123 automated tests** (100% passing across 10 test modules).
+
+---
+
+## Phase 17: Phase 08.1 — Export Data Integrity & Extraction Fix
+
+### 1. Invalid Google Ads URLs Sanitization (`services/export_service.py`)
+- Cleaned `Website` in Sheet 01 (Lead Tracker) and Lead Tracker CSV using `clean_external_website_url()`.
+- Rejects Google Ads `/aclk?...` tracking parameters and relative URLs, ensuring they are never exported as business websites.
+- Preserves the Google Maps Place URL independently in the `Google Maps URL` column.
+- Sheet 02 (Website Audit) treats records without valid websites with `Website Status = "Not checked"`, `Audit Summary = "Audit skipped: domain unavailable."`, and `Key SEO Issues = "No website provided"`. No SEO score is generated and the business is never marked "Online".
+
+### 2. City and State Extraction Robustness (`services/maps_scraper.py`)
+- Expanded `US_STATES` mapping dictionary to support all 50 US states with both 2-letter postal abbreviations (`TX`) and full state names (`Texas`).
+- Enhanced `parse_city_state()` to parse structured address formats, street addresses with suite numbers (`#200`), prefixes (`Address:`, `Located in:`), and state abbreviations or full names.
+- Multi-container inspection: checks card inner text and secondary `div.W4Efsd` lines on search feed cards, and both inner text and `aria-label` attributes on Google Maps place detail pages.
+- Returns `('Unknown', 'Unknown')` when location cannot be determined, strictly avoiding blind fabrication.
+
+### 3. Google Maps English Locale Enforcement (`services/maps_scraper.py`, `app.py`)
+- Implemented `ensure_english_maps_url()` to guarantee `hl=en` is appended/preserved on all Google Maps navigation URLs.
+- Configured Playwright browser context with `locale="en-US"` and `extra_http_headers={"Accept-Language": "en-US,en;q=0.9"}`.
+- Guaranteed business categories are extracted as standardized English labels (e.g. `HVAC contractor`, `Air conditioning contractor`) regardless of user or host geolocation, while preserving original business names.
+
+### 4. Website Audit Status Mapping Consistency (`services/export_service.py`)
+- Resolved root cause of contradictions where a 100/100 SEO score showed "Confirmed issue" for Page Title, Meta Description, and H1:
+  - Replaced incorrect root-level lookups with structured findings and metrics mapping (`seo["findings"]`, `seo["metrics"]`, `tech["findings"]`, `tech["mobile_usability"]`, `tech["ssl_certificate"]`).
+  - `Page Title` exports the actual title string when present, and `"Confirmed issue"` only when missing.
+  - `Meta Description Status`, `H1 Status`, `Canonical Status`, `Indexability / Robots Status`, `Image Alt Status`, `Mobile / Viewport Status`, `HTTPS Status`, and `Performance Status` export `"Passed"` when verified without issues.
+  - Issues are labeled `"Confirmed issue"` strictly when verified defects exist in findings.
+  - Columns agree 100% with detailed findings, scores, and summary.
+
+### 5. Email Verification Status Integrity (`services/export_service.py`)
+- Enforced strict preservation of `MX Only` status.
+- Kept `MX Only` distinct from `Verified` (never claims mailbox verification based only on MX records).
+- Standardized verification statuses: `Verified`, `MX Only`, `Unverified`, `Invalid`, `Not Found`.
+
+### 6. Automated Regression Tests (`tests/test_export_service.py`, `tests/test_maps_scraper.py`)
+- Added 5 new automated regression tests:
+  - `test_audit_status_consistency_no_contradictions`
+  - `test_invalid_website_audit_prevention`
+  - `test_email_mx_only_status_preserved_and_distinct_from_verified`
+  - `test_ensure_english_maps_url`
+  - `test_parse_city_state_us_cities_and_states`
+- Full test suite expanded from 123 to **128 automated unit and integration tests** (100% passing across 10 test modules).

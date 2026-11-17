@@ -9,7 +9,7 @@ Provides honest extraction validation (no empty phantom leads).
 import time
 import re
 import logging
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, urlencode
 from playwright.sync_api import sync_playwright
 
 from services.security import (
@@ -27,13 +27,25 @@ PHONE_REGEX = re.compile(r'(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}')
 
 BENGALI_DIGITS = str.maketrans('০১২৩৪৫৬৭৮৯', '0123456789')
 
-STATE_ABBRS = {
-    'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
-    'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
-    'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
-    'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
-    'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC'
+US_STATES = {
+    'AL': 'AL', 'AK': 'AK', 'AZ': 'AZ', 'AR': 'AR', 'CA': 'CA', 'CO': 'CO', 'CT': 'CT', 'DE': 'DE', 'FL': 'FL', 'GA': 'GA',
+    'HI': 'HI', 'ID': 'ID', 'IL': 'IL', 'IN': 'IN', 'IA': 'IA', 'KS': 'KS', 'KY': 'KY', 'LA': 'LA', 'ME': 'ME', 'MD': 'MD',
+    'MA': 'MA', 'MI': 'MI', 'MN': 'MN', 'MS': 'MS', 'MO': 'MO', 'MT': 'MT', 'NE': 'NE', 'NV': 'NV', 'NH': 'NH', 'NJ': 'NJ',
+    'NM': 'NM', 'NY': 'NY', 'NC': 'NC', 'ND': 'ND', 'OH': 'OH', 'OK': 'OK', 'OR': 'OR', 'PA': 'PA', 'RI': 'RI', 'SC': 'SC',
+    'SD': 'SD', 'TN': 'TN', 'TX': 'TX', 'UT': 'UT', 'VT': 'VT', 'VA': 'VA', 'WA': 'WA', 'WV': 'WV', 'WI': 'WI', 'WY': 'WY', 'DC': 'DC',
+    # Full US state names
+    'ALABAMA': 'AL', 'ALASKA': 'AK', 'ARIZONA': 'AZ', 'ARKANSAS': 'AR', 'CALIFORNIA': 'CA', 'COLORADO': 'CO',
+    'CONNECTICUT': 'CT', 'DELAWARE': 'DE', 'FLORIDA': 'FL', 'GEORGIA': 'GA', 'HAWAII': 'HI', 'IDAHO': 'ID',
+    'ILLINOIS': 'IL', 'INDIANA': 'IN', 'IOWA': 'IA', 'KANSAS': 'KS', 'KENTUCKY': 'KY', 'LOUISIANA': 'LA',
+    'MAINE': 'ME', 'MARYLAND': 'MD', 'MASSACHUSETTS': 'MA', 'MICHIGAN': 'MI', 'MINNESOTA': 'MN', 'MISSISSIPPI': 'MS',
+    'MISSOURI': 'MO', 'MONTANA': 'MT', 'NEBRASKA': 'NE', 'NEVADA': 'NV', 'NEW HAMPSHIRE': 'NH', 'NEW JERSEY': 'NJ',
+    'NEW MEXICO': 'NM', 'NEW YORK': 'NY', 'NORTH CAROLINA': 'NC', 'NORTH DAKOTA': 'ND', 'OHIO': 'OH',
+    'OKLAHOMA': 'OK', 'OREGON': 'OR', 'PENNSYLVANIA': 'PA', 'RHODE ISLAND': 'RI', 'SOUTH CAROLINA': 'SC',
+    'SOUTH DAKOTA': 'SD', 'TENNESSEE': 'TN', 'TEXAS': 'TX', 'UTAH': 'UT', 'VERMONT': 'VT', 'VIRGINIA': 'VA',
+    'WASHINGTON': 'WA', 'WEST VIRGINIA': 'WV', 'WISCONSIN': 'WI', 'WYOMING': 'WY', 'DISTRICT OF COLUMBIA': 'DC'
 }
+
+STATE_ABBRS = {v for v in US_STATES.values()}
 
 def normalize_rating(rating_raw) -> float | None:
     """Normalizes rating string/numeric into a float (0.0 to 5.0) or None."""
@@ -73,19 +85,27 @@ def normalize_review_count(reviews_raw) -> int | None:
 def parse_city_state(text: str) -> tuple[str, str]:
     """
     Extracts City and State from address strings.
+    Supports both 2-letter state codes and full state names (e.g. TX, Texas).
     Returns ('Unknown', 'Unknown') if no reliable address components found.
     Never fabricates city or state.
     """
     if not text:
         return "Unknown", "Unknown"
-    matches = re.findall(r'(?:[,\n·]\s*|^)([A-Za-z\s.-]+),\s*([A-Za-z]{2})\b(?:\s+\d{5})?', text)
+
+    # Pattern: City, State (abbr or full name) with optional ZIP code
+    pattern = r'(?:[,\n·]\s*|^)([A-Za-z\s.-]+?),\s*([A-Za-z]{2}|[A-Za-z\s]{4,20})\b(?:\s+\d{5}(?:-\d{4})?)?'
+    matches = re.findall(pattern, text)
     for city_cand, state_cand in reversed(matches):
-        state_upper = state_cand.upper()
-        if state_upper in STATE_ABBRS:
+        state_key = state_cand.strip().upper()
+        if state_key in US_STATES:
+            state_code = US_STATES[state_key]
             city_clean = city_cand.strip().split('\n')[-1].split(',')[-1].split('·')[-1].strip()
+            city_clean = re.sub(r'^(?:address|located in|location|serves|near)\s*[:\s-]*', '', city_clean, flags=re.IGNORECASE).strip()
             city_clean = re.sub(r'^\d+\s+[A-Za-z0-9\s.-]+?\s+(?=[A-Z][a-z])', '', city_clean).strip()
+            city_clean = re.sub(r'#\s*\w+', '', city_clean).strip()
             if city_clean and len(city_clean) >= 2 and not any(ch.isdigit() for ch in city_clean):
-                return city_clean, state_upper
+                if city_clean.lower() not in ('open', 'closed', 'hours', 'phone', 'website', 'reviews', 'unnamed'):
+                    return city_clean, state_code
     return "Unknown", "Unknown"
 
 def extract_category_from_text(card_text: str) -> str:
@@ -100,6 +120,21 @@ def extract_category_from_text(card_text: str) -> str:
                     if len(p) >= 3 and not any(ch.isdigit() for ch in p):
                         return p
     return "Unknown"
+
+def ensure_english_maps_url(url: str) -> str:
+    """Forces Google Maps URL to en-US locale via hl=en query parameter."""
+    if not url or not isinstance(url, str):
+        return url
+    try:
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        if qs.get('hl', [''])[0] != 'en':
+            qs['hl'] = ['en']
+            new_query = urlencode(qs, doseq=True)
+            return parsed._replace(query=new_query).geturl()
+        return url
+    except Exception:
+        return url
 
 def is_maps_search_url(url: str) -> bool:
     """Detects whether a URL is a Google Maps search results query URL."""
@@ -301,6 +336,16 @@ def extract_search_listing_card(card) -> dict:
 
         category = extract_category_from_text(card_text)
         city, state = parse_city_state(card_text)
+        if city == "Unknown":
+            try:
+                sub_texts = card.locator('div.W4Efsd').all_inner_texts()
+                for st in sub_texts:
+                    c, s = parse_city_state(st)
+                    if c != "Unknown":
+                        city, state = c, s
+                        break
+            except Exception:
+                pass
 
         return {
             "Business Name": name,
@@ -451,7 +496,8 @@ def scrape_maps_place_detail(page, url: str) -> dict:
     addr_loc = page.locator('button[data-item-id="address"], button[aria-label*="Address" i]')
     if addr_loc.count() > 0:
         addr_text = addr_loc.first.inner_text().strip()
-        city, state = parse_city_state(addr_text)
+        aria_label = addr_loc.first.get_attribute('aria-label') or ""
+        city, state = parse_city_state(f"{addr_text} {aria_label}")
 
     # Fallback to page text for category / location if needed
     if city == "Unknown" or category == "Unknown":
@@ -506,6 +552,7 @@ def scrape_google_maps(url: str, max_results: int = 20) -> dict:
     Returns honest failure when no business data can be extracted.
     """
     clean_url = validate_google_maps_url(url)
+    clean_url = ensure_english_maps_url(clean_url)
     is_search = is_maps_search_url(clean_url)
     url_kind = "search query" if is_search else "place detail"
     logger.info(f"[Maps] Initiating Google Maps navigation ({url_kind}): {clean_url}")
@@ -519,6 +566,9 @@ def scrape_google_maps(url: str, max_results: int = 20) -> dict:
                 browser = p.chromium.launch(headless=True)
                 context = browser.new_context(
                     locale="en-US",
+                    extra_http_headers={
+                        "Accept-Language": "en-US,en;q=0.9"
+                    },
                     proxy={"server": f"http://127.0.0.1:{proxy.port}"},
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
                 )

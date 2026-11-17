@@ -6,6 +6,7 @@ from services.export_service import (
     generate_lead_tracker_csv,
     deduplicate_leads,
     normalize_priority,
+    normalize_email_status,
     LEAD_TRACKER_COLUMNS,
     WEBSITE_AUDIT_COLUMNS,
     BUSINESS_OPPORTUNITIES_COLUMNS
@@ -256,6 +257,142 @@ class TestExportService(unittest.TestCase):
         priority_idx = LEAD_TRACKER_COLUMNS.index("Priority")
         self.assertEqual(row_fields[priority_idx], "Manual Review")
         self.assertNotEqual(row_fields[priority_idx], "Low")
+
+    def test_audit_status_consistency_no_contradictions(self):
+        # A high-quality lead with 100/100 score and complete metadata (e.g. Harlen Johnson HVAC)
+        flawless_lead = {
+            "Business Name": "Harlen Johnson HVAC",
+            "Category": "HVAC contractor",
+            "City": "Dallas",
+            "State": "TX",
+            "Phone": "(972) 241-7771",
+            "Website": "https://harlenjohnson.com",
+            "Google Maps URL": "https://www.google.com/maps/place/Harlen+Johnson",
+            "intelligence": {
+                "seo": {
+                    "seo_score": 100,
+                    "findings": [],
+                    "metrics": {
+                        "title": "Harlen Johnson Heating and Air Conditioning",
+                        "meta_description": "Premier HVAC service and repair in Dallas, TX.",
+                        "canonical_url": "https://harlenjohnson.com/",
+                        "h1_tags": ["Reliable Heating and Air in Dallas"],
+                        "images_total": 8,
+                        "images_missing_alt": 0,
+                        "is_noindex": False
+                    },
+                    "robots_sitemap": {
+                        "has_robots_txt": True,
+                        "has_sitemap_xml": True
+                    }
+                },
+                "technical": {
+                    "ssl_certificate": {"status": "Valid", "has_ssl": True},
+                    "mobile_usability": {"status": "Mobile-Friendly", "has_viewport": True, "overflow_risk": False},
+                    "findings": []
+                },
+                "performance": {
+                    "mobile_score": 92,
+                    "performance_status": "Optimal"
+                }
+            }
+        }
+
+        stream = generate_standard_intelligence_workbook([flawless_lead])
+        wb = openpyxl.load_workbook(stream)
+        ws_audit = wb["Website Audit"]
+
+        # Header:
+        # Col 1: Business Name, Col 2: Website, Col 3: Website Status, Col 4: Page Title,
+        # Col 5: Meta Description Status, Col 6: Canonical Status, Col 7: Indexability / Robots Status,
+        # Col 8: H1 Status, Col 9: Image Alt Status, Col 10: Mobile / Viewport Status,
+        # Col 11: HTTPS Status, Col 12: Performance Status, Col 13: Key SEO Issues,
+        # Col 14: Technical Issues, Col 15: Audit Summary
+        self.assertEqual(ws_audit.cell(row=2, column=1).value, "Harlen Johnson HVAC")
+        self.assertEqual(ws_audit.cell(row=2, column=2).value, "https://harlenjohnson.com")
+        self.assertEqual(ws_audit.cell(row=2, column=3).value, "Online")
+        self.assertEqual(ws_audit.cell(row=2, column=4).value, "Harlen Johnson Heating and Air Conditioning")
+        self.assertEqual(ws_audit.cell(row=2, column=5).value, "Passed")
+        self.assertEqual(ws_audit.cell(row=2, column=6).value, "Passed")
+        self.assertEqual(ws_audit.cell(row=2, column=7).value, "Passed")
+        self.assertEqual(ws_audit.cell(row=2, column=8).value, "Passed")
+        self.assertEqual(ws_audit.cell(row=2, column=9).value, "Passed")
+        self.assertEqual(ws_audit.cell(row=2, column=10).value, "Passed")
+        self.assertEqual(ws_audit.cell(row=2, column=11).value, "Passed")
+        self.assertEqual(ws_audit.cell(row=2, column=12).value, "Passed")
+        self.assertEqual(ws_audit.cell(row=2, column=13).value, "None detected")
+        self.assertEqual(ws_audit.cell(row=2, column=14).value, "None detected")
+        self.assertIn("SEO Score: 100/100", ws_audit.cell(row=2, column=15).value)
+
+    def test_invalid_website_audit_prevention(self):
+        # Business with Google Ads tracking link in Website (e.g. Skylinq Home / Tempo Air)
+        lead_aclk = {
+            "Business Name": "Skylinq Home",
+            "Category": "Air conditioning contractor",
+            "City": "Dallas",
+            "State": "TX",
+            "Website": "/aclk?sa=l&ai=DChcSEwj_tracking_only",
+            "Google Maps URL": "https://www.google.com/maps/place/Skylinq+Home"
+        }
+        lead_relative = {
+            "Business Name": "Tempo Air",
+            "Category": "Air conditioning contractor",
+            "City": "Irving",
+            "State": "TX",
+            "Website": "/maps/place/Tempo+Air",
+            "Google Maps URL": "https://www.google.com/maps/place/Tempo+Air"
+        }
+
+        stream = generate_standard_intelligence_workbook([lead_aclk, lead_relative])
+        wb = openpyxl.load_workbook(stream)
+
+        # Sheet 01 (Lead Tracker)
+        ws_leads = wb["Lead Tracker"]
+        # Website must be sanitized to empty/None (col 6)
+        self.assertIn(ws_leads.cell(row=2, column=6).value, [None, ""])
+        self.assertIn(ws_leads.cell(row=3, column=6).value, [None, ""])
+        # Google Maps URL is preserved independently (col 7)
+        self.assertEqual(ws_leads.cell(row=2, column=7).value, "https://www.google.com/maps/place/Skylinq+Home")
+        self.assertEqual(ws_leads.cell(row=3, column=7).value, "https://www.google.com/maps/place/Tempo+Air")
+
+        # Sheet 02 (Website Audit)
+        ws_audit = wb["Website Audit"]
+        # Must NOT be marked Online
+        self.assertIn(ws_audit.cell(row=2, column=2).value, [None, ""])
+        self.assertEqual(ws_audit.cell(row=2, column=3).value, "Not checked")
+        self.assertEqual(ws_audit.cell(row=2, column=13).value, "No website provided")
+        self.assertEqual(ws_audit.cell(row=2, column=15).value, "Audit skipped: domain unavailable.")
+
+        self.assertIn(ws_audit.cell(row=3, column=2).value, [None, ""])
+        self.assertEqual(ws_audit.cell(row=3, column=3).value, "Not checked")
+        self.assertEqual(ws_audit.cell(row=3, column=13).value, "No website provided")
+        self.assertEqual(ws_audit.cell(row=3, column=15).value, "Audit skipped: domain unavailable.")
+
+        # Test CSV export as well
+        csv_str = generate_lead_tracker_csv([lead_aclk])
+        lines = csv_str.strip().split("\n")
+        web_idx = LEAD_TRACKER_COLUMNS.index("Website")
+        self.assertEqual(lines[1].split(",")[web_idx], "")
+
+    def test_email_mx_only_status_preserved_and_distinct_from_verified(self):
+        # MX Only must remain MX Only, never claimed as Verified
+        self.assertEqual(normalize_email_status("MX Only", "info@example.com"), "MX Only")
+        self.assertEqual(normalize_email_status("Valid (MX Only)", "info@example.com"), "MX Only")
+        self.assertEqual(normalize_email_status("Catch-All", "info@example.com"), "MX Only")
+        self.assertNotEqual(normalize_email_status("MX Only", "info@example.com"), "Verified")
+
+        lead_mx = {
+            "Business Name": "Dallas MX Cooling",
+            "Email": "contact@dallasmxcooling.com",
+            "Email Status": "MX Only"
+        }
+        stream = generate_standard_intelligence_workbook([lead_mx])
+        wb = openpyxl.load_workbook(stream)
+        ws_leads = wb["Lead Tracker"]
+        # Col 12 is Email Status
+        status_val = ws_leads.cell(row=2, column=12).value
+        self.assertEqual(status_val, "MX Only")
+        self.assertNotEqual(status_val, "Verified")
 
 if __name__ == '__main__':
     unittest.main()

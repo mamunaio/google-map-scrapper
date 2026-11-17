@@ -5,6 +5,7 @@ from services.maps_scraper import (
     normalize_place_url,
     clean_google_redirect_url,
     clean_external_website_url,
+    ensure_english_maps_url,
     extract_search_listing_card,
     scrape_maps_search_feed,
     scrape_maps_place_detail,
@@ -30,6 +31,41 @@ class TestMapsScraper(unittest.TestCase):
         self.assertFalse(is_maps_search_url("https://example.com/search?q=hvac"))
         self.assertFalse(is_maps_search_url(""))
         self.assertFalse(is_maps_search_url(None))
+
+    def test_ensure_english_maps_url(self):
+        # Adds hl=en when missing
+        u1 = "https://www.google.com/maps/search/HVAC+contractors+in+Dallas,+TX"
+        res1 = ensure_english_maps_url(u1)
+        self.assertIn("hl=en", res1)
+
+        # Preserves existing hl=en
+        u2 = "https://www.google.com/maps/search/HVAC?hl=en&authuser=0"
+        self.assertEqual(ensure_english_maps_url(u2), u2)
+
+    def test_parse_city_state_us_cities_and_states(self):
+        # 2-letter state code
+        self.assertEqual(parse_city_state("Irving, TX\n(972) 579-2000"), ("Irving", "TX"))
+        self.assertEqual(parse_city_state("Plano, TX · (972) 881-0020"), ("Plano", "TX"))
+        self.assertEqual(parse_city_state("Dallas, TX"), ("Dallas", "TX"))
+
+        # Full state name
+        self.assertEqual(parse_city_state("Dallas, Texas · (972) 241-7771\nOpen 24 hours"), ("Dallas", "TX"))
+        self.assertEqual(parse_city_state("Farmers Branch, Texas 75234"), ("Farmers Branch", "TX"))
+        self.assertEqual(parse_city_state("Dallas, Texas"), ("Dallas", "TX"))
+
+        # Full street address with suite and ZIP
+        self.assertEqual(parse_city_state("11520 N Central Expy #200, Dallas, TX 75243"), ("Dallas", "TX"))
+        self.assertEqual(parse_city_state("Address: 101 E Park Blvd, Plano, TX 75074"), ("Plano", "TX"))
+
+        # Out-of-state valid addresses
+        self.assertEqual(parse_city_state("100 Main St, Miami, FL 33101"), ("Miami", "FL"))
+        self.assertEqual(parse_city_state("Los Angeles, California"), ("Los Angeles", "CA"))
+
+        # Service-area or unresolvable lines (never blindly fabricate)
+        self.assertEqual(parse_city_state("Serves Dallas and nearby areas"), ("Unknown", "Unknown"))
+        self.assertEqual(parse_city_state("Open 24 hours · Quality service"), ("Unknown", "Unknown"))
+        self.assertEqual(parse_city_state(""), ("Unknown", "Unknown"))
+        self.assertEqual(parse_city_state(None), ("Unknown", "Unknown"))
 
     def test_normalize_place_url(self):
         raw = "https://www.google.com/maps/place/Dallas+HVAC/@32.7767,-96.7970,14z/?entry=ttu&g_ep=CAESCTExLjE%3D"

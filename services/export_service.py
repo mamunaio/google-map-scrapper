@@ -17,6 +17,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+from services.maps_scraper import clean_external_website_url
+
 # Styles definition
 HEADER_FONT = Font(name='Segoe UI', size=11, bold=True, color='FFFFFF')
 HEADER_FILL_PRIMARY = PatternFill(start_color='4F46E5', end_color='4F46E5', fill_type='solid') # Indigo 600
@@ -259,7 +261,7 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
         city = lead.get("City") or "Unknown"
         state = lead.get("State") or "Unknown"
         phone = lead.get("Phone") or lead.get("Phone Number") or ""
-        website = lead.get("Website") or ""
+        website = clean_external_website_url(lead.get("Website") or "")
         maps_url = lead.get("Google Maps URL") or lead.get("Google Maps Profile") or lead.get("Source URL") or ""
 
         # Numeric Rating
@@ -337,7 +339,7 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
         perf = intel.get("performance", {}) or {}
 
         biz_name = lead.get("Business Name") or lead.get("Name") or ""
-        website = lead.get("Website") or ""
+        website = clean_external_website_url(lead.get("Website") or "")
 
         if not website:
             ws_audit.append([
@@ -364,36 +366,97 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
             ])
             continue
 
-        # Valid crawl evaluation
-        page_title = seo.get("page_title", {}).get("value") or ("Confirmed issue" if not seo.get("page_title") else "Not detected")
-        meta_status = "Confirmed issue" if not seo.get("meta_description") or not seo.get("meta_description", {}).get("value") else "Not detected"
+        # Valid crawl evaluation using structured findings and metrics
+        seo_findings_list = seo.get("findings", [])
+        seo_finding_names = {f.get("name") for f in seo_findings_list if isinstance(f, dict)}
+        tech_findings_list = tech.get("findings", [])
+        tech_finding_names = {f.get("name") for f in tech_findings_list if isinstance(f, dict)}
+        metrics = seo.get("metrics", {}) or {}
 
+        # 1. Page Title: return actual title text or "Confirmed issue" if missing
+        if "Missing Page Title" in seo_finding_names:
+            page_title = "Confirmed issue"
+        elif metrics.get("title"):
+            page_title = metrics.get("title")
+        else:
+            page_title = "Unknown"
+
+        # 2. Meta Description Status
+        if "Missing Meta Description" in seo_finding_names:
+            meta_status = "Confirmed issue"
+        elif metrics.get("meta_description"):
+            meta_status = "Passed"
+        else:
+            meta_status = "Unknown"
+
+        # 3. Canonical Status
         canonical_info = seo.get("canonical", {})
-        canonical_status = "Confirmed issue" if canonical_info.get("status") in ["Missing", "Mismatch"] else "Not detected"
+        if "Missing Canonical URL Tag" in seo_finding_names or canonical_info.get("status") in ["Missing", "Mismatch"]:
+            canonical_status = "Confirmed issue"
+        elif metrics.get("canonical_url"):
+            canonical_status = "Passed"
+        else:
+            canonical_status = "Not detected"
 
+        # 4. Indexability / Robots Status
         robots_info = seo.get("robots_sitemap", {})
-        robots_status = "Confirmed issue" if robots_info.get("robots_txt_status") == "Blocked" or seo.get("indexable") is False else "Not detected"
+        if any(n in seo_finding_names for n in ["Page Blocked by Robots Noindex Tag", "Missing robots.txt File", "Missing XML Sitemap"]) or robots_info.get("robots_txt_status") == "Blocked" or seo.get("indexable") is False:
+            robots_status = "Confirmed issue"
+        elif robots_info.get("has_robots_txt") or not metrics.get("is_noindex"):
+            robots_status = "Passed"
+        else:
+            robots_status = "Unknown"
 
-        h1_info = seo.get("h1", {})
-        h1_status = "Confirmed issue" if (not h1_info.get("count") or h1_info.get("count") == 0) else "Not detected"
+        # 5. H1 Status
+        if any(n in seo_finding_names for n in ["Missing H1 Heading Tag", "Multiple H1 Heading Tags"]):
+            h1_status = "Confirmed issue"
+        elif metrics.get("h1_tags") and len(metrics.get("h1_tags")) > 0:
+            h1_status = "Passed"
+        else:
+            h1_status = "Unknown"
 
-        img_info = seo.get("images", {})
-        alt_status = "Confirmed issue" if img_info.get("missing_alt_count", 0) > 0 else "Not detected"
+        # 6. Image Alt Status
+        if "Missing Image Alt Attributes" in seo_finding_names:
+            alt_status = "Confirmed issue"
+        elif metrics.get("images_total", 0) > 0 and metrics.get("images_missing_alt", 0) == 0:
+            alt_status = "Passed"
+        elif metrics.get("images_total", 0) == 0:
+            alt_status = "Not detected"
+        else:
+            alt_status = "Passed"
 
+        # 7. Mobile / Viewport Status
         mob_info = tech.get("mobile_usability", {})
-        mob_status = "Confirmed issue" if (not mob_info.get("has_viewport") or mob_info.get("overflow_risk")) else "Not detected"
+        if any(n in tech_finding_names for n in ["Missing Responsive Viewport Meta Tag", "Mobile Viewport Width Mismatch", "Horizontal Content Overflow Risk"]) or mob_info.get("status") in ["Non-Responsive", "Overflow Risk"]:
+            mob_status = "Confirmed issue"
+        elif mob_info.get("status") in ["Mobile-Friendly", "Responsive", "Passed"] or mob_info.get("has_viewport"):
+            mob_status = "Passed"
+        else:
+            mob_status = "Unknown"
 
+        # 8. HTTPS Status
         ssl_info = tech.get("ssl_certificate", {})
-        https_status = "Confirmed issue" if ssl_info.get("status") in ["Expired", "Plain HTTP", "Invalid"] else "Not detected"
+        if any(n in tech_finding_names for n in ["Missing or Inactive SSL Certificate", "SSL Certificate Expired", "SSL Certificate Near Expiration"]) or ssl_info.get("status") in ["Expired", "Plain HTTP", "Invalid"]:
+            https_status = "Confirmed issue"
+        elif ssl_info.get("status") in ["Valid", "Active", "Passed"] or ssl_info.get("has_ssl"):
+            https_status = "Passed"
+        else:
+            https_status = "Unknown"
 
+        # 9. Performance Status
         mob_score = perf.get("mobile_score")
-        perf_status = "Confirmed issue" if (mob_score is not None and mob_score < 50) else "Not detected"
+        if mob_score is not None and mob_score < 50:
+            perf_status = "Confirmed issue"
+        elif mob_score is not None and mob_score >= 50:
+            perf_status = "Passed"
+        elif perf.get("performance_status") in ["Optimal", "Passed"]:
+            perf_status = "Passed"
+        else:
+            perf_status = "Unknown"
 
-        seo_findings = seo.get("findings", [])
-        key_seo = "; ".join([f["name"] if isinstance(f, dict) else str(f) for f in seo_findings[:3]]) if seo_findings else "None detected"
-
-        tech_findings = tech.get("findings", [])
-        key_tech = "; ".join([f["name"] if isinstance(f, dict) else str(f) for f in tech_findings[:3]]) if tech_findings else "None detected"
+        # Key SEO and Tech Issues
+        key_seo = "; ".join([f["name"] if isinstance(f, dict) else str(f) for f in seo_findings_list[:3]]) if seo_findings_list else "None detected"
+        key_tech = "; ".join([f["name"] if isinstance(f, dict) else str(f) for f in tech_findings_list[:3]]) if tech_findings_list else "None detected"
 
         seo_score = seo.get("seo_score", "N/A")
         summary = f"SEO Score: {seo_score}/100. SSL: {ssl_info.get('status', 'Unknown')}. Mobile: {mob_info.get('status', 'Unknown')}."
@@ -468,7 +531,7 @@ def generate_lead_tracker_csv(leads_data: list) -> str:
         city = lead.get("City") or "Unknown"
         state = lead.get("State") or "Unknown"
         phone = lead.get("Phone") or lead.get("Phone Number") or ""
-        website = lead.get("Website") or ""
+        website = clean_external_website_url(lead.get("Website") or "")
         maps_url = lead.get("Google Maps URL") or lead.get("Google Maps Profile") or lead.get("Source URL") or ""
 
         rating_raw = lead.get("Rating") if lead.get("Rating") is not None else lead.get("Google Rating")
