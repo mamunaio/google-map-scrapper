@@ -246,3 +246,34 @@
     - Preflight rejection before Playwright launch.
   - Added 3 API SSRF tests for `type == 'maps'` in `tests/test_api.py`.
   - Total automated test suite expanded to **84 tests** (100% passing).
+
+---
+
+## Phase 11: Playwright DNS Rebinding Remediation & `SafeBrowserProxy` Destination Pinning
+
+### 1. Root Cause & DNS Rebinding Investigation
+- **Chromium Independent Host Resolver**: Chromium runs an internal asynchronous C++ resolver (`net::HostResolverImpl`) and does not share Python's socket layer or DNS cache. A route handler validating DNS in Python cannot by itself constrain Chromium's C++ sockets.
+- **Cache Poisoning Bug**: The previous `_BROWSER_DNS_CACHE` permanently stored boolean `True` in memory, allowing a domain that flips from public to private (0-second TTL rebinding) to bypass re-evaluation.
+- **CDP Limitations**: `Fetch.continueRequest` in Chrome DevTools Protocol only accepts headers/URL and cannot specify the physical destination IP address.
+- **Infrastructure Assessment**: Kernel-level packet filters (e.g., Windows Filtering Platform / Linux `iptables`) require root/admin privileges unavailable in standard unprivileged hosting environments (Render/Docker/Windows).
+
+### 2. Implementation Overview
+- **Elimination of Unsafe DNS Cache (`services/security.py`):**
+  - Removed `_BROWSER_DNS_CACHE` completely.
+  - Implemented `resolve_and_validate_hostname(hostname, port)`: Always performs real-time DNS resolution, validating that every resolved IPv4/IPv6 address is public and non-restricted (`is_ip_allowed()`).
+- **Network-Level Destination Pinning via `SafeBrowserProxy` (`services/security.py`):**
+  - Implemented local ephemeral loopback proxy (`SafeBrowserProxy`) configured via Playwright's `proxy={"server": f"http://127.0.0.1:{proxy.port}"}`.
+  - Intercepts all Chromium outbound connection attempts (`CONNECT` and raw HTTP).
+  - Validates domain whitelist and resolves hostname in Python.
+  - Rejects connection with `HTTP/1.1 403 Forbidden` if any resolved IP belongs to `BLOCKED_IP_NETWORKS` (`127.0.0.1`, `10.0.0.0/8`, `169.254.169.254`, `fe80::/10`).
+  - Directly opens the upstream TCP socket to the **pinned validated public IP**, physically constraining Chromium from connecting to private/internal IP destinations.
+- **Integration in Scraper Lifecycle (`services/maps_scraper.py`):**
+  - Scraper invokes `with SafeBrowserProxy() as proxy:` to bind proxy lifetime strictly to the scrape session.
+- **Automated Regression Test Suite (`tests/test_security.py`):**
+  - Added 5 new dedicated DNS rebinding regression tests:
+    1. `test_public_to_private_dns_rebinding_rejected`: Verified public-to-private IP flip is rejected and not bypassed by stale cache.
+    2. `test_dns_result_changing_between_validation_and_connection_blocked_by_proxy`: Verified proxy aborts with 403 when DNS rebinds to private IP between validation and connect.
+    3. `test_redirect_to_hostname_resolving_to_private_ip_blocked`: Verified navigation redirects resolving to private IPs are intercepted and aborted.
+    4. `test_browser_subresource_dns_rebinding_blocked`: Verified subresources resolving to cloud metadata (169.254.169.254) are aborted.
+    5. `test_safe_browser_proxy_pins_socket_destination`: Verified upstream socket connects directly to the pinned public IP.
+  - Total automated test suite expanded from 84 to **89 tests** (100% passing).

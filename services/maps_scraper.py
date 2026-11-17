@@ -15,7 +15,8 @@ from services.security import (
     SecurityError,
     validate_google_maps_url,
     is_safe_browser_url,
-    is_google_maps_domain
+    is_google_maps_domain,
+    SafeBrowserProxy
 )
 
 PHONE_REGEX = re.compile(r'(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}')
@@ -270,22 +271,25 @@ def scrape_google_maps(url: str, max_results: int = 20) -> dict:
     """
     Main entry point for Google Maps scraping.
     Handles both Search URLs (multi-lead) and Place URLs (single-lead).
-    Enforces SSRF prevention, Google domain whitelist, and browser request interception.
+    Enforces SSRF prevention, Google domain whitelist, browser request interception,
+    and network-level destination pinning via SafeBrowserProxy.
     Returns honest failure when no business data can be extracted.
     """
     clean_url = validate_google_maps_url(url)
     is_search = is_maps_search_url(clean_url)
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            locale="en-US",
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-        )
-        page = context.new_page()
+    with SafeBrowserProxy() as proxy:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                locale="en-US",
+                proxy={"server": f"http://127.0.0.1:{proxy.port}"},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+            )
+            page = context.new_page()
 
-        # Enforce SSRF and unauthorized redirect/subresource protection at browser level
-        page.route("**/*", create_playwright_route_interceptor(page))
+            # Enforce SSRF and unauthorized redirect/subresource protection at browser level
+            page.route("**/*", create_playwright_route_interceptor(page))
 
         try:
             try:

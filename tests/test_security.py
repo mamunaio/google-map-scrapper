@@ -15,7 +15,9 @@ from services.security import (
     validate_google_maps_url,
     is_safe_browser_url,
     is_google_maps_domain,
-    is_authorized_maps_subresource_host
+    is_authorized_maps_subresource_host,
+    resolve_and_validate_hostname,
+    SafeBrowserProxy
 )
 from services.maps_scraper import create_playwright_route_interceptor, scrape_google_maps
 
@@ -497,6 +499,140 @@ class TestGoogleMapsPlaywrightSecurity(unittest.TestCase):
         # Cloud metadata rejected before Playwright launches
         with self.assertRaises(SecurityError):
             scrape_google_maps("http://169.254.169.254/latest")
+
+    def test_public_to_private_dns_rebinding_rejected(self):
+        """
+        Verify that a domain that resolves to a public IP on initial check and later flips
+        to a private IP (127.0.0.1) is NOT protected by stale cache and is rejected on the second check.
+        """
+        call_count = 0
+        def rebinding_getaddrinfo(host, port, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First lookup: public IP
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('142.250.190.46', port))]
+            else:
+                # Second lookup: rebound to localhost!
+                return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', port))]
+
+        with patch('socket.getaddrinfo', side_effect=rebinding_getaddrinfo):
+            # Check 1: Resolves to public IP -> Safe
+            is_safe_1, reason_1 = is_safe_browser_url("https://www.google.com/maps/search/hvac", is_main_document=True)
+            self.assertTrue(is_safe_1)
+            self.assertEqual(reason_1, "OK")
+
+            # Check 2: Rebound to 127.0.0.1 -> Must NOT use stale cache, must be rejected!
+            is_safe_2, reason_2 = is_safe_browser_url("https://www.google.com/maps/search/hvac", is_main_document=True)
+            self.assertFalse(is_safe_2)
+            self.assertIn("127.0.0.1", reason_2)
+
+    def test_dns_result_changing_between_validation_and_connection_blocked_by_proxy(self):
+        """
+        Verify that when a client requests a Google Maps connection through SafeBrowserProxy,
+        if DNS resolves to a private IP (DNS rebinding between validation and connect),
+        the proxy intercepts the CONNECT request, responds with 403 Forbidden, and never
+        establishes a connection to the private IP.
+        """
+        def private_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', port))]
+
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [b"CONNECT maps.google.com:443 HTTP/1.1\r\nHost: maps.google.com:443\r\n\r\n", b""]
+
+        proxy = SafeBrowserProxy()
+        try:
+            with patch('socket.getaddrinfo', side_effect=private_getaddrinfo), \
+                 patch('services.security.socket.socket') as mock_sock_cls:
+                proxy._handle_client(mock_client)
+
+                # Upstream socket was never connected
+                mock_sock_cls.return_value.connect.assert_not_called()
+        finally:
+            proxy.stop()
+
+        # Client was sent 403 Forbidden
+        sent_bytes = b"".join(call.args[0] for call in mock_client.sendall.call_args_list)
+        self.assertIn(b"403 Forbidden", sent_bytes)
+        self.assertIn(b"127.0.0.1", sent_bytes)
+
+    def test_redirect_to_hostname_resolving_to_private_ip_blocked(self):
+        """
+        Verify that a browser navigation redirect to a hostname whose DNS resolves to a private IP
+        is intercepted and aborted at the route handler level.
+        """
+        mock_page = MagicMock()
+        mock_page.main_frame = MagicMock()
+
+        interceptor = create_playwright_route_interceptor(mock_page)
+
+        def private_redirect_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('10.0.0.5', port))]
+
+        route_redirect = MagicMock()
+        req_redirect = MagicMock()
+        req_redirect.url = "https://maps.google.com/redirect-to-private"
+        req_redirect.is_navigation_request.return_value = True
+        req_redirect.frame = mock_page.main_frame
+        route_redirect.request = req_redirect
+
+        with patch('socket.getaddrinfo', side_effect=private_redirect_getaddrinfo):
+            interceptor(route_redirect)
+            route_redirect.abort.assert_called_once_with("blockedbyclient")
+            route_redirect.continue_.assert_not_called()
+
+    def test_browser_subresource_dns_rebinding_blocked(self):
+        """
+        Verify that a browser subresource request to an authorized hostname whose DNS resolves
+        to cloud metadata (169.254.169.254) is aborted.
+        """
+        mock_page = MagicMock()
+        mock_page.main_frame = MagicMock()
+
+        interceptor = create_playwright_route_interceptor(mock_page)
+
+        def metadata_subresource_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('169.254.169.254', port))]
+
+        route_sub = MagicMock()
+        req_sub = MagicMock()
+        req_sub.url = "https://fonts.googleapis.com/css2?family=Roboto"
+        req_sub.is_navigation_request.return_value = False
+        route_sub.request = req_sub
+
+        with patch('socket.getaddrinfo', side_effect=metadata_subresource_getaddrinfo):
+            interceptor(route_sub)
+            route_sub.abort.assert_called_once_with("blockedbyclient")
+            route_sub.continue_.assert_not_called()
+
+    def test_safe_browser_proxy_pins_socket_destination(self):
+        """
+        Verify that SafeBrowserProxy resolves the destination host, checks is_ip_allowed(),
+        and pins the upstream socket connection directly to the validated public IP address.
+        """
+        pinned_ip = '142.250.190.46'
+
+        def public_getaddrinfo(host, port, *args, **kwargs):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (pinned_ip, port))]
+
+        connected_destinations = []
+
+        mock_upstream = MagicMock()
+        mock_upstream.connect.side_effect = lambda addr: connected_destinations.append(addr)
+
+        mock_client = MagicMock()
+        mock_client.recv.side_effect = [b"CONNECT maps.google.com:443 HTTP/1.1\r\nHost: maps.google.com:443\r\n\r\n", b""]
+
+        proxy = SafeBrowserProxy()
+        try:
+            with patch('socket.getaddrinfo', side_effect=public_getaddrinfo), \
+                 patch('services.security.socket.socket', return_value=mock_upstream):
+                proxy._handle_client(mock_client)
+        finally:
+            proxy.stop()
+
+        self.assertIn((pinned_ip, 443), connected_destinations)
+        mock_client.sendall.assert_called_with(b"HTTP/1.1 200 Connection Established\r\n\r\n")
 
 if __name__ == '__main__':
     unittest.main()

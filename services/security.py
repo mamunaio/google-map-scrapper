@@ -7,6 +7,8 @@ strict SSL verification, and safe HTTP request handling.
 import socket
 import ipaddress
 import re
+import threading
+import select
 from urllib.parse import urlparse, urljoin
 import requests
 from urllib3.util import connection as urllib3_connection
@@ -279,8 +281,6 @@ AUTHORIZED_SUBRESOURCE_DOMAIN_REGEX = re.compile(
     re.IGNORECASE
 )
 
-_BROWSER_DNS_CACHE = {}
-
 def is_google_maps_domain(hostname: str) -> bool:
     """
     Checks whether a hostname belongs to an authorized Google Maps domain or shortlink.
@@ -317,6 +317,47 @@ def is_valid_google_maps_pattern(url_or_path: str) -> bool:
             "&q=" in u or
             "goo.gl" in u)
 
+def resolve_and_validate_hostname(hostname: str, port: int = 443) -> tuple[bool, str, list[str]]:
+    """
+    Resolves hostname to IP addresses at call time (no stale cache) and verifies
+    that every resolved IP address is a safe public address.
+    Defeats public-to-private DNS rebinding attacks.
+    Returns (is_safe, reason, resolved_ips).
+    """
+    if not hostname or not isinstance(hostname, str):
+        return False, "Invalid hostname", []
+
+    clean_host = hostname.strip("[]").lower()
+
+    # Blacklist explicit local and private domain names
+    if clean_host in ('localhost', '127.0.0.1', '::1', '0.0.0.0') or clean_host.endswith(('.local', '.internal', '.localhost')):
+        return False, f"Access to local or private destination '{clean_host}' is forbidden", []
+
+    # Check if host is an explicit IP literal
+    try:
+        ip_obj = ipaddress.ip_address(clean_host)
+        if not is_ip_allowed(str(ip_obj)):
+            return False, f"Destination IP '{clean_host}' is in a restricted or private range", []
+        return False, f"Direct IP destination '{clean_host}' is not permitted", []
+    except ValueError:
+        pass
+
+    try:
+        addr_info = socket.getaddrinfo(clean_host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        resolved_ips = [item[4][0] for item in addr_info]
+        if not resolved_ips:
+            return False, f"Could not resolve host: {clean_host}", []
+
+        for ip in resolved_ips:
+            if not is_ip_allowed(ip):
+                return False, f"Domain '{clean_host}' resolves to restricted IP: {ip}", []
+
+        return True, "OK", resolved_ips
+    except socket.gaierror as e:
+        return False, f"DNS resolution failed for '{clean_host}': {e}", []
+    except Exception as e:
+        return False, f"DNS validation error for '{clean_host}': {e}", []
+
 def validate_google_maps_url(url: str) -> str:
     """
     Validates that a URL is a legitimate Google Maps destination.
@@ -348,6 +389,7 @@ def is_safe_browser_url(url: str, is_main_document: bool = False) -> tuple[bool,
     """
     Validates destination URLs for browser requests in Playwright (both main document navigations
     and subresources) to prevent SSRF, unauthorized redirects, and access to internal services.
+    Enforces real-time DNS resolution with zero stale cache to detect DNS rebinding.
     """
     if not url or not isinstance(url, str):
         return False, "Empty or invalid URL"
@@ -376,20 +418,6 @@ def is_safe_browser_url(url: str, is_main_document: bool = False) -> tuple[bool,
 
     clean_host = hostname.strip("[]").lower()
 
-    # Explicit domain blacklist
-    if clean_host in ('localhost', '127.0.0.1', '::1', '0.0.0.0') or clean_host.endswith(('.local', '.internal', '.localhost')):
-        return False, f"Access to local or private destination '{clean_host}' is forbidden"
-
-    # Check if host is an explicit IP literal
-    try:
-        ip_obj = ipaddress.ip_address(clean_host)
-        if not is_ip_allowed(str(ip_obj)):
-            return False, f"Destination IP '{clean_host}' is in a restricted or private range"
-        # Direct raw IP connections in browser are not authorized Google endpoints
-        return False, f"Direct IP destination '{clean_host}' is not permitted"
-    except ValueError:
-        pass  # Hostname is a domain name
-
     # Domain authorization check
     if is_main_document:
         if not is_google_maps_domain(clean_host):
@@ -398,26 +426,175 @@ def is_safe_browser_url(url: str, is_main_document: bool = False) -> tuple[bool,
         if not (is_google_maps_domain(clean_host) or is_authorized_maps_subresource_host(clean_host)):
             return False, f"Subresource destination '{clean_host}' is not an authorized Google subresource host"
 
-    # Verify DNS resolution points to public IP
-    cached = _BROWSER_DNS_CACHE.get(clean_host)
-    if cached is not None:
-        if not cached:
-            return False, f"Domain '{clean_host}' resolves to restricted IP (cached)"
-    else:
-        try:
-            addr_info = socket.getaddrinfo(clean_host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-            resolved_ips = {item[4][0] for item in addr_info}
-            if not resolved_ips:
-                _BROWSER_DNS_CACHE[clean_host] = False
-                return False, f"Could not resolve host: {clean_host}"
-            for ip in resolved_ips:
-                if not is_ip_allowed(ip):
-                    _BROWSER_DNS_CACHE[clean_host] = False
-                    return False, f"Domain '{clean_host}' resolves to restricted IP: {ip}"
-            _BROWSER_DNS_CACHE[clean_host] = True
-        except Exception as e:
-            _BROWSER_DNS_CACHE[clean_host] = False
-            return False, f"DNS resolution failed for '{clean_host}': {e}"
+    # Real-time DNS resolution verification (defeats public-to-private DNS rebinding)
+    port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+    is_safe, reason, _ = resolve_and_validate_hostname(clean_host, port=port)
+    if not is_safe:
+        return False, reason
 
     return True, "OK"
+
+class SafeBrowserProxy:
+    """
+    Local TCP tunneling proxy for Playwright browser contexts.
+    Enforces network-level destination pinning and SSRF defense:
+    - Intercepts all Chromium outbound connection attempts.
+    - Validates target hostnames against Google Maps & subresource authorization rules.
+    - Resolves hostnames in Python, verifies every IP with is_ip_allowed(),
+      and connects the upstream socket directly to the pinned public IP.
+    - Aborts connections immediately if a hostname resolves to a private IP,
+      localhost, cloud metadata, or link-local address (preventing DNS rebinding).
+    """
+    def __init__(self):
+        self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_sock.bind(('127.0.0.1', 0))
+        self.port = self.server_sock.getsockname()[1]
+        self.server_sock.listen(50)
+        self.running = False
+        self.thread = None
+
+    def start(self):
+        self.running = True
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+        try:
+            self.server_sock.close()
+        except Exception:
+            pass
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=2.0)
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+
+    def _run(self):
+        self.server_sock.settimeout(0.5)
+        while self.running:
+            try:
+                client_sock, _ = self.server_sock.accept()
+                t = threading.Thread(target=self._handle_client, args=(client_sock,), daemon=True)
+                t.start()
+            except socket.timeout:
+                continue
+            except Exception:
+                break
+
+    def _handle_client(self, client_sock):
+        upstream_sock = None
+        try:
+            client_sock.settimeout(15.0)
+            data = b""
+            while b"\r\n\r\n" not in data:
+                chunk = client_sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            if not data:
+                client_sock.close()
+                return
+
+            req_line = data.split(b"\r\n")[0].decode('latin1', errors='replace')
+            parts = req_line.split()
+            if len(parts) < 2:
+                client_sock.close()
+                return
+
+            method, target = parts[0].upper(), parts[1]
+
+            if method == 'CONNECT':
+                if ':' in target:
+                    host, port_str = target.split(':', 1)
+                    try:
+                        port = int(port_str)
+                    except ValueError:
+                        port = 443
+                else:
+                    host, port = target, 443
+            else:
+                parsed = urlparse(target)
+                host = parsed.hostname or ''
+                port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+
+            clean_host = host.strip("[]").lower()
+
+            # 1. Domain Authorization Filter
+            if not (is_google_maps_domain(clean_host) or is_authorized_maps_subresource_host(clean_host)):
+                client_sock.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nForbidden: Unauthorized destination\r\n")
+                client_sock.close()
+                return
+
+            # 2. DNS Resolution & Rebinding Check
+            is_safe, reason, resolved_ips = resolve_and_validate_hostname(clean_host, port=port)
+            if not is_safe or not resolved_ips:
+                client_sock.sendall(f"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nForbidden: {reason}\r\n".encode())
+                client_sock.close()
+                return
+
+            pinned_ip = resolved_ips[0]
+
+            # 3. Connect Upstream Socket Directly to Pinned Public IP
+            family = socket.AF_INET6 if ':' in pinned_ip else socket.AF_INET
+            upstream_sock = socket.socket(family, socket.SOCK_STREAM)
+            upstream_sock.settimeout(10.0)
+            try:
+                upstream_sock.connect((pinned_ip, port))
+            except Exception:
+                client_sock.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\n\r\nBad Gateway\r\n")
+                client_sock.close()
+                upstream_sock.close()
+                return
+
+            # 4. Stream Relay
+            if method == 'CONNECT':
+                client_sock.sendall(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                sockets = [client_sock, upstream_sock]
+                while self.running:
+                    try:
+                        readable, _, exceptional = select.select(sockets, [], sockets, 3.0)
+                    except Exception:
+                        break
+                    if exceptional:
+                        break
+                    for s in readable:
+                        other = upstream_sock if s is client_sock else client_sock
+                        try:
+                            buf = s.recv(16384)
+                            if not buf:
+                                return
+                            other.sendall(buf)
+                        except Exception:
+                            return
+            else:
+                upstream_sock.sendall(data)
+                while self.running:
+                    try:
+                        readable, _, _ = select.select([upstream_sock], [], [upstream_sock], 5.0)
+                        if not readable:
+                            break
+                        chunk = upstream_sock.recv(16384)
+                        if not chunk:
+                            break
+                        client_sock.sendall(chunk)
+                    except Exception:
+                        break
+
+        except Exception:
+            pass
+        finally:
+            if upstream_sock:
+                try:
+                    upstream_sock.close()
+                except Exception:
+                    pass
+            try:
+                client_sock.close()
+            except Exception:
+                pass
 
