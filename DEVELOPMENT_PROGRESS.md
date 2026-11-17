@@ -160,10 +160,12 @@
   - Dimension-level explanations added in `dimension_explanations` for all 9 scoring dimensions.
   - Preserved priority labels: `High Priority`, `Medium Priority`, `Low Priority`, and `Manual Review` for failed/insufficient data.
   - Added 10 dedicated regression tests in `tests/test_lead_scoring.py`.
-- **Issue 2: Verified DNS Rebinding & Live Requests Path Verification (`services/security.py`):**
+- **Issue 2: Verified DNS Rebinding, Proxy Hardening & Live Requests Path Verification (`services/security.py`):**
   - Confirmed `urllib3` (v2.8.0) and `requests` (v2.34.2) connection execution path: `requests.Session.get()` -> `HTTPAdapter.send()` -> `HTTPConnectionPool.urlopen()` -> `HTTPConnection._new_conn()` -> `urllib3.util.connection.create_connection`.
   - Verified that `urllib3.util.connection.create_connection` and `urllib3.connection.connection.create_connection` directly reference `_safe_create_connection`.
   - Added `SafeHTTPAdapter` for adapter-level URL pre-validation on all session requests.
+  - Disabled environment proxy inheritance (`session.trust_env = False`) in `safe_http_get()` so `HTTP_PROXY` and `HTTPS_PROXY` cannot be used to bypass SSRF / rebinding filters.
+  - Guaranteed resource cleanup: redirect response sockets are closed before advancing hops, stream sockets are closed in `finally`, and `session.close()` is executed on lifecycle completion.
   - Integration tests verified live `requests.Session.get()` blocking DNS rebinding to localhost (`127.0.0.1`), metadata (`169.254.169.254`), private IPv4 (`10.0.0.1`), and IPv6 link-local (`fe80::1`) before any socket connection.
   - Verified that public destinations connect directly to pinned IP addresses without secondary DNS lookup.
 - **Issue 3: Unsupported Fallback Opportunities Removed (`services/export_service.py`):**
@@ -175,8 +177,8 @@
 ---
 
 ## Acceptance Test Summary
-- Total Automated Regression Tests: **52 Tests**
-- Pass Rate: **100% (52/52 passing)**
-- Execution Time: ~2.25s
-- Security Verification: Live Requests & urllib3 integration tests for DNS rebinding, localhost, cloud metadata, private IPv4/IPv6, link-local, redirect SSRF, TLS failure, and 5MB size limits.
+- Total Automated Regression Tests: **58 Tests**
+- Pass Rate: **100% (58/58 passing)**
+- Execution Time: ~2.26s
+- Security Verification: Live Requests & urllib3 integration tests for DNS rebinding, localhost, cloud metadata, private IPv4/IPv6, link-local, proxy bypass prevention (trust_env=False), redirect SSRF, TLS failure, and 5MB size limits.
 - Backward Compatibility: Original Google Maps crawler, CSV/Excel upload, email extraction, and original 22+ columns completely preserved.

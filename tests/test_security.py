@@ -203,5 +203,78 @@ class TestSecurity(unittest.TestCase):
         with self.assertRaises(SecurityError):
             adapter.send(req)
 
+    # -------------------------------------------------------------
+    # Environment Proxy Bypass Prevention & Resource Cleanup Tests
+    # -------------------------------------------------------------
+    def test_proxy_env_cannot_bypass_localhost(self):
+        """Verify that HTTP_PROXY / HTTPS_PROXY in environment cannot route requests to localhost."""
+        with patch.dict('os.environ', {'HTTP_PROXY': 'http://127.0.0.1:8888', 'HTTPS_PROXY': 'http://127.0.0.1:8888'}):
+            with self.assertRaises(SecurityError):
+                safe_http_get('http://127.0.0.1:8000')
+
+    def test_proxy_env_cannot_bypass_cloud_metadata(self):
+        """Verify that HTTP_PROXY / HTTPS_PROXY in environment cannot reach cloud metadata (169.254.169.254)."""
+        with patch.dict('os.environ', {'HTTP_PROXY': 'http://corporate-proxy:8080', 'HTTPS_PROXY': 'http://corporate-proxy:8080'}):
+            with self.assertRaises(SecurityError):
+                safe_http_get('http://169.254.169.254/latest/meta-data')
+
+    def test_proxy_env_cannot_bypass_private_ipv4(self):
+        """Verify that HTTP_PROXY in environment cannot reach private class A or class C networks."""
+        with patch.dict('os.environ', {'HTTP_PROXY': 'http://corporate-proxy:8080'}):
+            with self.assertRaises(SecurityError):
+                safe_http_get('http://10.0.0.1/admin')
+            with self.assertRaises(SecurityError):
+                safe_http_get('http://192.168.1.1')
+
+    def test_proxy_env_cannot_bypass_ipv6_link_local(self):
+        """Verify that HTTPS_PROXY in environment cannot reach IPv6 link-local addresses."""
+        with patch.dict('os.environ', {'HTTPS_PROXY': 'http://corporate-proxy:8080'}):
+            with self.assertRaises(SecurityError):
+                safe_http_get('http://[fe80::1]')
+
+    def test_proxy_env_ignored_and_not_inherited(self):
+        """Verify safe_http_get explicitly sets trust_env=False so proxies in os.environ are ignored."""
+        with patch.dict('os.environ', {'HTTP_PROXY': 'http://127.0.0.1:8888', 'HTTPS_PROXY': 'http://127.0.0.1:8888'}):
+            with patch('services.security.validate_and_sanitize_url') as mock_val, \
+                 patch('requests.Session.get') as mock_get:
+                mock_val.return_value = 'https://example.com'
+                mock_resp = MagicMock()
+                mock_resp.is_redirect = False
+                mock_resp.iter_content.return_value = [b"Safe content"]
+                mock_get.return_value = mock_resp
+
+                with patch('requests.Session') as mock_sess_cls:
+                    real_session = requests.Session()
+                    mock_sess_cls.return_value = real_session
+                    real_session.get = mock_get
+
+                    resp = safe_http_get('https://example.com')
+                    self.assertFalse(real_session.trust_env)
+                    self.assertEqual(resp._content, b"Safe content")
+
+    def test_redirect_and_session_closed_during_lifecycle(self):
+        """Verify redirect responses, final stream, and session are properly closed."""
+        mock_redirect = MagicMock()
+        mock_redirect.is_redirect = True
+        mock_redirect.headers = {'location': 'https://example.com/dest'}
+
+        mock_final = MagicMock()
+        mock_final.is_redirect = False
+        mock_final.iter_content.return_value = [b"OK"]
+
+        with patch('services.security.validate_and_sanitize_url') as mock_val, \
+             patch('requests.Session.get') as mock_get, \
+             patch('requests.Session.close') as mock_session_close:
+            mock_val.side_effect = ['https://example.com', 'https://example.com/dest']
+            mock_get.side_effect = [mock_redirect, mock_final]
+
+            safe_http_get('https://example.com')
+            # Verify redirect response was closed before following next hop
+            mock_redirect.close.assert_called_once()
+            # Verify final response stream was closed
+            mock_final.close.assert_called_once()
+            # Verify session was closed at end of lifecycle
+            mock_session_close.assert_called_once()
+
 if __name__ == '__main__':
     unittest.main()

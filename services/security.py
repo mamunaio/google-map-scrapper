@@ -198,7 +198,8 @@ class SafeHTTPAdapter(requests.adapters.HTTPAdapter):
 def safe_http_get(url: str, headers: dict = None, max_bytes: int = MAX_RESPONSE_BYTES, timeout=DEFAULT_TIMEOUT):
     """
     Performs a safe HTTP GET request with SSRF validation, DNS rebinding protection,
-    strict SSL verification (no insecure fallback), and manual redirect verification.
+    strict SSL verification (no insecure fallback), manual redirect verification,
+    disabled environment proxy inheritance (trust_env=False), and guaranteed resource cleanup.
     """
     validated_url = validate_and_sanitize_url(url)
     
@@ -211,43 +212,54 @@ def safe_http_get(url: str, headers: dict = None, max_bytes: int = MAX_RESPONSE_
         default_headers.update(headers)
 
     session = requests.Session()
+    # Explicitly disable environment proxy inheritance to prevent proxy bypass attacks
+    session.trust_env = False
+
     safe_adapter = SafeHTTPAdapter()
     session.mount("https://", safe_adapter)
     session.mount("http://", safe_adapter)
+
     current_url = validated_url
     redirect_count = 0
     max_redirects = 5
 
-    while True:
-        # Strict SSL verification: never automatically fall back to verify=False
-        response = session.get(
-            current_url,
-            headers=default_headers,
-            timeout=timeout,
-            allow_redirects=False,
-            stream=True,
-            verify=True
-        )
+    try:
+        while True:
+            # Strict SSL verification: never automatically fall back to verify=False
+            response = session.get(
+                current_url,
+                headers=default_headers,
+                timeout=timeout,
+                allow_redirects=False,
+                stream=True,
+                verify=True
+            )
 
-        # Handle redirects with per-hop SSRF validation
-        if response.is_redirect and 'location' in response.headers:
-            redirect_count += 1
-            if redirect_count > max_redirects:
-                raise SecurityError(f"Too many redirects (exceeded limit of {max_redirects})")
-            
-            next_url = urljoin(current_url, response.headers['location'])
-            # CRITICAL: Validate redirect destination before next request
-            current_url = validate_and_sanitize_url(next_url)
-            continue
-
-        # Enforce response content length limit
-        content = bytearray()
-        for chunk in response.iter_content(chunk_size=16384):
-            content.extend(chunk)
-            if len(content) > max_bytes:
+            # Handle redirects with per-hop SSRF validation
+            if response.is_redirect and 'location' in response.headers:
+                redirect_count += 1
+                if redirect_count > max_redirects:
+                    response.close()
+                    raise SecurityError(f"Too many redirects (exceeded limit of {max_redirects})")
+                
+                next_url = urljoin(current_url, response.headers['location'])
+                # Ensure redirect response socket is closed before following next hop
                 response.close()
-                raise SecurityError(f"Response size exceeded safety limit of {max_bytes / (1024*1024):.1f} MB")
+                current_url = validate_and_sanitize_url(next_url)
+                continue
 
-        response._content = bytes(content)
-        response.ssl_verified = True
-        return response
+            # Enforce response content length limit and guarantee socket closure
+            content = bytearray()
+            try:
+                for chunk in response.iter_content(chunk_size=16384):
+                    content.extend(chunk)
+                    if len(content) > max_bytes:
+                        raise SecurityError(f"Response size exceeded safety limit of {max_bytes / (1024*1024):.1f} MB")
+            finally:
+                response.close()
+
+            response._content = bytes(content)
+            response.ssl_verified = True
+            return response
+    finally:
+        session.close()
