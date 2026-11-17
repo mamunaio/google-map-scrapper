@@ -5,6 +5,7 @@ email/social extraction, technical audits, feature detection, and opportunity sc
 """
 
 import time
+from datetime import datetime, timezone
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -118,10 +119,51 @@ def scrape_with_playwright_fallback(url: str, existing_fb: str = "", existing_in
         print(f"Playwright fallback error for {url}: {e}")
         return "", "", existing_fb, existing_insta, existing_linkedin, None, None
 
+def is_challenge_or_blocked(status_code: int = 200, html_text: str = "", error_msg: str = None) -> tuple[bool, str]:
+    """
+    Detects Cloudflare challenges, CAPTCHAs, bot mitigations, 403 Forbidden,
+    access-denied pages, timeouts, and network connection errors.
+    Returns (is_blocked: bool, reason: str).
+    """
+    if error_msg:
+        err_lower = error_msg.lower()
+        if "timeout" in err_lower or "timed out" in err_lower:
+            return True, "Request timed out"
+        if "connection" in err_lower or "refused" in err_lower or "reset" in err_lower or "name or service not known" in err_lower or "nodename" in err_lower:
+            return True, f"Connection failed: {error_msg}"
+        return True, f"Network error: {error_msg}"
+
+    if status_code in (401, 403, 429, 503):
+        text_lower = (html_text or "").lower()
+        if any(cf in text_lower for cf in ["cloudflare", "cf-chl", "cf-turnstile", "challenges.cloudflare.com", "ray id:"]):
+            return True, f"Cloudflare WAF challenge detected (HTTP {status_code})"
+        if any(cap in text_lower for cap in ["captcha", "hcaptcha", "recaptcha", "verify you are human"]):
+            return True, f"Bot mitigation / CAPTCHA challenge detected (HTTP {status_code})"
+        if "access denied" in text_lower or "forbidden" in text_lower:
+            return True, f"Access Denied / Forbidden (HTTP {status_code})"
+        return True, f"HTTP {status_code} Error"
+
+    if html_text:
+        text_lower = html_text.lower()
+        if ("attention required! | cloudflare" in text_lower or
+            "<title>just a moment...</title>" in text_lower or
+            "checking your browser before accessing" in text_lower or
+            ("challenges.cloudflare.com" in text_lower and len(html_text) < 4000) or
+            ("verify you are human" in text_lower and ("captcha" in text_lower or "turnstile" in text_lower)) or
+            ("cf-turnstile" in text_lower and len(html_text) < 3000)):
+            return True, "Cloudflare challenge / CAPTCHA page detected"
+
+        if ("<title>access denied</title>" in text_lower or
+            ("<title>403 forbidden</title>" in text_lower and len(html_text) < 2000)):
+            return True, "Access Denied page detected"
+
+    return False, ""
+
 def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_name: str = ""):
     """
     Complete end-to-end audit:
     - SSRF protection & safe fetching
+    - Robust challenge / bot mitigation / 403 handling (never interprets challenge pages as real websites)
     - Contact extraction (Email, Decision Maker, Facebook, Instagram, LinkedIn)
     - Full Website Intelligence (SEO, Technical, Features, Performance, Opportunity Scoring)
     - Preserves exact fields for backward compatibility!
@@ -148,6 +190,126 @@ def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_na
         error_msg = str(e)
 
     elapsed_sec = time.time() - start_time
+    is_blocked, block_reason = is_challenge_or_blocked(status_code, response_text, error_msg)
+
+    # If the response is blocked by Cloudflare, CAPTCHA, access denied, or network error:
+    # Do NOT interpret challenge content as the real website!
+    if is_blocked:
+        timestamp_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        website_status = "Blocked / Inconclusive"
+        if error_msg and ("timeout" in error_msg.lower() or "timed out" in error_msg.lower()):
+            website_status = "Timeout / Error"
+        elif error_msg:
+            website_status = "Connection Error"
+
+        seo_audit = {
+            "status": "Blocked / Inconclusive",
+            "seo_score": None,
+            "metrics": {
+                "title": "Not Audited",
+                "meta_description": None,
+                "h1_tags": [],
+                "canonical_url": None,
+                "is_noindex": None,
+                "has_viewport": None,
+                "images_total": 0,
+                "images_missing_alt": 0,
+                "schema_types": []
+            },
+            "findings": [f"Audit inconclusive: {block_reason}. Real website content not inspected."],
+            "robots_sitemap": {"robots_txt_status": "Unknown", "sitemap_status": "Unknown"}
+        }
+
+        tech_audit = {
+            "status": "Inconclusive",
+            "mobile_usability": {
+                "status": "Not Audited",
+                "has_viewport": None,
+                "overflow_risk": None,
+                "evidence": f"Inspection blocked: {block_reason}"
+            },
+            "ssl_certificate": {
+                "status": "Valid" if (is_ssl_verified and status_code > 0) else "Unknown",
+                "evidence": "TLS handshake completed" if (is_ssl_verified and status_code > 0) else "Connection failed"
+            },
+            "findings": []
+        }
+
+        features_audit = {
+            k: {
+                "status": "Unknown",
+                "evidence": [f"Feature inspection inconclusive: {block_reason}; public integration cannot be verified."],
+                "details": {}
+            }
+            for k in ["lead_capture", "booking", "chatbot", "voice_agent", "crm", "review_management", "analytics"]
+        }
+
+        perf_audit = {
+            "audit_status": "Not Audited",
+            "audit_timestamp": timestamp_str,
+            "mobile_score": None,
+            "desktop_score": None,
+            "core_web_vitals": {},
+            "source": f"Audit Skipped ({website_status})",
+            "local_diagnostics": {}
+        }
+
+        opp_analysis = {
+            "lead_score": 50,
+            "priority": "Manual Review",
+            "priority_tier": "Manual Review",
+            "priority_reason": f"Website inspection inconclusive ({block_reason}); requires manual review.",
+            "scoring_details": {
+                "research_score": 50,
+                "research_priority": "Manual Review",
+                "priority": "Manual Review",
+                "priority_reason": f"Website inspection inconclusive ({block_reason}); requires manual review.",
+                "suggested_next_action": "Perform manual domain review; automated crawler blocked by bot/WAF challenge.",
+                "main_identified_gap": f"Website inspection blocked ({block_reason})"
+            },
+            "opportunities_count": 0,
+            "detected_opportunities": [],
+            "outreach_hooks": [],
+            "main_gap": f"Website inspection blocked ({block_reason})",
+            "next_action": "Perform manual review of domain; automated inspection blocked by bot/WAF controls.",
+            "summary": f"Audit inconclusive: {block_reason}. Manual review required."
+        }
+
+        return {
+            "Website": final_url,
+            "Website Status": website_status,
+            "Email": "",
+            "Email Status": "Not Found",
+            "Contact Person": "",
+            "Decision Maker": "",
+            "Email Verification": "Not Found",
+            "Facebook": "",
+            "Instagram": "",
+            "LinkedIn": "",
+            "About Page Link": "",
+            "Priority": "Manual Review",
+            "Lead Score": 50,
+            "Main Opportunity": f"Website inspection blocked ({block_reason})",
+            "Notes": f"Website inspection inconclusive ({block_reason}); requires manual review.",
+            "intelligence": {
+                "seo": seo_audit,
+                "technical": tech_audit,
+                "features": features_audit,
+                "performance": perf_audit,
+                "opportunities": opp_analysis,
+                "lead_score": 50,
+                "priority": "Manual Review",
+                "priority_tier": "Manual Review",
+                "audit_summary": {
+                    "website_status": website_status,
+                    "seo_score": None,
+                    "features_detected_count": 0,
+                    "opportunities_count": 0,
+                    "ssl_status": tech_audit["ssl_certificate"]["status"],
+                    "mobile_status": "Not Audited"
+                }
+            }
+        }
 
     # Step 2: Contact & Social Extraction
     email, fb, insta, linkedin, _ = extract_emails_and_socials(response_text, base_url=final_url)
@@ -187,23 +349,21 @@ def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_na
             pw_html, pw_email, pw_fb, pw_insta, pw_li, pw_dm, pw_role = scrape_with_playwright_fallback(
                 final_url, existing_fb=fb, existing_insta=insta, existing_linkedin=linkedin
             )
-            if pw_html and not response_text:
+            pw_blocked, _ = is_challenge_or_blocked(200, pw_html)
+            if pw_html and not pw_blocked and not response_text:
                 response_text = pw_html
-            email = email or pw_email
-            fb = fb or pw_fb
-            insta = insta or pw_insta
-            linkedin = linkedin or pw_li
-            if not dm_name and pw_dm:
-                dm_name, dm_role = pw_dm, pw_role
+            if not pw_blocked:
+                email = email or pw_email
+                fb = fb or pw_fb
+                insta = insta or pw_insta
+                linkedin = linkedin or pw_li
+                if not dm_name and pw_dm:
+                    dm_name, dm_role = pw_dm, pw_role
         except Exception:
             pass
 
-    # Step 4: Fallback to personal name extraction from email prefix
-    if not dm_name and email:
-        extracted = extract_name_from_email_prefix(email)
-        if extracted:
-            dm_name = extracted
-            dm_role = "Business Owner"
+    # Step 4: Decision Maker Validation (Never infer identity or ownership from email prefix alone)
+    # Decision maker is accepted only if verified via structured Schema.org or explicit page text.
 
     # Step 5: Permutation & SMTP Handshake Verification
     domain = urlparse(final_url).netloc.lower().replace('www.', '').strip('/')
@@ -245,9 +405,15 @@ def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_na
     )
 
     # Step 7: Combine all results (preserving existing backward-compatible keys!)
+    calc_priority = opp_analysis.get("priority") or "Manual Review"
+    calc_score = opp_analysis.get("lead_score", 50)
+    calc_main_opp = opp_analysis.get("main_gap", "")
+    calc_notes = opp_analysis.get("scoring_details", {}).get("priority_reason", "")
+
     return {
         # Core existing fields
         "Website": final_url,
+        "Website Status": "Online",
         "Email": email,
         "Email Status": verification_status,
         "Contact Person": dm_name or "",
@@ -257,6 +423,10 @@ def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_na
         "Instagram": insta,
         "LinkedIn": linkedin,
         "About Page Link": about_url,
+        "Priority": calc_priority,
+        "Lead Score": calc_score,
+        "Main Opportunity": calc_main_opp,
+        "Notes": calc_notes,
         
         # New Intelligence & Opportunity Suite
         "intelligence": {
@@ -265,9 +435,11 @@ def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_na
             "features": features_audit,
             "performance": perf_audit,
             "opportunities": opp_analysis,
-            "lead_score": opp_analysis.get("lead_score", 50),
+            "lead_score": calc_score,
+            "priority": calc_priority,
             "priority_tier": opp_analysis.get("priority_tier", "Standard Prospect"),
             "audit_summary": {
+                "website_status": "Online",
                 "seo_score": seo_audit.get("seo_score", 0),
                 "features_detected_count": sum(1 for f in features_audit.values() if f.get("status") == "Detected"),
                 "opportunities_count": opp_analysis.get("opportunities_count", 0),

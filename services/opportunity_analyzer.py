@@ -129,7 +129,8 @@ def analyze_business_opportunities(
     # Opportunity 6: Technical SEO Optimization
     seo_findings = seo_result.get("findings", [])
     high_seo = [f for f in seo_findings if isinstance(f, dict) and f.get("severity") == "High"]
-    if high_seo or seo_result.get("seo_score", 100) < 75:
+    is_seo_valid = seo_result.get("status") != "Blocked / Inconclusive" and seo_result.get("seo_score") is not None
+    if is_seo_valid and (high_seo or seo_result.get("seo_score", 100) < 75):
         primary_issue = high_seo[0]["name"] if high_seo else "On-Page Metadata Gaps"
         evidence_text = high_seo[0]["evidence"] if high_seo else "Page title, meta description, or heading hierarchy lacks optimization."
         opportunities.append({
@@ -152,7 +153,8 @@ def analyze_business_opportunities(
 
     # Opportunity 7: Mobile Usability & Responsive Redesign
     mobile_info = technical_result.get("mobile_usability", {})
-    if not mobile_info.get("has_viewport") or mobile_info.get("overflow_risk"):
+    is_tech_valid = technical_result.get("status") not in ["Inconclusive", "Blocked / Inconclusive"]
+    if is_tech_valid and (not mobile_info.get("has_viewport") or mobile_info.get("overflow_risk")):
         opportunities.append({
             "Business Name": biz,
             "Opportunity Category": "Website Development",
@@ -170,7 +172,7 @@ def analyze_business_opportunities(
 
     # Opportunity 8: SSL Security & HTTPS Enforcement
     ssl_info = technical_result.get("ssl_certificate", {})
-    if ssl_info.get("status") in ["Expired", "Plain HTTP", "Invalid"]:
+    if is_tech_valid and ssl_info.get("status") in ["Expired", "Plain HTTP", "Invalid"]:
         opportunities.append({
             "Business Name": biz,
             "Opportunity Category": "Website Security",
@@ -208,7 +210,9 @@ def analyze_business_opportunities(
 
     return {
         "lead_score": scoring["research_score"],
+        "priority": scoring.get("priority", "Manual Review"),
         "priority_tier": scoring["research_priority"],
+        "priority_reason": scoring.get("priority_reason", ""),
         "scoring_details": scoring,
         "opportunities_count": len(opportunities),
         "detected_opportunities": opportunities,

@@ -176,11 +176,24 @@ def apply_sheet_styling(ws, header_fill, columns):
 
 
 def clean_contact_person(person_raw: str, business_name: str = "") -> str:
-    """Cleans Contact Person to ensure strictly human name and not business name."""
+    """Cleans Contact Person to ensure strictly human name and not business name or generic placeholder."""
     if not person_raw:
         return ""
     # Strip trailing role markers like (Owner) or (CEO)
     cleaned = re.sub(r'\(.*?\)', '', person_raw).strip()
+    if not cleaned:
+        return ""
+    
+    # Reject generic department or placeholder names
+    GENERIC_NAMES = {
+        "dispatch", "dispatcher", "estimates", "estimate", "quotes", "quote",
+        "filler", "user", "admin", "administrator", "info", "support",
+        "sales", "contact", "office", "team", "billing", "service", "help",
+        "schedule", "scheduling", "inquiries", "operations", "owner"
+    }
+    if cleaned.lower() in GENERIC_NAMES:
+        return ""
+
     if business_name:
         b_clean = re.sub(r'[^a-zA-Z0-9]', '', business_name).lower()
         p_clean = re.sub(r'[^a-zA-Z0-9]', '', cleaned).lower()
@@ -366,6 +379,28 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
             ])
             continue
 
+        is_blocked = (
+            lead.get("Website Status") in ["Blocked / Inconclusive", "Timeout / Error", "Connection Error"] or
+            seo.get("status") == "Blocked / Inconclusive" or
+            tech.get("status") == "Inconclusive"
+        )
+
+        if is_blocked:
+            block_status = lead.get("Website Status") or seo.get("status") or "Blocked / Inconclusive"
+            ssl_info = tech.get("ssl_certificate", {})
+            https_val = "Passed" if ssl_info.get("status") in ["Valid", "Active", "Passed"] else "Unknown"
+            findings = seo.get("findings", [])
+            block_summary = findings[0] if (findings and isinstance(findings[0], str)) else f"Inspection blocked or inconclusive ({block_status})."
+            key_issue = "Automated inspection blocked by WAF/Challenge" if "Blocked" in block_status else "Crawl error or timeout"
+
+            ws_audit.append([
+                biz_name, website, block_status, "Not Audited", "Not Audited",
+                "Not Audited", "Not Audited", "Not Audited", "Not Audited",
+                "Not Audited", https_val, "Not Audited",
+                key_issue, "Inconclusive", block_summary
+            ])
+            continue
+
         # Valid crawl evaluation using structured findings and metrics
         seo_findings_list = seo.get("findings", [])
         seo_finding_names = {f.get("name") for f in seo_findings_list if isinstance(f, dict)}
@@ -445,12 +480,11 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
 
         # 9. Performance Status
         mob_score = perf.get("mobile_score")
-        if mob_score is not None and mob_score < 50:
-            perf_status = "Confirmed issue"
-        elif mob_score is not None and mob_score >= 50:
-            perf_status = "Passed"
-        elif perf.get("performance_status") in ["Optimal", "Passed"]:
-            perf_status = "Passed"
+        if mob_score is not None:
+            if mob_score < 50:
+                perf_status = "Confirmed issue"
+            else:
+                perf_status = "Passed"
         else:
             perf_status = "Unknown"
 
@@ -458,8 +492,9 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
         key_seo = "; ".join([f["name"] if isinstance(f, dict) else str(f) for f in seo_findings_list[:3]]) if seo_findings_list else "None detected"
         key_tech = "; ".join([f["name"] if isinstance(f, dict) else str(f) for f in tech_findings_list[:3]]) if tech_findings_list else "None detected"
 
-        seo_score = seo.get("seo_score", "N/A")
-        summary = f"SEO Score: {seo_score}/100. SSL: {ssl_info.get('status', 'Unknown')}. Mobile: {mob_info.get('status', 'Unknown')}."
+        seo_score = seo.get("seo_score")
+        score_display = f"{seo_score}/100" if seo_score is not None else "N/A"
+        summary = f"SEO Score: {score_display}. SSL: {ssl_info.get('status', 'Unknown')}. Mobile: {mob_info.get('status', 'Unknown')}."
 
         ws_audit.append([
             biz_name, website, "Online", page_title, meta_status,

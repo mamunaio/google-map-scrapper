@@ -1,0 +1,2638 @@
+[
+  {
+    "Business Name": "Texas AirZone LLC",
+    "Category": "HVAC contractor",
+    "City": "Dallas",
+    "State": "TX",
+    "Phone": "+1 214-851-3886",
+    "Website": "https://www.texasairzone.com/?utm_source=Google&utm_medium=GBP&utm_campaign=Organic_GBP_TAZ",
+    "Google Maps URL": "https://www.google.com/maps/place/Texas+AirZone+LLC/data=!4m7!3m6!1s0x864ea080fba6f511:0xceec20ac5cbf7fd4!8m2!3d32.8806583!4d-96.6964393!16s%2Fg%2F1tgzbrww!19sChIJEfWm-4CgToYR1H-_XKwg7M4?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Rating": 5.0,
+    "Reviews": 912,
+    "Contact Person": "",
+    "Email": "",
+    "Email Status": "Not Found",
+    "Priority": "Medium",
+    "Lead Score": 44,
+    "Main Opportunity": "Click-to-call available, but missing interactive inquiry form",
+    "Notes": "Moderate score (44/100); several digital infrastructure gaps identified.",
+    "Google Category": "HVAC contractor",
+    "Phone Number": "+1 214-851-3886",
+    "Google Rating": 5.0,
+    "Review Count": 912,
+    "Google Maps Profile": "https://www.google.com/maps/place/Texas+AirZone+LLC/data=!4m7!3m6!1s0x864ea080fba6f511:0xceec20ac5cbf7fd4!8m2!3d32.8806583!4d-96.6964393!16s%2Fg%2F1tgzbrww!19sChIJEfWm-4CgToYR1H-_XKwg7M4?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Decision Maker": "",
+    "Email Verification": "Not Found",
+    "Facebook": "",
+    "Instagram": "",
+    "LinkedIn": "",
+    "About Page Link": "",
+    "Source URL": "https://www.google.com/maps/place/Texas+AirZone+LLC/data=!4m7!3m6!1s0x864ea080fba6f511:0xceec20ac5cbf7fd4!8m2!3d32.8806583!4d-96.6964393!16s%2Fg%2F1tgzbrww!19sChIJEfWm-4CgToYR1H-_XKwg7M4?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Website Status": "Online",
+    "intelligence": {
+      "seo": {
+        "findings": [
+          {
+            "name": "Long Page Title (Truncation Risk)",
+            "severity": "Low",
+            "affected_url": "https://www.texasairzone.com/?utm_source=Google&utm_medium=GBP&utm_campaign=Organic_GBP_TAZ",
+            "evidence": "Title is 74 characters ('HVAC, Plumbing & Whole-Home Comfort in Dallas\u00e2\u0080\u0093Fort Worth |...').",
+            "explanation": "Titles over 60-65 characters are often truncated in Google search result snippets.",
+            "suggested_improvement": "Shorten the title to under 60 characters so the entire message is visible in search snippets.",
+            "detection_method": "String Length Analysis"
+          }
+        ],
+        "metrics": {
+          "title": "HVAC, Plumbing & Whole-Home Comfort in Dallas\u00e2\u0080\u0093Fort Worth | Texas AirZone",
+          "title_length": 74,
+          "meta_description": "Texas AirZone has provided trusted HVAC and water system design, installation, and maintenance across Dallas\u00e2\u0080\u0093Fort Worth since 1997.",
+          "meta_description_length": 133,
+          "canonical_url": "https://www.texasairzone.com/",
+          "h1_tags": [
+            "Comfort byDesign."
+          ],
+          "h2_count": 6,
+          "h3_count": 14,
+          "images_total": 5,
+          "images_missing_alt": 0,
+          "internal_links_count": 30,
+          "external_links_count": 2,
+          "schema_types": [
+            "OpeningHoursSpecification",
+            "WebSite",
+            "City",
+            "Question",
+            "Answer",
+            "EducationalOccupationalCredential",
+            "WebPage",
+            "FAQPage",
+            "GeoCoordinates",
+            "PostalAddress",
+            "GovernmentOrganization",
+            "Organization",
+            "HVACBusiness"
+          ],
+          "has_og_tags": true,
+          "is_noindex": false,
+          "broken_internal_links": []
+        },
+        "seo_score": 95,
+        "robots_sitemap": {
+          "has_robots_txt": true,
+          "robots_txt_url": "https://www.texasairzone.com/robots.txt",
+          "has_sitemap_xml": true,
+          "sitemap_url": "https://www.texasairzone.com/sitemap-index.xml",
+          "findings": []
+        }
+      },
+      "technical": {
+        "ssl_certificate": {
+          "status": "Valid",
+          "days_remaining": 50,
+          "expiry_date": "2027-01-06",
+          "issuer": "Google Trust Services",
+          "evidence": "Issuer: Google Trust Services, Expires: 2027-01-06 (50 days left)"
+        },
+        "redirect_info": {
+          "initial_url": "https://www.texasairzone.com/?utm_source=Google&utm_medium=GBP&utm_campaign=Organic_GBP_TAZ",
+          "final_url": "https://www.texasairzone.com/?utm_source=Google&utm_medium=GBP&utm_campaign=Organic_GBP_TAZ",
+          "redirect_occurred": false,
+          "status_code": 200
+        },
+        "mobile_usability": {
+          "status": "Needs Improvement (Responsive warnings detected)",
+          "has_viewport": true,
+          "viewport_content": "width=device-width, initial-scale=1.0",
+          "responsive_indicators": [
+            "Device-width viewport configuration",
+            "Initial-scale zoom initialization",
+            "Responsive layout utility classes"
+          ],
+          "overflow_risk": true
+        },
+        "findings": [
+          {
+            "name": "Potential Mobile Horizontal Overflow",
+            "severity": "Medium",
+            "affected_url": "https://www.texasairzone.com/?utm_source=Google&utm_medium=GBP&utm_campaign=Organic_GBP_TAZ",
+            "evidence": "Found fixed width definitions exceeding 1000px (['1600']).",
+            "explanation": "Hardcoded pixel widths can exceed smartphone screen widths, causing awkward horizontal scrolling.",
+            "suggested_improvement": "Replace fixed pixel widths with relative percentages or responsive CSS (max-width: 100%).",
+            "detection_method": "CSS Dimension Scanner"
+          }
+        ]
+      },
+      "features": {
+        "lead_capture": {
+          "category": "Lead Capture",
+          "status": "Detected",
+          "providers": [
+            "On-Page Form / CTA"
+          ],
+          "evidence": "Click-to-Call Link (tel:)",
+          "details": {
+            "has_contact_form": false,
+            "has_quote_form": false,
+            "has_phone_link": true,
+            "has_email_link": false,
+            "prominent_ctas": []
+          }
+        },
+        "booking": {
+          "category": "Booking & Appointment",
+          "status": "Detected",
+          "providers": [
+            "ServiceTitan"
+          ],
+          "evidence": "Identified: ServiceTitan"
+        },
+        "chatbot": {
+          "category": "Live Chat & Chatbot",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No live chat or conversational bot scripts detected on scanned pages."
+        },
+        "voice_agent": {
+          "category": "AI Voice Agent",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No AI voice agent scripts or telephony automation integrations observed."
+        },
+        "crm": {
+          "category": "CRM & Pipeline Management",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No client-side CRM scripts or embedded forms detected on scanned pages (server-side CRM or off-page pipeline may exist)."
+        },
+        "review_management": {
+          "category": "Review Management",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No third-party review widgets or reputation platform integrations observed on scanned pages."
+        },
+        "analytics": {
+          "category": "Marketing & Analytics",
+          "status": "Detected",
+          "providers": [
+            "Google Tag Manager"
+          ],
+          "evidence": "Identified: Google Tag Manager"
+        }
+      },
+      "performance": {
+        "audit_status": "API Key Not Configured",
+        "audit_timestamp": "2026-11-17 11:23:36 UTC",
+        "mobile_score": null,
+        "desktop_score": null,
+        "core_web_vitals": {},
+        "source": "Local Asset Diagnostics",
+        "local_diagnostics": {
+          "html_size_kb": 66.6,
+          "total_scripts": 11,
+          "external_scripts": 1,
+          "inline_scripts": 10,
+          "total_stylesheets": 1,
+          "total_images": 5,
+          "local_response_time_ms": 549.5
+        },
+        "note": "To enable official Google PageSpeed Insights & Core Web Vitals scoring, set the GOOGLE_PAGESPEED_API_KEY environment variable."
+      },
+      "opportunities": {
+        "lead_score": 44,
+        "priority": "Medium",
+        "priority_tier": "Medium Priority",
+        "priority_reason": "Moderate score (44/100); several digital infrastructure gaps identified.",
+        "scoring_details": {
+          "research_score": 44,
+          "research_priority": "Medium Priority",
+          "priority": "Medium",
+          "priority_reason": "Moderate score (44/100); several digital infrastructure gaps identified.",
+          "dimension_scores": {
+            "website_performance": 5.0,
+            "technical_seo": 4.5,
+            "lead_capture": 10.5,
+            "booking_automation": 1.5,
+            "chatbot_voice": 10.0,
+            "business_relevance": 6.0,
+            "contact_availability": 0.0,
+            "decision_maker_availability": 2.0,
+            "mobile_ssl_security": 4.0
+          },
+          "dimension_explanations": {
+            "website_performance": "Performance data unavailable; neutral score assigned without penalty.",
+            "technical_seo": "On-page SEO structure is well-optimized (score 95/100); minimal pitch opportunity.",
+            "lead_capture": "Click-to-call phone link present, but no public web inquiry or quote form detected.",
+            "booking_automation": "Online booking or appointment scheduling integration verified on site.",
+            "chatbot_voice": "No live chat, chatbot, or AI voice agent scripts detected on scanned pages.",
+            "business_relevance": "Active domain verified; primary direct contact points are limited.",
+            "contact_availability": "No direct contact channels available for outreach.",
+            "decision_maker_availability": "Decision maker name not yet identified; research required.",
+            "mobile_ssl_security": "Mobile usability deficiency identified (Needs Improvement (Responsive warnings detected))."
+          },
+          "weights_applied": {
+            "website_performance": 10,
+            "technical_seo": 15,
+            "lead_capture": 15,
+            "booking_automation": 15,
+            "chatbot_voice": 10,
+            "business_relevance": 10,
+            "contact_availability": 10,
+            "decision_maker_availability": 10,
+            "mobile_ssl_security": 5
+          },
+          "main_identified_gap": "Click-to-call available, but missing interactive inquiry form",
+          "suggested_next_action": "Nurture lead; research missing decision-maker contact details before cold outreach.",
+          "gaps_count": 4
+        },
+        "opportunities_count": 5,
+        "detected_opportunities": [
+          {
+            "Business Name": "Texas AirZone LLC",
+            "Opportunity Category": "AI Automation",
+            "Finding": "No Public Chatbot Detected",
+            "Evidence": "No conversational widget scripts or live chat providers detected in page DOM.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "24/7 AI Chatbot & Conversational Lead Capture",
+            "Related Finding": "Absence of Live Chat / Chatbot Widget",
+            "Evidence URL": "https://www.texasairzone.com/?utm_source=Google&utm_medium=GBP&utm_campaign=Organic_GBP_TAZ",
+            "Evidence Description": "No conversational widget scripts or live chat providers detected in page DOM.",
+            "Potential Business Impact": "No interactive conversational chat provider was detected in the page DOM; does not determine how after-hours web visitor questions or leads are routed internally.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Texas AirZone LLC",
+            "Opportunity Category": "AI Voice Automation",
+            "Finding": "No Public AI Phone Integration Detected",
+            "Evidence": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "AI Voice Receptionist & Missed Call Follow-Up Automation",
+            "Related Finding": "No AI Phone Integration Detected",
+            "Evidence URL": "https://www.texasairzone.com/?utm_source=Google&utm_medium=GBP&utm_campaign=Organic_GBP_TAZ",
+            "Evidence Description": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Potential Business Impact": "No automated voice assistant or telephony automation markers were identified in public assets; does not determine current call routing, answering service coverage, or office dispatch processes.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Texas AirZone LLC",
+            "Opportunity Category": "CRM Integration",
+            "Finding": "No Public CRM Tracker Detected",
+            "Evidence": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Centralized CRM Integration & Lead Workflow Automation",
+            "Related Finding": "No CRM Tracking or Forms Detected",
+            "Evidence URL": "https://www.texasairzone.com/?utm_source=Google&utm_medium=GBP&utm_campaign=Organic_GBP_TAZ",
+            "Evidence Description": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Potential Business Impact": "No public CRM integration trackers or third-party embed forms were identified on scanned pages; does not determine whether customer records are managed through backend ERP, specialized industry software, or internal databases.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Texas AirZone LLC",
+            "Opportunity Category": "Reputation Automation",
+            "Finding": "No Public Review Widget Detected",
+            "Evidence": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Automated Review Request & Reputation Management System",
+            "Related Finding": "Missing Review Widget / Automation",
+            "Evidence URL": "https://www.texasairzone.com/?utm_source=Google&utm_medium=GBP&utm_campaign=Organic_GBP_TAZ",
+            "Evidence Description": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Potential Business Impact": "No third-party review widgets or automated feedback collection badges were detected on public pages; does not determine how customer feedback or testimonial collection is handled after service delivery.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Texas AirZone LLC",
+            "Opportunity Category": "Website Development",
+            "Finding": "Mobile Viewport / Formatting Issues",
+            "Evidence": "Missing viewport meta tag or fixed pixel widths detected causing horizontal overflow risks on mobile viewports.",
+            "Confidence": "High",
+            "Research Status": "Detected",
+            "Recommended Service": "Mobile-Responsive Layout Optimization",
+            "Related Finding": "Mobile Viewport / Formatting Issues",
+            "Evidence URL": "https://www.texasairzone.com/?utm_source=Google&utm_medium=GBP&utm_campaign=Organic_GBP_TAZ",
+            "Evidence Description": "Missing viewport meta tag or fixed pixel widths detected causing horizontal overflow risks on mobile viewports.",
+            "Potential Business Impact": "Mobile devices may render page content with horizontal overflow or scaling issues.",
+            "Confidence Level": "High"
+          }
+        ],
+        "outreach_hooks": [
+          "How does Texas AirZone LLC currently handle after-hours website visitor inquiries\u2014would an interactive conversational assistant be worth exploring?",
+          "How does Texas AirZone LLC currently collect and showcase customer reviews\u2014is post-service feedback collection something you're looking to automate?"
+        ],
+        "main_gap": "Click-to-call available, but missing interactive inquiry form",
+        "next_action": "Nurture lead; research missing decision-maker contact details before cold outreach.",
+        "summary": "5 evidence-backed opportunity gaps identified. Lead Priority: Medium Priority."
+      },
+      "lead_score": 44,
+      "priority": "Medium",
+      "priority_tier": "Medium Priority",
+      "audit_summary": {
+        "website_status": "Online",
+        "seo_score": 95,
+        "features_detected_count": 3,
+        "opportunities_count": 5,
+        "ssl_status": "Valid",
+        "mobile_status": "Needs Improvement (Responsive warnings detected)"
+      }
+    }
+  },
+  {
+    "Business Name": "Quality 1 Energy Systems Heating & Air Conditioning",
+    "Category": "HVAC contractor",
+    "City": "Dallas",
+    "State": "TX",
+    "Phone": "+1 214-856-6489",
+    "Website": "https://www.q1es.com/",
+    "Google Maps URL": "https://www.google.com/maps/place/Quality+1+Energy+Systems+Heating+%26+Air+Conditioning/data=!4m7!3m6!1s0x864ea0824fda92c7:0x8c0fb6cabc94fe15!8m2!3d32.8973951!4d-96.6999888!16s%2Fg%2F1tm88vml!19sChIJx5LaT4KgToYRFf6UvMq2D4w?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Rating": 4.9,
+    "Reviews": 412,
+    "Contact Person": "",
+    "Email": "",
+    "Email Status": "Not Found",
+    "Priority": "Manual Review",
+    "Lead Score": 50,
+    "Main Opportunity": "Website inspection blocked (Cloudflare WAF challenge detected (HTTP 403))",
+    "Notes": "Website inspection inconclusive (Cloudflare WAF challenge detected (HTTP 403)); requires manual review.",
+    "Google Category": "HVAC contractor",
+    "Phone Number": "+1 214-856-6489",
+    "Google Rating": 4.9,
+    "Review Count": 412,
+    "Google Maps Profile": "https://www.google.com/maps/place/Quality+1+Energy+Systems+Heating+%26+Air+Conditioning/data=!4m7!3m6!1s0x864ea0824fda92c7:0x8c0fb6cabc94fe15!8m2!3d32.8973951!4d-96.6999888!16s%2Fg%2F1tm88vml!19sChIJx5LaT4KgToYRFf6UvMq2D4w?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Decision Maker": "",
+    "Email Verification": "Not Found",
+    "Facebook": "",
+    "Instagram": "",
+    "LinkedIn": "",
+    "About Page Link": "",
+    "Source URL": "https://www.google.com/maps/place/Quality+1+Energy+Systems+Heating+%26+Air+Conditioning/data=!4m7!3m6!1s0x864ea0824fda92c7:0x8c0fb6cabc94fe15!8m2!3d32.8973951!4d-96.6999888!16s%2Fg%2F1tm88vml!19sChIJx5LaT4KgToYRFf6UvMq2D4w?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Website Status": "Blocked / Inconclusive",
+    "intelligence": {
+      "seo": {
+        "status": "Blocked / Inconclusive",
+        "seo_score": null,
+        "metrics": {
+          "title": "Not Audited",
+          "meta_description": null,
+          "h1_tags": [],
+          "canonical_url": null,
+          "is_noindex": null,
+          "has_viewport": null,
+          "images_total": 0,
+          "images_missing_alt": 0,
+          "schema_types": []
+        },
+        "findings": [
+          "Audit inconclusive: Cloudflare WAF challenge detected (HTTP 403). Real website content not inspected."
+        ],
+        "robots_sitemap": {
+          "robots_txt_status": "Unknown",
+          "sitemap_status": "Unknown"
+        }
+      },
+      "technical": {
+        "status": "Inconclusive",
+        "mobile_usability": {
+          "status": "Not Audited",
+          "has_viewport": null,
+          "overflow_risk": null,
+          "evidence": "Inspection blocked: Cloudflare WAF challenge detected (HTTP 403)"
+        },
+        "ssl_certificate": {
+          "status": "Valid",
+          "evidence": "TLS handshake completed"
+        },
+        "findings": []
+      },
+      "features": {
+        "lead_capture": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "booking": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "chatbot": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "voice_agent": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "crm": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "review_management": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "analytics": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        }
+      },
+      "performance": {
+        "audit_status": "Not Audited",
+        "audit_timestamp": "2026-11-17 11:23:37 UTC",
+        "mobile_score": null,
+        "desktop_score": null,
+        "core_web_vitals": {},
+        "source": "Audit Skipped (Blocked / Inconclusive)",
+        "local_diagnostics": {}
+      },
+      "opportunities": {
+        "lead_score": 50,
+        "priority": "Manual Review",
+        "priority_tier": "Manual Review",
+        "priority_reason": "Website inspection inconclusive (Cloudflare WAF challenge detected (HTTP 403)); requires manual review.",
+        "scoring_details": {
+          "research_score": 50,
+          "research_priority": "Manual Review",
+          "priority": "Manual Review",
+          "priority_reason": "Website inspection inconclusive (Cloudflare WAF challenge detected (HTTP 403)); requires manual review.",
+          "suggested_next_action": "Perform manual domain review; automated crawler blocked by bot/WAF challenge.",
+          "main_identified_gap": "Website inspection blocked (Cloudflare WAF challenge detected (HTTP 403))"
+        },
+        "opportunities_count": 0,
+        "detected_opportunities": [],
+        "outreach_hooks": [],
+        "main_gap": "Website inspection blocked (Cloudflare WAF challenge detected (HTTP 403))",
+        "next_action": "Perform manual review of domain; automated inspection blocked by bot/WAF controls.",
+        "summary": "Audit inconclusive: Cloudflare WAF challenge detected (HTTP 403). Manual review required."
+      },
+      "lead_score": 50,
+      "priority": "Manual Review",
+      "priority_tier": "Manual Review",
+      "audit_summary": {
+        "website_status": "Blocked / Inconclusive",
+        "seo_score": null,
+        "features_detected_count": 0,
+        "opportunities_count": 0,
+        "ssl_status": "Valid",
+        "mobile_status": "Not Audited"
+      }
+    }
+  },
+  {
+    "Business Name": "Rescue Air and Plumbing",
+    "Category": "HVAC contractor",
+    "City": "Dallas",
+    "State": "TX",
+    "Phone": "+1 972-201-3253",
+    "Website": "https://www.rescueairtx.com/",
+    "Google Maps URL": "https://www.google.com/maps/place/Rescue+Air+and+Plumbing/data=!4m7!3m6!1s0x864c1f77b16271e1:0x8930b56671f51851!8m2!3d32.9074594!4d-96.7484545!16s%2Fg%2F1ptw52wdg!19sChIJ4XFisXcfTIYRURj1cWa1MIk?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Rating": 4.8,
+    "Reviews": 4122,
+    "Contact Person": "",
+    "Email": "",
+    "Email Status": "Not Found",
+    "Priority": "Manual Review",
+    "Lead Score": 50,
+    "Main Opportunity": "Website inspection blocked (Cloudflare WAF challenge detected (HTTP 403))",
+    "Notes": "Website inspection inconclusive (Cloudflare WAF challenge detected (HTTP 403)); requires manual review.",
+    "Google Category": "HVAC contractor",
+    "Phone Number": "+1 972-201-3253",
+    "Google Rating": 4.8,
+    "Review Count": 4122,
+    "Google Maps Profile": "https://www.google.com/maps/place/Rescue+Air+and+Plumbing/data=!4m7!3m6!1s0x864c1f77b16271e1:0x8930b56671f51851!8m2!3d32.9074594!4d-96.7484545!16s%2Fg%2F1ptw52wdg!19sChIJ4XFisXcfTIYRURj1cWa1MIk?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Decision Maker": "",
+    "Email Verification": "Not Found",
+    "Facebook": "",
+    "Instagram": "",
+    "LinkedIn": "",
+    "About Page Link": "",
+    "Source URL": "https://www.google.com/maps/place/Rescue+Air+and+Plumbing/data=!4m7!3m6!1s0x864c1f77b16271e1:0x8930b56671f51851!8m2!3d32.9074594!4d-96.7484545!16s%2Fg%2F1ptw52wdg!19sChIJ4XFisXcfTIYRURj1cWa1MIk?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Website Status": "Blocked / Inconclusive",
+    "intelligence": {
+      "seo": {
+        "status": "Blocked / Inconclusive",
+        "seo_score": null,
+        "metrics": {
+          "title": "Not Audited",
+          "meta_description": null,
+          "h1_tags": [],
+          "canonical_url": null,
+          "is_noindex": null,
+          "has_viewport": null,
+          "images_total": 0,
+          "images_missing_alt": 0,
+          "schema_types": []
+        },
+        "findings": [
+          "Audit inconclusive: Cloudflare WAF challenge detected (HTTP 403). Real website content not inspected."
+        ],
+        "robots_sitemap": {
+          "robots_txt_status": "Unknown",
+          "sitemap_status": "Unknown"
+        }
+      },
+      "technical": {
+        "status": "Inconclusive",
+        "mobile_usability": {
+          "status": "Not Audited",
+          "has_viewport": null,
+          "overflow_risk": null,
+          "evidence": "Inspection blocked: Cloudflare WAF challenge detected (HTTP 403)"
+        },
+        "ssl_certificate": {
+          "status": "Valid",
+          "evidence": "TLS handshake completed"
+        },
+        "findings": []
+      },
+      "features": {
+        "lead_capture": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "booking": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "chatbot": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "voice_agent": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "crm": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "review_management": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "analytics": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        }
+      },
+      "performance": {
+        "audit_status": "Not Audited",
+        "audit_timestamp": "2026-11-17 11:23:37 UTC",
+        "mobile_score": null,
+        "desktop_score": null,
+        "core_web_vitals": {},
+        "source": "Audit Skipped (Blocked / Inconclusive)",
+        "local_diagnostics": {}
+      },
+      "opportunities": {
+        "lead_score": 50,
+        "priority": "Manual Review",
+        "priority_tier": "Manual Review",
+        "priority_reason": "Website inspection inconclusive (Cloudflare WAF challenge detected (HTTP 403)); requires manual review.",
+        "scoring_details": {
+          "research_score": 50,
+          "research_priority": "Manual Review",
+          "priority": "Manual Review",
+          "priority_reason": "Website inspection inconclusive (Cloudflare WAF challenge detected (HTTP 403)); requires manual review.",
+          "suggested_next_action": "Perform manual domain review; automated crawler blocked by bot/WAF challenge.",
+          "main_identified_gap": "Website inspection blocked (Cloudflare WAF challenge detected (HTTP 403))"
+        },
+        "opportunities_count": 0,
+        "detected_opportunities": [],
+        "outreach_hooks": [],
+        "main_gap": "Website inspection blocked (Cloudflare WAF challenge detected (HTTP 403))",
+        "next_action": "Perform manual review of domain; automated inspection blocked by bot/WAF controls.",
+        "summary": "Audit inconclusive: Cloudflare WAF challenge detected (HTTP 403). Manual review required."
+      },
+      "lead_score": 50,
+      "priority": "Manual Review",
+      "priority_tier": "Manual Review",
+      "audit_summary": {
+        "website_status": "Blocked / Inconclusive",
+        "seo_score": null,
+        "features_detected_count": 0,
+        "opportunities_count": 0,
+        "ssl_status": "Valid",
+        "mobile_status": "Not Audited"
+      }
+    }
+  },
+  {
+    "Business Name": "Harlen Johnson HVAC, Plumbing & Electrical",
+    "Category": "HVAC contractor",
+    "City": "Dallas",
+    "State": "TX",
+    "Phone": "+1 972-241-7771",
+    "Website": "https://www.hjac.com/?utm_campaign=gmb",
+    "Google Maps URL": "https://www.google.com/maps/place/Harlen+Johnson+HVAC,+Plumbing+%26+Electrical/data=!4m7!3m6!1s0x864c278f573bfbfb:0x381d6595596efbc6!8m2!3d32.8955751!4d-96.8890027!16s%2Fg%2F1tfc6__0!19sChIJ-_s7V48nTIYRxvtuWZVlHTg?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Rating": 4.8,
+    "Reviews": 1237,
+    "Contact Person": "",
+    "Email": "sales@hjac.com",
+    "Email Status": "MX Only",
+    "Priority": "Medium",
+    "Lead Score": 50,
+    "Main Opportunity": "Click-to-call available, but missing interactive inquiry form",
+    "Notes": "Moderate score (50/100); several digital infrastructure gaps identified.",
+    "Google Category": "HVAC contractor",
+    "Phone Number": "+1 972-241-7771",
+    "Google Rating": 4.8,
+    "Review Count": 1237,
+    "Google Maps Profile": "https://www.google.com/maps/place/Harlen+Johnson+HVAC,+Plumbing+%26+Electrical/data=!4m7!3m6!1s0x864c278f573bfbfb:0x381d6595596efbc6!8m2!3d32.8955751!4d-96.8890027!16s%2Fg%2F1tfc6__0!19sChIJ-_s7V48nTIYRxvtuWZVlHTg?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Decision Maker": "",
+    "Email Verification": "MX Only",
+    "Facebook": "https://www.facebook.com/harlenjohnsonheatingairconditioning",
+    "Instagram": "https://www.instagram.com/harlenjohnsonheatingairconditi/",
+    "LinkedIn": "https://www.linkedin.com/company/harlen-johnson-heating-air-conditioning/",
+    "About Page Link": "https://www.hjac.com/about-us/",
+    "Source URL": "https://www.google.com/maps/place/Harlen+Johnson+HVAC,+Plumbing+%26+Electrical/data=!4m7!3m6!1s0x864c278f573bfbfb:0x381d6595596efbc6!8m2!3d32.8955751!4d-96.8890027!16s%2Fg%2F1tfc6__0!19sChIJ-_s7V48nTIYRxvtuWZVlHTg?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Website Status": "Online",
+    "intelligence": {
+      "seo": {
+        "findings": [],
+        "metrics": {
+          "title": "HVAC & Plumbing Services in Dallas, TX | AC, Heating & Repairs",
+          "title_length": 62,
+          "meta_description": "Trusted HVAC & plumbing pros in Dallas, TX. Fast AC repair, heating installs & air quality services for homes & businesses. Emergency services & financing available!",
+          "meta_description_length": 165,
+          "canonical_url": "https://www.hjac.com/",
+          "h1_tags": [
+            "Harlen Johnson HVAC, Plumbing & Electrical\nTrusted HVAC Experts in Dallas, TX Since 1957"
+          ],
+          "h2_count": 16,
+          "h3_count": 13,
+          "images_total": 34,
+          "images_missing_alt": 2,
+          "internal_links_count": 394,
+          "external_links_count": 20,
+          "schema_types": [
+            "FAQPage",
+            "PostalAddress",
+            "ListItem",
+            "Place",
+            "Plumber",
+            "Organization",
+            "ContactPoint",
+            "Offer",
+            "WebSite",
+            "Answer",
+            "WebPage",
+            "OfferCatalog",
+            "LocalBusiness",
+            "Electrician",
+            "Service",
+            "GeoCoordinates",
+            "ImageObject",
+            "PropertyValue",
+            "Question",
+            "SearchAction",
+            "HVACBusiness"
+          ],
+          "has_og_tags": true,
+          "is_noindex": false,
+          "broken_internal_links": []
+        },
+        "seo_score": 100,
+        "robots_sitemap": {
+          "has_robots_txt": true,
+          "robots_txt_url": "https://www.hjac.com/robots.txt",
+          "has_sitemap_xml": true,
+          "sitemap_url": "https://www.hjac.com/sitemap_index.xml",
+          "findings": []
+        }
+      },
+      "technical": {
+        "ssl_certificate": {
+          "status": "Valid",
+          "days_remaining": 62,
+          "expiry_date": "2027-01-18",
+          "issuer": "Google Trust Services",
+          "evidence": "Issuer: Google Trust Services, Expires: 2027-01-18 (62 days left)"
+        },
+        "redirect_info": {
+          "initial_url": "https://hjac.com/?utm_campaign=gmb",
+          "final_url": "https://www.hjac.com/?utm_campaign=gmb",
+          "redirect_occurred": true,
+          "status_code": 200
+        },
+        "mobile_usability": {
+          "status": "Optimized (Viewport & Responsive Structure Detected)",
+          "has_viewport": true,
+          "viewport_content": "width=device-width, initial-scale=1",
+          "responsive_indicators": [
+            "Device-width viewport configuration",
+            "Initial-scale zoom initialization",
+            "Embedded CSS media queries",
+            "Responsive layout utility classes"
+          ],
+          "overflow_risk": false
+        },
+        "findings": []
+      },
+      "features": {
+        "lead_capture": {
+          "category": "Lead Capture",
+          "status": "Detected",
+          "providers": [
+            "On-Page Form / CTA"
+          ],
+          "evidence": "Click-to-Call Link (tel:), Direct Mailto Link, Prominent CTA: \"Call Now\"",
+          "details": {
+            "has_contact_form": false,
+            "has_quote_form": false,
+            "has_phone_link": true,
+            "has_email_link": true,
+            "prominent_ctas": [
+              "Call Now"
+            ]
+          }
+        },
+        "booking": {
+          "category": "Booking & Appointment",
+          "status": "Detected",
+          "providers": [
+            "ServiceTitan"
+          ],
+          "evidence": "Identified: ServiceTitan"
+        },
+        "chatbot": {
+          "category": "Live Chat & Chatbot",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No live chat or conversational bot scripts detected on scanned pages."
+        },
+        "voice_agent": {
+          "category": "AI Voice Agent",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No AI voice agent scripts or telephony automation integrations observed."
+        },
+        "crm": {
+          "category": "CRM & Pipeline Management",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No client-side CRM scripts or embedded forms detected on scanned pages (server-side CRM or off-page pipeline may exist)."
+        },
+        "review_management": {
+          "category": "Review Management",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No third-party review widgets or reputation platform integrations observed on scanned pages."
+        },
+        "analytics": {
+          "category": "Marketing & Analytics",
+          "status": "Detected",
+          "providers": [
+            "Google Analytics 4",
+            "Google Tag Manager",
+            "Meta Pixel (Facebook)"
+          ],
+          "evidence": "Identified: Google Analytics 4, Google Tag Manager, Meta Pixel (Facebook)"
+        }
+      },
+      "performance": {
+        "audit_status": "API Key Not Configured",
+        "audit_timestamp": "2026-11-17 11:23:51 UTC",
+        "mobile_score": null,
+        "desktop_score": null,
+        "core_web_vitals": {},
+        "source": "Local Asset Diagnostics",
+        "local_diagnostics": {
+          "html_size_kb": 855.8,
+          "total_scripts": 43,
+          "external_scripts": 23,
+          "inline_scripts": 20,
+          "total_stylesheets": 43,
+          "total_images": 34,
+          "local_response_time_ms": 1468.7
+        },
+        "note": "To enable official Google PageSpeed Insights & Core Web Vitals scoring, set the GOOGLE_PAGESPEED_API_KEY environment variable."
+      },
+      "opportunities": {
+        "lead_score": 50,
+        "priority": "Medium",
+        "priority_tier": "Medium Priority",
+        "priority_reason": "Moderate score (50/100); several digital infrastructure gaps identified.",
+        "scoring_details": {
+          "research_score": 50,
+          "research_priority": "Medium Priority",
+          "priority": "Medium",
+          "priority_reason": "Moderate score (50/100); several digital infrastructure gaps identified.",
+          "dimension_scores": {
+            "website_performance": 5.0,
+            "technical_seo": 4.5,
+            "lead_capture": 10.5,
+            "booking_automation": 1.5,
+            "chatbot_voice": 10.0,
+            "business_relevance": 9.0,
+            "contact_availability": 6.0,
+            "decision_maker_availability": 2.0,
+            "mobile_ssl_security": 1.0
+          },
+          "dimension_explanations": {
+            "website_performance": "Performance data unavailable; neutral score assigned without penalty.",
+            "technical_seo": "On-page SEO structure is well-optimized (score 100/100); minimal pitch opportunity.",
+            "lead_capture": "Click-to-call phone link present, but no public web inquiry or quote form detected.",
+            "booking_automation": "Online booking or appointment scheduling integration verified on site.",
+            "chatbot_voice": "No live chat, chatbot, or AI voice agent scripts detected on scanned pages.",
+            "business_relevance": "Active commercial business with verified online presence and established contact channels.",
+            "contact_availability": "Verified direct email available; telephone number not identified.",
+            "decision_maker_availability": "Decision maker name not yet identified; research required.",
+            "mobile_ssl_security": "Valid SSL certificate and mobile responsive design verified."
+          },
+          "weights_applied": {
+            "website_performance": 10,
+            "technical_seo": 15,
+            "lead_capture": 15,
+            "booking_automation": 15,
+            "chatbot_voice": 10,
+            "business_relevance": 10,
+            "contact_availability": 10,
+            "decision_maker_availability": 10,
+            "mobile_ssl_security": 5
+          },
+          "main_identified_gap": "Click-to-call available, but missing interactive inquiry form",
+          "suggested_next_action": "Nurture lead; research missing decision-maker contact details before cold outreach.",
+          "gaps_count": 3
+        },
+        "opportunities_count": 4,
+        "detected_opportunities": [
+          {
+            "Business Name": "Harlen Johnson HVAC, Plumbing & Electrical",
+            "Opportunity Category": "AI Automation",
+            "Finding": "No Public Chatbot Detected",
+            "Evidence": "No conversational widget scripts or live chat providers detected in page DOM.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "24/7 AI Chatbot & Conversational Lead Capture",
+            "Related Finding": "Absence of Live Chat / Chatbot Widget",
+            "Evidence URL": "https://www.hjac.com/?utm_campaign=gmb",
+            "Evidence Description": "No conversational widget scripts or live chat providers detected in page DOM.",
+            "Potential Business Impact": "No interactive conversational chat provider was detected in the page DOM; does not determine how after-hours web visitor questions or leads are routed internally.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Harlen Johnson HVAC, Plumbing & Electrical",
+            "Opportunity Category": "AI Voice Automation",
+            "Finding": "No Public AI Phone Integration Detected",
+            "Evidence": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "AI Voice Receptionist & Missed Call Follow-Up Automation",
+            "Related Finding": "No AI Phone Integration Detected",
+            "Evidence URL": "https://www.hjac.com/?utm_campaign=gmb",
+            "Evidence Description": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Potential Business Impact": "No automated voice assistant or telephony automation markers were identified in public assets; does not determine current call routing, answering service coverage, or office dispatch processes.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Harlen Johnson HVAC, Plumbing & Electrical",
+            "Opportunity Category": "CRM Integration",
+            "Finding": "No Public CRM Tracker Detected",
+            "Evidence": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Centralized CRM Integration & Lead Workflow Automation",
+            "Related Finding": "No CRM Tracking or Forms Detected",
+            "Evidence URL": "https://www.hjac.com/?utm_campaign=gmb",
+            "Evidence Description": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Potential Business Impact": "No public CRM integration trackers or third-party embed forms were identified on scanned pages; does not determine whether customer records are managed through backend ERP, specialized industry software, or internal databases.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Harlen Johnson HVAC, Plumbing & Electrical",
+            "Opportunity Category": "Reputation Automation",
+            "Finding": "No Public Review Widget Detected",
+            "Evidence": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Automated Review Request & Reputation Management System",
+            "Related Finding": "Missing Review Widget / Automation",
+            "Evidence URL": "https://www.hjac.com/?utm_campaign=gmb",
+            "Evidence Description": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Potential Business Impact": "No third-party review widgets or automated feedback collection badges were detected on public pages; does not determine how customer feedback or testimonial collection is handled after service delivery.",
+            "Confidence Level": "Medium"
+          }
+        ],
+        "outreach_hooks": [
+          "How does Harlen Johnson HVAC, Plumbing & Electrical currently handle after-hours website visitor inquiries\u2014would an interactive conversational assistant be worth exploring?",
+          "How does Harlen Johnson HVAC, Plumbing & Electrical currently collect and showcase customer reviews\u2014is post-service feedback collection something you're looking to automate?"
+        ],
+        "main_gap": "Click-to-call available, but missing interactive inquiry form",
+        "next_action": "Nurture lead; research missing decision-maker contact details before cold outreach.",
+        "summary": "4 evidence-backed opportunity gaps identified. Lead Priority: Medium Priority."
+      },
+      "lead_score": 50,
+      "priority": "Medium",
+      "priority_tier": "Medium Priority",
+      "audit_summary": {
+        "website_status": "Online",
+        "seo_score": 100,
+        "features_detected_count": 3,
+        "opportunities_count": 4,
+        "ssl_status": "Valid",
+        "mobile_status": "Optimized (Viewport & Responsive Structure Detected)"
+      }
+    }
+  },
+  {
+    "Business Name": "Dallas Heating and Air Conditioning",
+    "Category": "HVAC contractor",
+    "City": "Dallas",
+    "State": "TX",
+    "Phone": "+1 972-423-0012",
+    "Website": "https://www.dallasheatingac.com/",
+    "Google Maps URL": "https://www.google.com/maps/place/Dallas+Heating+and+Air+Conditioning/data=!4m7!3m6!1s0x864c21ef5655b577:0x63a4a927593817cf!8m2!3d32.9483102!4d-96.8243199!16s%2Fg%2F11lgsmlmw1!19sChIJd7VVVu8hTIYRzxc4WSeppGM?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Rating": 4.8,
+    "Reviews": 236,
+    "Contact Person": "",
+    "Email": "service@dallasheatingac.com",
+    "Email Status": "MX Only",
+    "Priority": "Medium",
+    "Lead Score": 62,
+    "Main Opportunity": "Basic contact form present, but no quote/estimate request workflow",
+    "Notes": "Moderate score (62/100); several digital infrastructure gaps identified.",
+    "Google Category": "HVAC contractor",
+    "Phone Number": "+1 972-423-0012",
+    "Google Rating": 4.8,
+    "Review Count": 236,
+    "Google Maps Profile": "https://www.google.com/maps/place/Dallas+Heating+and+Air+Conditioning/data=!4m7!3m6!1s0x864c21ef5655b577:0x63a4a927593817cf!8m2!3d32.9483102!4d-96.8243199!16s%2Fg%2F11lgsmlmw1!19sChIJd7VVVu8hTIYRzxc4WSeppGM?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Decision Maker": "",
+    "Email Verification": "MX Only",
+    "Facebook": "https://www.facebook.com/dallasheatingandair/",
+    "Instagram": "",
+    "LinkedIn": "",
+    "About Page Link": "https://www.dallasheatingac.com/about-us/",
+    "Source URL": "https://www.google.com/maps/place/Dallas+Heating+and+Air+Conditioning/data=!4m7!3m6!1s0x864c21ef5655b577:0x63a4a927593817cf!8m2!3d32.9483102!4d-96.8243199!16s%2Fg%2F11lgsmlmw1!19sChIJd7VVVu8hTIYRzxc4WSeppGM?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Website Status": "Online",
+    "intelligence": {
+      "seo": {
+        "findings": [
+          {
+            "name": "Long Page Title (Truncation Risk)",
+            "severity": "Low",
+            "affected_url": "https://www.dallasheatingac.com/",
+            "evidence": "Title is 68 characters ('Dallas Heating and Air Conditioning | AC & HVAC Repair in Da...').",
+            "explanation": "Titles over 60-65 characters are often truncated in Google search result snippets.",
+            "suggested_improvement": "Shorten the title to under 60 characters so the entire message is visible in search snippets.",
+            "detection_method": "String Length Analysis"
+          },
+          {
+            "name": "Images Missing Alt Attributes",
+            "severity": "Medium",
+            "affected_url": "https://www.dallasheatingac.com/",
+            "evidence": "78 of 97 images (80%) lack descriptive alt text.",
+            "explanation": "Alt attributes provide accessibility for visually impaired users and allow search engines to understand image context.",
+            "suggested_improvement": "Add descriptive, keyword-relevant alt attributes to informative images.",
+            "detection_method": "DOM Image Tag Inspection"
+          }
+        ],
+        "metrics": {
+          "title": "Dallas Heating and Air Conditioning | AC & HVAC Repair in Dallas, TX",
+          "title_length": 68,
+          "meta_description": "24/7 AC repair, heating service, and HVAC installation across Dallas and DFW. Written quotes before work starts, NATE-certified technicians. Call 972-423-0012.",
+          "meta_description_length": 159,
+          "canonical_url": "https://www.dallasheatingac.com/",
+          "h1_tags": [
+            "Dallas HVAC Repair\nand Installation\nDone Right, Priced Fairly"
+          ],
+          "h2_count": 9,
+          "h3_count": 26,
+          "images_total": 97,
+          "images_missing_alt": 78,
+          "internal_links_count": 71,
+          "external_links_count": 14,
+          "schema_types": [
+            "OpeningHoursSpecification",
+            "FAQPage",
+            "PostalAddress",
+            "ContactPoint",
+            "Offer",
+            "AdministrativeArea",
+            "WebSite",
+            "City",
+            "Answer",
+            "WebPage",
+            "OfferCatalog",
+            "LocalBusiness",
+            "State",
+            "Service",
+            "GeoCoordinates",
+            "ImageObject",
+            "Question",
+            "SearchAction",
+            "EntryPoint",
+            "HVACBusiness"
+          ],
+          "has_og_tags": true,
+          "is_noindex": false,
+          "broken_internal_links": []
+        },
+        "seo_score": 85,
+        "robots_sitemap": {
+          "has_robots_txt": true,
+          "robots_txt_url": "https://www.dallasheatingac.com/robots.txt",
+          "has_sitemap_xml": true,
+          "sitemap_url": "https://www.dallasheatingac.com/sitemap.xml",
+          "findings": []
+        }
+      },
+      "technical": {
+        "ssl_certificate": {
+          "status": "Valid",
+          "days_remaining": 62,
+          "expiry_date": "2027-01-18",
+          "issuer": "Let's Encrypt",
+          "evidence": "Issuer: Let's Encrypt, Expires: 2027-01-18 (62 days left)"
+        },
+        "redirect_info": {
+          "initial_url": "http://www.dallasheatingac.com/",
+          "final_url": "https://www.dallasheatingac.com/",
+          "redirect_occurred": true,
+          "status_code": 200
+        },
+        "mobile_usability": {
+          "status": "Optimized (Viewport & Responsive Structure Detected)",
+          "has_viewport": true,
+          "viewport_content": "width=device-width, initial-scale=1.0",
+          "responsive_indicators": [
+            "Device-width viewport configuration",
+            "Initial-scale zoom initialization",
+            "Embedded CSS media queries",
+            "Responsive layout utility classes"
+          ],
+          "overflow_risk": false
+        },
+        "findings": []
+      },
+      "features": {
+        "lead_capture": {
+          "category": "Lead Capture",
+          "status": "Detected",
+          "providers": [
+            "On-Page Form / CTA"
+          ],
+          "evidence": "Standard Contact Form, Click-to-Call Link (tel:), Direct Mailto Link, Prominent CTA: \"Call Now\"",
+          "details": {
+            "has_contact_form": true,
+            "has_quote_form": false,
+            "has_phone_link": true,
+            "has_email_link": true,
+            "prominent_ctas": [
+              "Call Now"
+            ]
+          }
+        },
+        "booking": {
+          "category": "Booking & Appointment",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No client-facing scheduling widgets or calendar integrations observed on scanned pages (external/off-site booking portal may still exist)."
+        },
+        "chatbot": {
+          "category": "Live Chat & Chatbot",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No live chat or conversational bot scripts detected on scanned pages."
+        },
+        "voice_agent": {
+          "category": "AI Voice Agent",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No AI voice agent scripts or telephony automation integrations observed."
+        },
+        "crm": {
+          "category": "CRM & Pipeline Management",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No client-side CRM scripts or embedded forms detected on scanned pages (server-side CRM or off-page pipeline may exist)."
+        },
+        "review_management": {
+          "category": "Review Management",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No third-party review widgets or reputation platform integrations observed on scanned pages."
+        },
+        "analytics": {
+          "category": "Marketing & Analytics",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No Google Analytics, Meta Pixel, or tag managers detected on scanned pages."
+        }
+      },
+      "performance": {
+        "audit_status": "API Key Not Configured",
+        "audit_timestamp": "2026-11-17 11:24:16 UTC",
+        "mobile_score": null,
+        "desktop_score": null,
+        "core_web_vitals": {},
+        "source": "Local Asset Diagnostics",
+        "local_diagnostics": {
+          "html_size_kb": 160.6,
+          "total_scripts": 5,
+          "external_scripts": 1,
+          "inline_scripts": 4,
+          "total_stylesheets": 2,
+          "total_images": 97,
+          "local_response_time_ms": 648.3
+        },
+        "note": "To enable official Google PageSpeed Insights & Core Web Vitals scoring, set the GOOGLE_PAGESPEED_API_KEY environment variable."
+      },
+      "opportunities": {
+        "lead_score": 62,
+        "priority": "Medium",
+        "priority_tier": "Medium Priority",
+        "priority_reason": "Moderate score (62/100); several digital infrastructure gaps identified.",
+        "scoring_details": {
+          "research_score": 62,
+          "research_priority": "Medium Priority",
+          "priority": "Medium",
+          "priority_reason": "Moderate score (62/100); several digital infrastructure gaps identified.",
+          "dimension_scores": {
+            "website_performance": 5.0,
+            "technical_seo": 4.5,
+            "lead_capture": 9.0,
+            "booking_automation": 15.0,
+            "chatbot_voice": 10.0,
+            "business_relevance": 9.0,
+            "contact_availability": 6.0,
+            "decision_maker_availability": 2.0,
+            "mobile_ssl_security": 1.0
+          },
+          "dimension_explanations": {
+            "website_performance": "Performance data unavailable; neutral score assigned without penalty.",
+            "technical_seo": "On-page SEO structure is well-optimized (score 85/100); minimal pitch opportunity.",
+            "lead_capture": "General contact form present, but estimate/quote request workflow is missing.",
+            "booking_automation": "No online scheduling or booking integration detected on scanned pages; confirmed automation gap.",
+            "chatbot_voice": "No live chat, chatbot, or AI voice agent scripts detected on scanned pages.",
+            "business_relevance": "Active commercial business with verified online presence and established contact channels.",
+            "contact_availability": "Verified direct email available; telephone number not identified.",
+            "decision_maker_availability": "Decision maker name not yet identified; research required.",
+            "mobile_ssl_security": "Valid SSL certificate and mobile responsive design verified."
+          },
+          "weights_applied": {
+            "website_performance": 10,
+            "technical_seo": 15,
+            "lead_capture": 15,
+            "booking_automation": 15,
+            "chatbot_voice": 10,
+            "business_relevance": 10,
+            "contact_availability": 10,
+            "decision_maker_availability": 10,
+            "mobile_ssl_security": 5
+          },
+          "main_identified_gap": "Basic contact form present, but no quote/estimate request workflow",
+          "suggested_next_action": "Nurture lead; research missing decision-maker contact details before cold outreach.",
+          "gaps_count": 4
+        },
+        "opportunities_count": 5,
+        "detected_opportunities": [
+          {
+            "Business Name": "Dallas Heating and Air Conditioning",
+            "Opportunity Category": "Workflow Automation",
+            "Finding": "No Public Booking Widget Detected",
+            "Evidence": "No self-service scheduling scripts or embedded booking widgets (Calendly, Acuity, ServiceTitan, etc.) identified on scanned pages.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Online Booking & Appointment Scheduling Integration",
+            "Related Finding": "Missing Online Scheduling Widget",
+            "Evidence URL": "https://www.dallasheatingac.com/",
+            "Evidence Description": "No self-service scheduling scripts or embedded booking widgets (Calendly, Acuity, ServiceTitan, etc.) identified on scanned pages.",
+            "Potential Business Impact": "No public self-service booking widget was identified on scanned pages; does not determine whether scheduling is coordinated via external portals, dispatch systems, or direct communication.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Dallas Heating and Air Conditioning",
+            "Opportunity Category": "AI Automation",
+            "Finding": "No Public Chatbot Detected",
+            "Evidence": "No conversational widget scripts or live chat providers detected in page DOM.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "24/7 AI Chatbot & Conversational Lead Capture",
+            "Related Finding": "Absence of Live Chat / Chatbot Widget",
+            "Evidence URL": "https://www.dallasheatingac.com/",
+            "Evidence Description": "No conversational widget scripts or live chat providers detected in page DOM.",
+            "Potential Business Impact": "No interactive conversational chat provider was detected in the page DOM; does not determine how after-hours web visitor questions or leads are routed internally.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Dallas Heating and Air Conditioning",
+            "Opportunity Category": "AI Voice Automation",
+            "Finding": "No Public AI Phone Integration Detected",
+            "Evidence": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "AI Voice Receptionist & Missed Call Follow-Up Automation",
+            "Related Finding": "No AI Phone Integration Detected",
+            "Evidence URL": "https://www.dallasheatingac.com/",
+            "Evidence Description": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Potential Business Impact": "No automated voice assistant or telephony automation markers were identified in public assets; does not determine current call routing, answering service coverage, or office dispatch processes.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Dallas Heating and Air Conditioning",
+            "Opportunity Category": "CRM Integration",
+            "Finding": "No Public CRM Tracker Detected",
+            "Evidence": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Centralized CRM Integration & Lead Workflow Automation",
+            "Related Finding": "No CRM Tracking or Forms Detected",
+            "Evidence URL": "https://www.dallasheatingac.com/",
+            "Evidence Description": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Potential Business Impact": "No public CRM integration trackers or third-party embed forms were identified on scanned pages; does not determine whether customer records are managed through backend ERP, specialized industry software, or internal databases.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Dallas Heating and Air Conditioning",
+            "Opportunity Category": "Reputation Automation",
+            "Finding": "No Public Review Widget Detected",
+            "Evidence": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Automated Review Request & Reputation Management System",
+            "Related Finding": "Missing Review Widget / Automation",
+            "Evidence URL": "https://www.dallasheatingac.com/",
+            "Evidence Description": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Potential Business Impact": "No third-party review widgets or automated feedback collection badges were detected on public pages; does not determine how customer feedback or testimonial collection is handled after service delivery.",
+            "Confidence Level": "Medium"
+          }
+        ],
+        "outreach_hooks": [
+          "Does Dallas Heating and Air Conditioning offer direct online self-scheduling for customers, or do you coordinate appointments through another workflow?",
+          "How does Dallas Heating and Air Conditioning currently handle after-hours website visitor inquiries\u2014would an interactive conversational assistant be worth exploring?",
+          "How does Dallas Heating and Air Conditioning currently collect and showcase customer reviews\u2014is post-service feedback collection something you're looking to automate?"
+        ],
+        "main_gap": "Basic contact form present, but no quote/estimate request workflow",
+        "next_action": "Nurture lead; research missing decision-maker contact details before cold outreach.",
+        "summary": "5 evidence-backed opportunity gaps identified. Lead Priority: Medium Priority."
+      },
+      "lead_score": 62,
+      "priority": "Medium",
+      "priority_tier": "Medium Priority",
+      "audit_summary": {
+        "website_status": "Online",
+        "seo_score": 85,
+        "features_detected_count": 1,
+        "opportunities_count": 5,
+        "ssl_status": "Valid",
+        "mobile_status": "Optimized (Viewport & Responsive Structure Detected)"
+      }
+    }
+  },
+  {
+    "Business Name": "Serveway Heating and Air Conditioning",
+    "Category": "HVAC contractor",
+    "City": "Dallas",
+    "State": "TX",
+    "Phone": "+1 469-382-6989",
+    "Website": "https://servewayhvac.com/?utm_source=google&utm_medium=organic&utm_campaign=gbp",
+    "Google Maps URL": "https://www.google.com/maps/place/Serveway+Heating+and+Air+Conditioning/data=!4m7!3m6!1s0x864ea143c7b980c7:0xf732f800053b9b8c!8m2!3d32.8336847!4d-96.6877996!16s%2Fg%2F11gff69wh8!19sChIJx4C5x0OhToYRjJs7BQD4Mvc?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Rating": 4.9,
+    "Reviews": 373,
+    "Contact Person": "",
+    "Email": "dispatch@servewayhvac.com",
+    "Email Status": "MX Only",
+    "Priority": "Medium",
+    "Lead Score": 50,
+    "Main Opportunity": "Click-to-call available, but missing interactive inquiry form",
+    "Notes": "Moderate score (50/100); several digital infrastructure gaps identified.",
+    "Google Category": "HVAC contractor",
+    "Phone Number": "+1 469-382-6989",
+    "Google Rating": 4.9,
+    "Review Count": 373,
+    "Google Maps Profile": "https://www.google.com/maps/place/Serveway+Heating+and+Air+Conditioning/data=!4m7!3m6!1s0x864ea143c7b980c7:0xf732f800053b9b8c!8m2!3d32.8336847!4d-96.6877996!16s%2Fg%2F11gff69wh8!19sChIJx4C5x0OhToYRjJs7BQD4Mvc?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Decision Maker": "",
+    "Email Verification": "MX Only",
+    "Facebook": "https://www.facebook.com/servewayhvac/",
+    "Instagram": "https://www.instagram.com/servewayheatingandac/",
+    "LinkedIn": "",
+    "About Page Link": "https://servewayhvac.com/about-us/",
+    "Source URL": "https://www.google.com/maps/place/Serveway+Heating+and+Air+Conditioning/data=!4m7!3m6!1s0x864ea143c7b980c7:0xf732f800053b9b8c!8m2!3d32.8336847!4d-96.6877996!16s%2Fg%2F11gff69wh8!19sChIJx4C5x0OhToYRjJs7BQD4Mvc?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Website Status": "Online",
+    "intelligence": {
+      "seo": {
+        "findings": [
+          {
+            "name": "Images Missing Alt Attributes",
+            "severity": "Medium",
+            "affected_url": "https://servewayhvac.com/?utm_source=google&utm_medium=organic&utm_campaign=gbp",
+            "evidence": "20 of 42 images (48%) lack descriptive alt text.",
+            "explanation": "Alt attributes provide accessibility for visually impaired users and allow search engines to understand image context.",
+            "suggested_improvement": "Add descriptive, keyword-relevant alt attributes to informative images.",
+            "detection_method": "DOM Image Tag Inspection"
+          },
+          {
+            "name": "Missing Open Graph Social Metadata",
+            "severity": "Low",
+            "affected_url": "https://servewayhvac.com/?utm_source=google&utm_medium=organic&utm_campaign=gbp",
+            "evidence": "Missing og:title or og:image tags.",
+            "explanation": "Open Graph tags control how your links appear when shared across Facebook, LinkedIn, iMessage, and WhatsApp.",
+            "suggested_improvement": "Add og:title, og:description, and a high-resolution og:image (1200x630px).",
+            "detection_method": "Meta Property Parser"
+          }
+        ],
+        "metrics": {
+          "title": "Serveway HVAC: Dallas AC Installation & Repair Services",
+          "title_length": 55,
+          "meta_description": "Serveway Heating & Air Conditioning in Dallas offers expert AC installation, repair, and maintenance. Contact us today for reliable HVAC services!",
+          "meta_description_length": 146,
+          "canonical_url": "https://servewayhvac.com/",
+          "h1_tags": [
+            "Service The Right Way"
+          ],
+          "h2_count": 7,
+          "h3_count": 19,
+          "images_total": 42,
+          "images_missing_alt": 20,
+          "internal_links_count": 44,
+          "external_links_count": 13,
+          "schema_types": [
+            "LocalBusiness",
+            "WebSite",
+            "AggregateRating",
+            "ContactPoint",
+            "WebPage",
+            "Service",
+            "GeoCoordinates",
+            "PostalAddress",
+            "ImageObject",
+            "Place",
+            "SearchAction",
+            "Organization",
+            "Offer",
+            "HVACBusiness"
+          ],
+          "has_og_tags": true,
+          "is_noindex": false,
+          "broken_internal_links": []
+        },
+        "seo_score": 85,
+        "robots_sitemap": {
+          "has_robots_txt": true,
+          "robots_txt_url": "https://servewayhvac.com/robots.txt",
+          "has_sitemap_xml": true,
+          "sitemap_url": "https://servewayhvac.com/sitemap_index.xml",
+          "findings": []
+        }
+      },
+      "technical": {
+        "ssl_certificate": {
+          "status": "Valid",
+          "days_remaining": 73,
+          "expiry_date": "2027-01-29",
+          "issuer": "Google Trust Services",
+          "evidence": "Issuer: Google Trust Services, Expires: 2027-01-29 (73 days left)"
+        },
+        "redirect_info": {
+          "initial_url": "https://www.servewayhvac.com/?utm_source=google&utm_medium=organic&utm_campaign=gbp",
+          "final_url": "https://servewayhvac.com/?utm_source=google&utm_medium=organic&utm_campaign=gbp",
+          "redirect_occurred": true,
+          "status_code": 200
+        },
+        "mobile_usability": {
+          "status": "Optimized (Viewport & Responsive Structure Detected)",
+          "has_viewport": true,
+          "viewport_content": "width=device-width, initial-scale=1",
+          "responsive_indicators": [
+            "Device-width viewport configuration",
+            "Initial-scale zoom initialization",
+            "Embedded CSS media queries",
+            "Responsive layout utility classes"
+          ],
+          "overflow_risk": false
+        },
+        "findings": []
+      },
+      "features": {
+        "lead_capture": {
+          "category": "Lead Capture",
+          "status": "Detected",
+          "providers": [
+            "On-Page Form / CTA"
+          ],
+          "evidence": "Click-to-Call Link (tel:)",
+          "details": {
+            "has_contact_form": false,
+            "has_quote_form": false,
+            "has_phone_link": true,
+            "has_email_link": false,
+            "prominent_ctas": []
+          }
+        },
+        "booking": {
+          "category": "Booking & Appointment",
+          "status": "Detected",
+          "providers": [
+            "vCita"
+          ],
+          "evidence": "Identified: vCita"
+        },
+        "chatbot": {
+          "category": "Live Chat & Chatbot",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No live chat or conversational bot scripts detected on scanned pages."
+        },
+        "voice_agent": {
+          "category": "AI Voice Agent",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No AI voice agent scripts or telephony automation integrations observed."
+        },
+        "crm": {
+          "category": "CRM & Pipeline Management",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No client-side CRM scripts or embedded forms detected on scanned pages (server-side CRM or off-page pipeline may exist)."
+        },
+        "review_management": {
+          "category": "Review Management",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No third-party review widgets or reputation platform integrations observed on scanned pages."
+        },
+        "analytics": {
+          "category": "Marketing & Analytics",
+          "status": "Detected",
+          "providers": [
+            "Google Tag Manager"
+          ],
+          "evidence": "Identified: Google Tag Manager"
+        }
+      },
+      "performance": {
+        "audit_status": "API Key Not Configured",
+        "audit_timestamp": "2026-11-17 11:24:29 UTC",
+        "mobile_score": null,
+        "desktop_score": null,
+        "core_web_vitals": {},
+        "source": "Local Asset Diagnostics",
+        "local_diagnostics": {
+          "html_size_kb": 583.0,
+          "total_scripts": 68,
+          "external_scripts": 3,
+          "inline_scripts": 65,
+          "total_stylesheets": 49,
+          "total_images": 42,
+          "local_response_time_ms": 238.5
+        },
+        "note": "To enable official Google PageSpeed Insights & Core Web Vitals scoring, set the GOOGLE_PAGESPEED_API_KEY environment variable."
+      },
+      "opportunities": {
+        "lead_score": 50,
+        "priority": "Medium",
+        "priority_tier": "Medium Priority",
+        "priority_reason": "Moderate score (50/100); several digital infrastructure gaps identified.",
+        "scoring_details": {
+          "research_score": 50,
+          "research_priority": "Medium Priority",
+          "priority": "Medium",
+          "priority_reason": "Moderate score (50/100); several digital infrastructure gaps identified.",
+          "dimension_scores": {
+            "website_performance": 5.0,
+            "technical_seo": 4.5,
+            "lead_capture": 10.5,
+            "booking_automation": 1.5,
+            "chatbot_voice": 10.0,
+            "business_relevance": 9.0,
+            "contact_availability": 6.0,
+            "decision_maker_availability": 2.0,
+            "mobile_ssl_security": 1.0
+          },
+          "dimension_explanations": {
+            "website_performance": "Performance data unavailable; neutral score assigned without penalty.",
+            "technical_seo": "On-page SEO structure is well-optimized (score 85/100); minimal pitch opportunity.",
+            "lead_capture": "Click-to-call phone link present, but no public web inquiry or quote form detected.",
+            "booking_automation": "Online booking or appointment scheduling integration verified on site.",
+            "chatbot_voice": "No live chat, chatbot, or AI voice agent scripts detected on scanned pages.",
+            "business_relevance": "Active commercial business with verified online presence and established contact channels.",
+            "contact_availability": "Verified direct email available; telephone number not identified.",
+            "decision_maker_availability": "Decision maker name not yet identified; research required.",
+            "mobile_ssl_security": "Valid SSL certificate and mobile responsive design verified."
+          },
+          "weights_applied": {
+            "website_performance": 10,
+            "technical_seo": 15,
+            "lead_capture": 15,
+            "booking_automation": 15,
+            "chatbot_voice": 10,
+            "business_relevance": 10,
+            "contact_availability": 10,
+            "decision_maker_availability": 10,
+            "mobile_ssl_security": 5
+          },
+          "main_identified_gap": "Click-to-call available, but missing interactive inquiry form",
+          "suggested_next_action": "Nurture lead; research missing decision-maker contact details before cold outreach.",
+          "gaps_count": 3
+        },
+        "opportunities_count": 4,
+        "detected_opportunities": [
+          {
+            "Business Name": "Serveway Heating and Air Conditioning",
+            "Opportunity Category": "AI Automation",
+            "Finding": "No Public Chatbot Detected",
+            "Evidence": "No conversational widget scripts or live chat providers detected in page DOM.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "24/7 AI Chatbot & Conversational Lead Capture",
+            "Related Finding": "Absence of Live Chat / Chatbot Widget",
+            "Evidence URL": "https://servewayhvac.com/?utm_source=google&utm_medium=organic&utm_campaign=gbp",
+            "Evidence Description": "No conversational widget scripts or live chat providers detected in page DOM.",
+            "Potential Business Impact": "No interactive conversational chat provider was detected in the page DOM; does not determine how after-hours web visitor questions or leads are routed internally.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Serveway Heating and Air Conditioning",
+            "Opportunity Category": "AI Voice Automation",
+            "Finding": "No Public AI Phone Integration Detected",
+            "Evidence": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "AI Voice Receptionist & Missed Call Follow-Up Automation",
+            "Related Finding": "No AI Phone Integration Detected",
+            "Evidence URL": "https://servewayhvac.com/?utm_source=google&utm_medium=organic&utm_campaign=gbp",
+            "Evidence Description": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Potential Business Impact": "No automated voice assistant or telephony automation markers were identified in public assets; does not determine current call routing, answering service coverage, or office dispatch processes.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Serveway Heating and Air Conditioning",
+            "Opportunity Category": "CRM Integration",
+            "Finding": "No Public CRM Tracker Detected",
+            "Evidence": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Centralized CRM Integration & Lead Workflow Automation",
+            "Related Finding": "No CRM Tracking or Forms Detected",
+            "Evidence URL": "https://servewayhvac.com/?utm_source=google&utm_medium=organic&utm_campaign=gbp",
+            "Evidence Description": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Potential Business Impact": "No public CRM integration trackers or third-party embed forms were identified on scanned pages; does not determine whether customer records are managed through backend ERP, specialized industry software, or internal databases.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Serveway Heating and Air Conditioning",
+            "Opportunity Category": "Reputation Automation",
+            "Finding": "No Public Review Widget Detected",
+            "Evidence": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Automated Review Request & Reputation Management System",
+            "Related Finding": "Missing Review Widget / Automation",
+            "Evidence URL": "https://servewayhvac.com/?utm_source=google&utm_medium=organic&utm_campaign=gbp",
+            "Evidence Description": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Potential Business Impact": "No third-party review widgets or automated feedback collection badges were detected on public pages; does not determine how customer feedback or testimonial collection is handled after service delivery.",
+            "Confidence Level": "Medium"
+          }
+        ],
+        "outreach_hooks": [
+          "How does Serveway Heating and Air Conditioning currently handle after-hours website visitor inquiries\u2014would an interactive conversational assistant be worth exploring?",
+          "How does Serveway Heating and Air Conditioning currently collect and showcase customer reviews\u2014is post-service feedback collection something you're looking to automate?"
+        ],
+        "main_gap": "Click-to-call available, but missing interactive inquiry form",
+        "next_action": "Nurture lead; research missing decision-maker contact details before cold outreach.",
+        "summary": "4 evidence-backed opportunity gaps identified. Lead Priority: Medium Priority."
+      },
+      "lead_score": 50,
+      "priority": "Medium",
+      "priority_tier": "Medium Priority",
+      "audit_summary": {
+        "website_status": "Online",
+        "seo_score": 85,
+        "features_detected_count": 3,
+        "opportunities_count": 4,
+        "ssl_status": "Valid",
+        "mobile_status": "Optimized (Viewport & Responsive Structure Detected)"
+      }
+    }
+  },
+  {
+    "Business Name": "Alpha Heating & Cooling",
+    "Category": "HVAC contractor",
+    "City": "Dallas",
+    "State": "TX",
+    "Phone": "+1 469-875-2869",
+    "Website": "https://alphahvac.site/",
+    "Google Maps URL": "https://www.google.com/maps/place/Alpha+Heating+%26+Cooling/data=!4m7!3m6!1s0x864e99ccbfccc41b:0x8bbdeb5d1dbb17d3!8m2!3d32.7826453!4d-96.7954613!16s%2Fg%2F11q96d1050!19sChIJG8TMv8yZToYR0xe7HV3rvYs?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Rating": 5.0,
+    "Reviews": 165,
+    "Contact Person": "",
+    "Email": "",
+    "Email Status": "Not Found",
+    "Priority": "Low",
+    "Lead Score": 36,
+    "Main Opportunity": "No live chat or conversational bot scripts detected",
+    "Notes": "Low score (36/100); digital infrastructure is largely up to date.",
+    "Google Category": "HVAC contractor",
+    "Phone Number": "+1 469-875-2869",
+    "Google Rating": 5.0,
+    "Review Count": 165,
+    "Google Maps Profile": "https://www.google.com/maps/place/Alpha+Heating+%26+Cooling/data=!4m7!3m6!1s0x864e99ccbfccc41b:0x8bbdeb5d1dbb17d3!8m2!3d32.7826453!4d-96.7954613!16s%2Fg%2F11q96d1050!19sChIJG8TMv8yZToYR0xe7HV3rvYs?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Decision Maker": "",
+    "Email Verification": "Not Found",
+    "Facebook": "https://www.facebook.com/104869648681230",
+    "Instagram": "https://www.instagram.com/alpha_heating_coling_",
+    "LinkedIn": "https://www.linkedin.com/company/alpha-heating-cooling-llc",
+    "About Page Link": "https://alphahvac.site/about-alpha",
+    "Source URL": "https://www.google.com/maps/place/Alpha+Heating+%26+Cooling/data=!4m7!3m6!1s0x864e99ccbfccc41b:0x8bbdeb5d1dbb17d3!8m2!3d32.7826453!4d-96.7954613!16s%2Fg%2F11q96d1050!19sChIJG8TMv8yZToYR0xe7HV3rvYs?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Website Status": "Online",
+    "intelligence": {
+      "seo": {
+        "findings": [
+          {
+            "name": "Short Page Title",
+            "severity": "Low",
+            "affected_url": "https://alphahvac.site/",
+            "evidence": "Title is only 23 characters ('Alpha Heating & Cooling').",
+            "explanation": "Short titles often miss opportunities to target relevant customer queries and location terms.",
+            "suggested_improvement": "Expand title to 50-60 characters incorporating primary service and city name.",
+            "detection_method": "String Length Analysis"
+          },
+          {
+            "name": "Multiple H1 Headings",
+            "severity": "Low",
+            "affected_url": "https://alphahvac.site/",
+            "evidence": "Found 2 H1 tags: ['Alpha Heating & Cooling | 24/7 Emergency HVAC Repair in Dallas-Forth Worth', 'Alpha Heating & Cooling | 24/7 Emergency HVAC Repair in Dallas-Forth Worth']",
+            "explanation": "While search engines can handle multiple H1s, best practice recommends a single main H1 headline per page for clear topical hierarchy.",
+            "suggested_improvement": "Maintain one primary H1 for the page topic and use H2/H3 for supporting sections.",
+            "detection_method": "DOM Heading Query"
+          },
+          {
+            "name": "Images Missing Alt Attributes",
+            "severity": "Medium",
+            "affected_url": "https://alphahvac.site/",
+            "evidence": "8 of 10 images (80%) lack descriptive alt text.",
+            "explanation": "Alt attributes provide accessibility for visually impaired users and allow search engines to understand image context.",
+            "suggested_improvement": "Add descriptive, keyword-relevant alt attributes to informative images.",
+            "detection_method": "DOM Image Tag Inspection"
+          }
+        ],
+        "metrics": {
+          "title": "Alpha Heating & Cooling",
+          "title_length": 23,
+          "meta_description": "Alpha Heating &amp; Cooling LLC provides reliable HVAC services for homes and businesses, ensuring comfort and satisfaction with every service.",
+          "meta_description_length": 143,
+          "canonical_url": "https://alphahvac.site/",
+          "h1_tags": [
+            "Alpha Heating & Cooling | 24/7 Emergency HVAC Repair in Dallas-Forth Worth",
+            "Alpha Heating & Cooling | 24/7 Emergency HVAC Repair in Dallas-Forth Worth"
+          ],
+          "h2_count": 6,
+          "h3_count": 0,
+          "images_total": 10,
+          "images_missing_alt": 8,
+          "internal_links_count": 13,
+          "external_links_count": 8,
+          "schema_types": [
+            "GeoCoordinates",
+            "PostalAddress",
+            "OpeningHoursSpecification",
+            "LocalBusiness"
+          ],
+          "has_og_tags": true,
+          "is_noindex": false,
+          "broken_internal_links": []
+        },
+        "seo_score": 80,
+        "robots_sitemap": {
+          "has_robots_txt": true,
+          "robots_txt_url": "https://alphahvac.site/robots.txt",
+          "has_sitemap_xml": true,
+          "sitemap_url": "https://alphahvac.site/sitemap.xml",
+          "findings": []
+        }
+      },
+      "technical": {
+        "ssl_certificate": {
+          "status": "Valid",
+          "days_remaining": 107,
+          "expiry_date": "2027-03-04",
+          "issuer": "GoDaddy.com",
+          "evidence": "Issuer: GoDaddy.com, Expires: 2027-03-04 (107 days left)"
+        },
+        "redirect_info": {
+          "initial_url": "https://alphahvac.site/",
+          "final_url": "https://alphahvac.site/",
+          "redirect_occurred": false,
+          "status_code": 200
+        },
+        "mobile_usability": {
+          "status": "Needs Improvement (Responsive warnings detected)",
+          "has_viewport": true,
+          "viewport_content": "width=device-width, initial-scale=1",
+          "responsive_indicators": [
+            "Device-width viewport configuration",
+            "Initial-scale zoom initialization",
+            "Embedded CSS media queries"
+          ],
+          "overflow_risk": true
+        },
+        "findings": [
+          {
+            "name": "Potential Mobile Horizontal Overflow",
+            "severity": "Medium",
+            "affected_url": "https://alphahvac.site/",
+            "evidence": "Found fixed width definitions exceeding 1000px (['1025']).",
+            "explanation": "Hardcoded pixel widths can exceed smartphone screen widths, causing awkward horizontal scrolling.",
+            "suggested_improvement": "Replace fixed pixel widths with relative percentages or responsive CSS (max-width: 100%).",
+            "detection_method": "CSS Dimension Scanner"
+          }
+        ]
+      },
+      "features": {
+        "lead_capture": {
+          "category": "Lead Capture",
+          "status": "Detected",
+          "providers": [
+            "On-Page Form / CTA"
+          ],
+          "evidence": "Online Quote/Estimate Request Form, Click-to-Call Link (tel:), Prominent CTA: \"Get Your Free Estimate\"",
+          "details": {
+            "has_contact_form": true,
+            "has_quote_form": true,
+            "has_phone_link": true,
+            "has_email_link": false,
+            "prominent_ctas": [
+              "Get Your Free Estimate"
+            ]
+          }
+        },
+        "booking": {
+          "category": "Booking & Appointment",
+          "status": "Detected",
+          "providers": [
+            "Internal Booking Link"
+          ],
+          "evidence": "Identified: Internal Booking Link"
+        },
+        "chatbot": {
+          "category": "Live Chat & Chatbot",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No live chat or conversational bot scripts detected on scanned pages."
+        },
+        "voice_agent": {
+          "category": "AI Voice Agent",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No AI voice agent scripts or telephony automation integrations observed."
+        },
+        "crm": {
+          "category": "CRM & Pipeline Management",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No client-side CRM scripts or embedded forms detected on scanned pages (server-side CRM or off-page pipeline may exist)."
+        },
+        "review_management": {
+          "category": "Review Management",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No third-party review widgets or reputation platform integrations observed on scanned pages."
+        },
+        "analytics": {
+          "category": "Marketing & Analytics",
+          "status": "Detected",
+          "providers": [
+            "Google Analytics 4",
+            "Google Tag Manager",
+            "Meta Pixel (Facebook)"
+          ],
+          "evidence": "Identified: Google Analytics 4, Google Tag Manager, Meta Pixel (Facebook)"
+        }
+      },
+      "performance": {
+        "audit_status": "API Key Not Configured",
+        "audit_timestamp": "2026-11-17 11:24:36 UTC",
+        "mobile_score": null,
+        "desktop_score": null,
+        "core_web_vitals": {},
+        "source": "Local Asset Diagnostics",
+        "local_diagnostics": {
+          "html_size_kb": 232.8,
+          "total_scripts": 13,
+          "external_scripts": 6,
+          "inline_scripts": 7,
+          "total_stylesheets": 0,
+          "total_images": 10,
+          "local_response_time_ms": 222.2
+        },
+        "note": "To enable official Google PageSpeed Insights & Core Web Vitals scoring, set the GOOGLE_PAGESPEED_API_KEY environment variable."
+      },
+      "opportunities": {
+        "lead_score": 36,
+        "priority": "Low",
+        "priority_tier": "Low Priority",
+        "priority_reason": "Low score (36/100); digital infrastructure is largely up to date.",
+        "scoring_details": {
+          "research_score": 36,
+          "research_priority": "Low Priority",
+          "priority": "Low",
+          "priority_reason": "Low score (36/100); digital infrastructure is largely up to date.",
+          "dimension_scores": {
+            "website_performance": 5.0,
+            "technical_seo": 4.5,
+            "lead_capture": 3.0,
+            "booking_automation": 1.5,
+            "chatbot_voice": 10.0,
+            "business_relevance": 6.0,
+            "contact_availability": 0.0,
+            "decision_maker_availability": 2.0,
+            "mobile_ssl_security": 4.0
+          },
+          "dimension_explanations": {
+            "website_performance": "Performance data unavailable; neutral score assigned without penalty.",
+            "technical_seo": "On-page SEO structure is well-optimized (score 80/100); minimal pitch opportunity.",
+            "lead_capture": "Comprehensive quote/estimate request workflow detected on site.",
+            "booking_automation": "Online booking or appointment scheduling integration verified on site.",
+            "chatbot_voice": "No live chat, chatbot, or AI voice agent scripts detected on scanned pages.",
+            "business_relevance": "Active domain verified; primary direct contact points are limited.",
+            "contact_availability": "No direct contact channels available for outreach.",
+            "decision_maker_availability": "Decision maker name not yet identified; research required.",
+            "mobile_ssl_security": "Mobile usability deficiency identified (Needs Improvement (Responsive warnings detected))."
+          },
+          "weights_applied": {
+            "website_performance": 10,
+            "technical_seo": 15,
+            "lead_capture": 15,
+            "booking_automation": 15,
+            "chatbot_voice": 10,
+            "business_relevance": 10,
+            "contact_availability": 10,
+            "decision_maker_availability": 10,
+            "mobile_ssl_security": 5
+          },
+          "main_identified_gap": "No live chat or conversational bot scripts detected",
+          "suggested_next_action": "Archive or monitor; business digital infrastructure is largely up to date.",
+          "gaps_count": 3
+        },
+        "opportunities_count": 5,
+        "detected_opportunities": [
+          {
+            "Business Name": "Alpha Heating & Cooling",
+            "Opportunity Category": "AI Automation",
+            "Finding": "No Public Chatbot Detected",
+            "Evidence": "No conversational widget scripts or live chat providers detected in page DOM.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "24/7 AI Chatbot & Conversational Lead Capture",
+            "Related Finding": "Absence of Live Chat / Chatbot Widget",
+            "Evidence URL": "https://alphahvac.site/",
+            "Evidence Description": "No conversational widget scripts or live chat providers detected in page DOM.",
+            "Potential Business Impact": "No interactive conversational chat provider was detected in the page DOM; does not determine how after-hours web visitor questions or leads are routed internally.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Alpha Heating & Cooling",
+            "Opportunity Category": "AI Voice Automation",
+            "Finding": "No Public AI Phone Integration Detected",
+            "Evidence": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "AI Voice Receptionist & Missed Call Follow-Up Automation",
+            "Related Finding": "No AI Phone Integration Detected",
+            "Evidence URL": "https://alphahvac.site/",
+            "Evidence Description": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Potential Business Impact": "No automated voice assistant or telephony automation markers were identified in public assets; does not determine current call routing, answering service coverage, or office dispatch processes.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Alpha Heating & Cooling",
+            "Opportunity Category": "CRM Integration",
+            "Finding": "No Public CRM Tracker Detected",
+            "Evidence": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Centralized CRM Integration & Lead Workflow Automation",
+            "Related Finding": "No CRM Tracking or Forms Detected",
+            "Evidence URL": "https://alphahvac.site/",
+            "Evidence Description": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Potential Business Impact": "No public CRM integration trackers or third-party embed forms were identified on scanned pages; does not determine whether customer records are managed through backend ERP, specialized industry software, or internal databases.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Alpha Heating & Cooling",
+            "Opportunity Category": "Reputation Automation",
+            "Finding": "No Public Review Widget Detected",
+            "Evidence": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Automated Review Request & Reputation Management System",
+            "Related Finding": "Missing Review Widget / Automation",
+            "Evidence URL": "https://alphahvac.site/",
+            "Evidence Description": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Potential Business Impact": "No third-party review widgets or automated feedback collection badges were detected on public pages; does not determine how customer feedback or testimonial collection is handled after service delivery.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Alpha Heating & Cooling",
+            "Opportunity Category": "Website Development",
+            "Finding": "Mobile Viewport / Formatting Issues",
+            "Evidence": "Missing viewport meta tag or fixed pixel widths detected causing horizontal overflow risks on mobile viewports.",
+            "Confidence": "High",
+            "Research Status": "Detected",
+            "Recommended Service": "Mobile-Responsive Layout Optimization",
+            "Related Finding": "Mobile Viewport / Formatting Issues",
+            "Evidence URL": "https://alphahvac.site/",
+            "Evidence Description": "Missing viewport meta tag or fixed pixel widths detected causing horizontal overflow risks on mobile viewports.",
+            "Potential Business Impact": "Mobile devices may render page content with horizontal overflow or scaling issues.",
+            "Confidence Level": "High"
+          }
+        ],
+        "outreach_hooks": [
+          "How does Alpha Heating & Cooling currently handle after-hours website visitor inquiries\u2014would an interactive conversational assistant be worth exploring?",
+          "How does Alpha Heating & Cooling currently collect and showcase customer reviews\u2014is post-service feedback collection something you're looking to automate?"
+        ],
+        "main_gap": "No live chat or conversational bot scripts detected",
+        "next_action": "Archive or monitor; business digital infrastructure is largely up to date.",
+        "summary": "5 evidence-backed opportunity gaps identified. Lead Priority: Low Priority."
+      },
+      "lead_score": 36,
+      "priority": "Low",
+      "priority_tier": "Low Priority",
+      "audit_summary": {
+        "website_status": "Online",
+        "seo_score": 80,
+        "features_detected_count": 3,
+        "opportunities_count": 5,
+        "ssl_status": "Valid",
+        "mobile_status": "Needs Improvement (Responsive warnings detected)"
+      }
+    }
+  },
+  {
+    "Business Name": "Service Experts Dallas",
+    "Category": "HVAC contractor",
+    "City": "Richardson",
+    "State": "TX",
+    "Phone": "+1 972-619-7607",
+    "Website": "https://www.serviceexperts.com/dallas-tx/?&utm_campaign=listing&utm_medium=organic_search&utm_source=gmb&utm_content=brand",
+    "Google Maps URL": "https://www.google.com/maps/place/Service+Experts+Dallas/data=!4m7!3m6!1s0x864c2784832d5ffd:0x85e30c4b3d21290d!8m2!3d32.9560673!4d-96.7075108!16s%2Fg%2F1tg81w6v!19sChIJ_V8tg4QnTIYRDSkhPUsM44U?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Rating": 4.8,
+    "Reviews": 6214,
+    "Contact Person": "",
+    "Email": "",
+    "Email Status": "Not Found",
+    "Priority": "Manual Review",
+    "Lead Score": 50,
+    "Main Opportunity": "Website inspection blocked (Cloudflare WAF challenge detected (HTTP 403))",
+    "Notes": "Website inspection inconclusive (Cloudflare WAF challenge detected (HTTP 403)); requires manual review.",
+    "Google Category": "HVAC contractor",
+    "Phone Number": "+1 972-619-7607",
+    "Google Rating": 4.8,
+    "Review Count": 6214,
+    "Google Maps Profile": "https://www.google.com/maps/place/Service+Experts+Dallas/data=!4m7!3m6!1s0x864c2784832d5ffd:0x85e30c4b3d21290d!8m2!3d32.9560673!4d-96.7075108!16s%2Fg%2F1tg81w6v!19sChIJ_V8tg4QnTIYRDSkhPUsM44U?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Decision Maker": "",
+    "Email Verification": "Not Found",
+    "Facebook": "",
+    "Instagram": "",
+    "LinkedIn": "",
+    "About Page Link": "",
+    "Source URL": "https://www.google.com/maps/place/Service+Experts+Dallas/data=!4m7!3m6!1s0x864c2784832d5ffd:0x85e30c4b3d21290d!8m2!3d32.9560673!4d-96.7075108!16s%2Fg%2F1tg81w6v!19sChIJ_V8tg4QnTIYRDSkhPUsM44U?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Website Status": "Blocked / Inconclusive",
+    "intelligence": {
+      "seo": {
+        "status": "Blocked / Inconclusive",
+        "seo_score": null,
+        "metrics": {
+          "title": "Not Audited",
+          "meta_description": null,
+          "h1_tags": [],
+          "canonical_url": null,
+          "is_noindex": null,
+          "has_viewport": null,
+          "images_total": 0,
+          "images_missing_alt": 0,
+          "schema_types": []
+        },
+        "findings": [
+          "Audit inconclusive: Cloudflare WAF challenge detected (HTTP 403). Real website content not inspected."
+        ],
+        "robots_sitemap": {
+          "robots_txt_status": "Unknown",
+          "sitemap_status": "Unknown"
+        }
+      },
+      "technical": {
+        "status": "Inconclusive",
+        "mobile_usability": {
+          "status": "Not Audited",
+          "has_viewport": null,
+          "overflow_risk": null,
+          "evidence": "Inspection blocked: Cloudflare WAF challenge detected (HTTP 403)"
+        },
+        "ssl_certificate": {
+          "status": "Valid",
+          "evidence": "TLS handshake completed"
+        },
+        "findings": []
+      },
+      "features": {
+        "lead_capture": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "booking": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "chatbot": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "voice_agent": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "crm": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "review_management": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "analytics": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        }
+      },
+      "performance": {
+        "audit_status": "Not Audited",
+        "audit_timestamp": "2026-11-17 11:24:36 UTC",
+        "mobile_score": null,
+        "desktop_score": null,
+        "core_web_vitals": {},
+        "source": "Audit Skipped (Blocked / Inconclusive)",
+        "local_diagnostics": {}
+      },
+      "opportunities": {
+        "lead_score": 50,
+        "priority": "Manual Review",
+        "priority_tier": "Manual Review",
+        "priority_reason": "Website inspection inconclusive (Cloudflare WAF challenge detected (HTTP 403)); requires manual review.",
+        "scoring_details": {
+          "research_score": 50,
+          "research_priority": "Manual Review",
+          "priority": "Manual Review",
+          "priority_reason": "Website inspection inconclusive (Cloudflare WAF challenge detected (HTTP 403)); requires manual review.",
+          "suggested_next_action": "Perform manual domain review; automated crawler blocked by bot/WAF challenge.",
+          "main_identified_gap": "Website inspection blocked (Cloudflare WAF challenge detected (HTTP 403))"
+        },
+        "opportunities_count": 0,
+        "detected_opportunities": [],
+        "outreach_hooks": [],
+        "main_gap": "Website inspection blocked (Cloudflare WAF challenge detected (HTTP 403))",
+        "next_action": "Perform manual review of domain; automated inspection blocked by bot/WAF controls.",
+        "summary": "Audit inconclusive: Cloudflare WAF challenge detected (HTTP 403). Manual review required."
+      },
+      "lead_score": 50,
+      "priority": "Manual Review",
+      "priority_tier": "Manual Review",
+      "audit_summary": {
+        "website_status": "Blocked / Inconclusive",
+        "seo_score": null,
+        "features_detected_count": 0,
+        "opportunities_count": 0,
+        "ssl_status": "Valid",
+        "mobile_status": "Not Audited"
+      }
+    }
+  },
+  {
+    "Business Name": "Aire Serv of Dallas",
+    "Category": "HVAC contractor",
+    "City": "Dallas",
+    "State": "TX",
+    "Phone": "+1 972-992-5648",
+    "Website": "https://www.aireserv.com/dallas/?cid=LSTL_ASV-US000187&utm_source=gmb&utm_campaign=local&utm_medium=organic",
+    "Google Maps URL": "https://www.google.com/maps/place/Aire+Serv+of+Dallas/data=!4m7!3m6!1s0x864c20efad18e845:0x81de226f9a99566!8m2!3d32.9248725!4d-96.8051143!16s%2Fg%2F1td_y_kh!19sChIJRegYre8gTIYRZpWp-SbiHQg?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Rating": 4.8,
+    "Reviews": 257,
+    "Contact Person": "",
+    "Email": "",
+    "Email Status": "Not Found",
+    "Priority": "Manual Review",
+    "Lead Score": 50,
+    "Main Opportunity": "Website inspection blocked (Cloudflare WAF challenge detected (HTTP 403))",
+    "Notes": "Website inspection inconclusive (Cloudflare WAF challenge detected (HTTP 403)); requires manual review.",
+    "Google Category": "HVAC contractor",
+    "Phone Number": "+1 972-992-5648",
+    "Google Rating": 4.8,
+    "Review Count": 257,
+    "Google Maps Profile": "https://www.google.com/maps/place/Aire+Serv+of+Dallas/data=!4m7!3m6!1s0x864c20efad18e845:0x81de226f9a99566!8m2!3d32.9248725!4d-96.8051143!16s%2Fg%2F1td_y_kh!19sChIJRegYre8gTIYRZpWp-SbiHQg?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Decision Maker": "",
+    "Email Verification": "Not Found",
+    "Facebook": "",
+    "Instagram": "",
+    "LinkedIn": "",
+    "About Page Link": "",
+    "Source URL": "https://www.google.com/maps/place/Aire+Serv+of+Dallas/data=!4m7!3m6!1s0x864c20efad18e845:0x81de226f9a99566!8m2!3d32.9248725!4d-96.8051143!16s%2Fg%2F1td_y_kh!19sChIJRegYre8gTIYRZpWp-SbiHQg?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Website Status": "Blocked / Inconclusive",
+    "intelligence": {
+      "seo": {
+        "status": "Blocked / Inconclusive",
+        "seo_score": null,
+        "metrics": {
+          "title": "Not Audited",
+          "meta_description": null,
+          "h1_tags": [],
+          "canonical_url": null,
+          "is_noindex": null,
+          "has_viewport": null,
+          "images_total": 0,
+          "images_missing_alt": 0,
+          "schema_types": []
+        },
+        "findings": [
+          "Audit inconclusive: Cloudflare WAF challenge detected (HTTP 403). Real website content not inspected."
+        ],
+        "robots_sitemap": {
+          "robots_txt_status": "Unknown",
+          "sitemap_status": "Unknown"
+        }
+      },
+      "technical": {
+        "status": "Inconclusive",
+        "mobile_usability": {
+          "status": "Not Audited",
+          "has_viewport": null,
+          "overflow_risk": null,
+          "evidence": "Inspection blocked: Cloudflare WAF challenge detected (HTTP 403)"
+        },
+        "ssl_certificate": {
+          "status": "Valid",
+          "evidence": "TLS handshake completed"
+        },
+        "findings": []
+      },
+      "features": {
+        "lead_capture": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "booking": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "chatbot": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "voice_agent": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "crm": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "review_management": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        },
+        "analytics": {
+          "status": "Unknown",
+          "evidence": [
+            "Feature inspection inconclusive: Cloudflare WAF challenge detected (HTTP 403); public integration cannot be verified."
+          ],
+          "details": {}
+        }
+      },
+      "performance": {
+        "audit_status": "Not Audited",
+        "audit_timestamp": "2026-11-17 11:24:36 UTC",
+        "mobile_score": null,
+        "desktop_score": null,
+        "core_web_vitals": {},
+        "source": "Audit Skipped (Blocked / Inconclusive)",
+        "local_diagnostics": {}
+      },
+      "opportunities": {
+        "lead_score": 50,
+        "priority": "Manual Review",
+        "priority_tier": "Manual Review",
+        "priority_reason": "Website inspection inconclusive (Cloudflare WAF challenge detected (HTTP 403)); requires manual review.",
+        "scoring_details": {
+          "research_score": 50,
+          "research_priority": "Manual Review",
+          "priority": "Manual Review",
+          "priority_reason": "Website inspection inconclusive (Cloudflare WAF challenge detected (HTTP 403)); requires manual review.",
+          "suggested_next_action": "Perform manual domain review; automated crawler blocked by bot/WAF challenge.",
+          "main_identified_gap": "Website inspection blocked (Cloudflare WAF challenge detected (HTTP 403))"
+        },
+        "opportunities_count": 0,
+        "detected_opportunities": [],
+        "outreach_hooks": [],
+        "main_gap": "Website inspection blocked (Cloudflare WAF challenge detected (HTTP 403))",
+        "next_action": "Perform manual review of domain; automated inspection blocked by bot/WAF controls.",
+        "summary": "Audit inconclusive: Cloudflare WAF challenge detected (HTTP 403). Manual review required."
+      },
+      "lead_score": 50,
+      "priority": "Manual Review",
+      "priority_tier": "Manual Review",
+      "audit_summary": {
+        "website_status": "Blocked / Inconclusive",
+        "seo_score": null,
+        "features_detected_count": 0,
+        "opportunities_count": 0,
+        "ssl_status": "Valid",
+        "mobile_status": "Not Audited"
+      }
+    }
+  },
+  {
+    "Business Name": "Mondragon Mechanical LLC",
+    "Category": "HVAC contractor",
+    "City": "Dallas",
+    "State": "TX",
+    "Phone": "+1 972-214-7002",
+    "Website": "https://mondragonac.com/",
+    "Google Maps URL": "https://www.google.com/maps/place/Mondragon+Mechanical+LLC/data=!4m7!3m6!1s0x864c276e96e77db3:0x81de04c76a6d9dc7!8m2!3d32.9076741!4d-96.887451!16s%2Fg%2F11r4svft4k!19sChIJs33nlm4nTIYRx51tascE3oE?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Rating": 4.9,
+    "Reviews": 644,
+    "Contact Person": "Jose Luis Mondragon",
+    "Email": "office@mondragonac.com",
+    "Email Status": "MX Only",
+    "Priority": "Medium",
+    "Lead Score": 54,
+    "Main Opportunity": "No online scheduling or booking integration identified",
+    "Notes": "Moderate score (54/100); several digital infrastructure gaps identified.",
+    "Google Category": "HVAC contractor",
+    "Phone Number": "+1 972-214-7002",
+    "Google Rating": 4.9,
+    "Review Count": 644,
+    "Google Maps Profile": "https://www.google.com/maps/place/Mondragon+Mechanical+LLC/data=!4m7!3m6!1s0x864c276e96e77db3:0x81de04c76a6d9dc7!8m2!3d32.9076741!4d-96.887451!16s%2Fg%2F11r4svft4k!19sChIJs33nlm4nTIYRx51tascE3oE?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Decision Maker": "Jose Luis Mondragon (Owner / Decision Maker)",
+    "Email Verification": "MX Only",
+    "Facebook": "https://www.facebook.com/mondragonhvac",
+    "Instagram": "https://www.instagram.com/mondragon_mechanical",
+    "LinkedIn": "",
+    "About Page Link": "https://mondragonac.com/about/",
+    "Source URL": "https://www.google.com/maps/place/Mondragon+Mechanical+LLC/data=!4m7!3m6!1s0x864c276e96e77db3:0x81de04c76a6d9dc7!8m2!3d32.9076741!4d-96.887451!16s%2Fg%2F11r4svft4k!19sChIJs33nlm4nTIYRx51tascE3oE?authuser=0&hl=en&g_ep=EgoyMDI2MTExMC4wIJJjKgBIAVAD&rclk=1",
+    "Website Status": "Online",
+    "intelligence": {
+      "seo": {
+        "findings": [
+          {
+            "name": "Images Missing Alt Attributes",
+            "severity": "Medium",
+            "affected_url": "https://mondragonac.com/",
+            "evidence": "74 of 82 images (90%) lack descriptive alt text.",
+            "explanation": "Alt attributes provide accessibility for visually impaired users and allow search engines to understand image context.",
+            "suggested_improvement": "Add descriptive, keyword-relevant alt attributes to informative images.",
+            "detection_method": "DOM Image Tag Inspection"
+          }
+        ],
+        "metrics": {
+          "title": "Mondragon Mechanical - AC and Heating Specialist in Dallas",
+          "title_length": 58,
+          "meta_description": "Dallas's trusted HVAC company. Expert AC repair, installation & maintenance for residential & commercial. 4.9 stars, +525 reviews. Available 24/7.",
+          "meta_description_length": 146,
+          "canonical_url": "https://mondragonac.com/",
+          "h1_tags": [
+            "HVAC Install and Repair services in Dallas DFW"
+          ],
+          "h2_count": 12,
+          "h3_count": 2,
+          "images_total": 82,
+          "images_missing_alt": 74,
+          "internal_links_count": 124,
+          "external_links_count": 9,
+          "schema_types": [
+            "Person",
+            "WebSite",
+            "WebPage",
+            "Organization",
+            "Article",
+            "SearchAction",
+            "ImageObject",
+            "HVACBusiness"
+          ],
+          "has_og_tags": true,
+          "is_noindex": false,
+          "broken_internal_links": []
+        },
+        "seo_score": 90,
+        "robots_sitemap": {
+          "has_robots_txt": true,
+          "robots_txt_url": "https://mondragonac.com/robots.txt",
+          "has_sitemap_xml": true,
+          "sitemap_url": "https://mondragonac.com/sitemap_index.xml",
+          "findings": []
+        }
+      },
+      "technical": {
+        "ssl_certificate": {
+          "status": "Valid",
+          "days_remaining": 76,
+          "expiry_date": "2027-02-01",
+          "issuer": "Let's Encrypt",
+          "evidence": "Issuer: Let's Encrypt, Expires: 2027-02-01 (76 days left)"
+        },
+        "redirect_info": {
+          "initial_url": "https://mondragonac.com/",
+          "final_url": "https://mondragonac.com/",
+          "redirect_occurred": false,
+          "status_code": 200
+        },
+        "mobile_usability": {
+          "status": "Optimized (Viewport & Responsive Structure Detected)",
+          "has_viewport": true,
+          "viewport_content": "width=device-width, initial-scale=1",
+          "responsive_indicators": [
+            "Device-width viewport configuration",
+            "Initial-scale zoom initialization",
+            "Responsive layout utility classes"
+          ],
+          "overflow_risk": false
+        },
+        "findings": []
+      },
+      "features": {
+        "lead_capture": {
+          "category": "Lead Capture",
+          "status": "Detected",
+          "providers": [
+            "On-Page Form / CTA"
+          ],
+          "evidence": "Online Quote/Estimate Request Form, Click-to-Call Link (tel:), Prominent CTA: \"Call Now\"",
+          "details": {
+            "has_contact_form": true,
+            "has_quote_form": true,
+            "has_phone_link": true,
+            "has_email_link": false,
+            "prominent_ctas": [
+              "Call Now",
+              "Schedule Service",
+              "Call now"
+            ]
+          }
+        },
+        "booking": {
+          "category": "Booking & Appointment",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No client-facing scheduling widgets or calendar integrations observed on scanned pages (external/off-site booking portal may still exist)."
+        },
+        "chatbot": {
+          "category": "Live Chat & Chatbot",
+          "status": "Detected",
+          "providers": [
+            "Podium Webchat"
+          ],
+          "evidence": "Identified: Podium Webchat"
+        },
+        "voice_agent": {
+          "category": "AI Voice Agent",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No AI voice agent scripts or telephony automation integrations observed."
+        },
+        "crm": {
+          "category": "CRM & Pipeline Management",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No client-side CRM scripts or embedded forms detected on scanned pages (server-side CRM or off-page pipeline may exist)."
+        },
+        "review_management": {
+          "category": "Review Management",
+          "status": "Not Detected",
+          "providers": [],
+          "evidence": "No third-party review widgets or reputation platform integrations observed on scanned pages."
+        },
+        "analytics": {
+          "category": "Marketing & Analytics",
+          "status": "Detected",
+          "providers": [
+            "Google Analytics 4",
+            "Google Tag Manager"
+          ],
+          "evidence": "Identified: Google Analytics 4, Google Tag Manager"
+        }
+      },
+      "performance": {
+        "audit_status": "API Key Not Configured",
+        "audit_timestamp": "2026-11-17 11:26:33 UTC",
+        "mobile_score": null,
+        "desktop_score": null,
+        "core_web_vitals": {},
+        "source": "Local Asset Diagnostics",
+        "local_diagnostics": {
+          "html_size_kb": 214.7,
+          "total_scripts": 40,
+          "external_scripts": 22,
+          "inline_scripts": 18,
+          "total_stylesheets": 2,
+          "total_images": 82,
+          "local_response_time_ms": 919.2
+        },
+        "note": "To enable official Google PageSpeed Insights & Core Web Vitals scoring, set the GOOGLE_PAGESPEED_API_KEY environment variable."
+      },
+      "opportunities": {
+        "lead_score": 54,
+        "priority": "Medium",
+        "priority_tier": "Medium Priority",
+        "priority_reason": "Moderate score (54/100); several digital infrastructure gaps identified.",
+        "scoring_details": {
+          "research_score": 54,
+          "research_priority": "Medium Priority",
+          "priority": "Medium",
+          "priority_reason": "Moderate score (54/100); several digital infrastructure gaps identified.",
+          "dimension_scores": {
+            "website_performance": 5.0,
+            "technical_seo": 4.5,
+            "lead_capture": 3.0,
+            "booking_automation": 15.0,
+            "chatbot_voice": 1.0,
+            "business_relevance": 9.0,
+            "contact_availability": 6.0,
+            "decision_maker_availability": 10.0,
+            "mobile_ssl_security": 1.0
+          },
+          "dimension_explanations": {
+            "website_performance": "Performance data unavailable; neutral score assigned without penalty.",
+            "technical_seo": "On-page SEO structure is well-optimized (score 90/100); minimal pitch opportunity.",
+            "lead_capture": "Comprehensive quote/estimate request workflow detected on site.",
+            "booking_automation": "No online scheduling or booking integration detected on scanned pages; confirmed automation gap.",
+            "chatbot_voice": "Active live chat or AI conversational tools verified on site.",
+            "business_relevance": "Active commercial business with verified online presence and established contact channels.",
+            "contact_availability": "Verified direct email available; telephone number not identified.",
+            "decision_maker_availability": "Identified key decision maker (Jose Luis Mondragon (Owner / Decision Maker)) for executive outreach.",
+            "mobile_ssl_security": "Valid SSL certificate and mobile responsive design verified."
+          },
+          "weights_applied": {
+            "website_performance": 10,
+            "technical_seo": 15,
+            "lead_capture": 15,
+            "booking_automation": 15,
+            "chatbot_voice": 10,
+            "business_relevance": 10,
+            "contact_availability": 10,
+            "decision_maker_availability": 10,
+            "mobile_ssl_security": 5
+          },
+          "main_identified_gap": "No online scheduling or booking integration identified",
+          "suggested_next_action": "Nurture lead; research missing decision-maker contact details before cold outreach.",
+          "gaps_count": 1
+        },
+        "opportunities_count": 4,
+        "detected_opportunities": [
+          {
+            "Business Name": "Mondragon Mechanical LLC",
+            "Opportunity Category": "Workflow Automation",
+            "Finding": "No Public Booking Widget Detected",
+            "Evidence": "No self-service scheduling scripts or embedded booking widgets (Calendly, Acuity, ServiceTitan, etc.) identified on scanned pages.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Online Booking & Appointment Scheduling Integration",
+            "Related Finding": "Missing Online Scheduling Widget",
+            "Evidence URL": "https://mondragonac.com/",
+            "Evidence Description": "No self-service scheduling scripts or embedded booking widgets (Calendly, Acuity, ServiceTitan, etc.) identified on scanned pages.",
+            "Potential Business Impact": "No public self-service booking widget was identified on scanned pages; does not determine whether scheduling is coordinated via external portals, dispatch systems, or direct communication.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Mondragon Mechanical LLC",
+            "Opportunity Category": "AI Voice Automation",
+            "Finding": "No Public AI Phone Integration Detected",
+            "Evidence": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "AI Voice Receptionist & Missed Call Follow-Up Automation",
+            "Related Finding": "No AI Phone Integration Detected",
+            "Evidence URL": "https://mondragonac.com/",
+            "Evidence Description": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Potential Business Impact": "No automated voice assistant or telephony automation markers were identified in public assets; does not determine current call routing, answering service coverage, or office dispatch processes.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Mondragon Mechanical LLC",
+            "Opportunity Category": "CRM Integration",
+            "Finding": "No Public CRM Tracker Detected",
+            "Evidence": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Centralized CRM Integration & Lead Workflow Automation",
+            "Related Finding": "No CRM Tracking or Forms Detected",
+            "Evidence URL": "https://mondragonac.com/",
+            "Evidence Description": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Potential Business Impact": "No public CRM integration trackers or third-party embed forms were identified on scanned pages; does not determine whether customer records are managed through backend ERP, specialized industry software, or internal databases.",
+            "Confidence Level": "Medium"
+          },
+          {
+            "Business Name": "Mondragon Mechanical LLC",
+            "Opportunity Category": "Reputation Automation",
+            "Finding": "No Public Review Widget Detected",
+            "Evidence": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Confidence": "Medium",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Automated Review Request & Reputation Management System",
+            "Related Finding": "Missing Review Widget / Automation",
+            "Evidence URL": "https://mondragonac.com/",
+            "Evidence Description": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Potential Business Impact": "No third-party review widgets or automated feedback collection badges were detected on public pages; does not determine how customer feedback or testimonial collection is handled after service delivery.",
+            "Confidence Level": "Medium"
+          }
+        ],
+        "outreach_hooks": [
+          "Does Mondragon Mechanical LLC offer direct online self-scheduling for customers, or do you coordinate appointments through another workflow?",
+          "How does Mondragon Mechanical LLC currently collect and showcase customer reviews\u2014is post-service feedback collection something you're looking to automate?"
+        ],
+        "main_gap": "No online scheduling or booking integration identified",
+        "next_action": "Nurture lead; research missing decision-maker contact details before cold outreach.",
+        "summary": "4 evidence-backed opportunity gaps identified. Lead Priority: Medium Priority."
+      },
+      "lead_score": 54,
+      "priority": "Medium",
+      "priority_tier": "Medium Priority",
+      "audit_summary": {
+        "website_status": "Online",
+        "seo_score": 90,
+        "features_detected_count": 3,
+        "opportunities_count": 4,
+        "ssl_status": "Valid",
+        "mobile_status": "Optimized (Viewport & Responsive Structure Detected)"
+      }
+    }
+  }
+]

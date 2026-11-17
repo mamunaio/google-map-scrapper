@@ -101,6 +101,7 @@ def scrape_api():
                             business_name=lead.get("Business Name", "")
                         )
                         lead["Website"] = audit_data.get("Website", clean_website)
+                        lead["Website Status"] = audit_data.get("Website Status", "Online")
                         lead["Email"] = audit_data.get("Email", "")
                         lead["Contact Person"] = audit_data.get("Contact Person") or audit_data.get("Decision Maker", "")
                         lead["Decision Maker"] = audit_data.get("Decision Maker", "")
@@ -115,10 +116,10 @@ def scrape_api():
                         intel = audit_data.get("intelligence") or {}
                         opps = intel.get("opportunities") or {}
                         scoring = opps.get("scoring_details") or {}
-                        lead["Priority"] = opps.get("priority") or "Manual Review"
-                        lead["Lead Score"] = opps.get("lead_score") or 0
-                        lead["Main Opportunity"] = opps.get("main_gap") or ""
-                        lead["Notes"] = scoring.get("priority_reason") or ""
+                        lead["Priority"] = audit_data.get("Priority") or opps.get("priority") or "Manual Review"
+                        lead["Lead Score"] = audit_data.get("Lead Score") if audit_data.get("Lead Score") is not None else (opps.get("lead_score") or 0)
+                        lead["Main Opportunity"] = audit_data.get("Main Opportunity") or opps.get("main_gap") or ""
+                        lead["Notes"] = audit_data.get("Notes") or scoring.get("priority_reason") or ""
                         logger.info(f"[Enrichment {idx}/{total_leads}] Successfully enriched '{biz_name}' (Email: {lead['Email'] or 'None'}, Priority: {lead['Priority']})")
                     except Exception as e:
                         logger.warning(f"[Enrichment {idx}/{total_leads}] Website enrichment failed for '{biz_name}' ({clean_website}): {e}. Retaining Maps lead data.")
@@ -174,6 +175,7 @@ def scrape_api():
             )
 
             result["Website"] = audit_data.get("Website", url)
+            result["Website Status"] = audit_data.get("Website Status", "Online")
             result["Email"] = audit_data.get("Email", "")
             result["Contact Person"] = audit_data.get("Contact Person") or audit_data.get("Decision Maker", "")
             result["Decision Maker"] = audit_data.get("Decision Maker", "")
@@ -188,10 +190,10 @@ def scrape_api():
             intel = audit_data.get("intelligence") or {}
             opps = intel.get("opportunities") or {}
             scoring = opps.get("scoring_details") or {}
-            result["Priority"] = opps.get("priority") or "Manual Review"
-            result["Lead Score"] = opps.get("lead_score") or 0
-            result["Main Opportunity"] = opps.get("main_gap") or ""
-            result["Notes"] = scoring.get("priority_reason") or ""
+            result["Priority"] = audit_data.get("Priority") or opps.get("priority") or "Manual Review"
+            result["Lead Score"] = audit_data.get("Lead Score") if audit_data.get("Lead Score") is not None else (opps.get("lead_score") or 0)
+            result["Main Opportunity"] = audit_data.get("Main Opportunity") or opps.get("main_gap") or ""
+            result["Notes"] = audit_data.get("Notes") or scoring.get("priority_reason") or ""
 
             return jsonify({
                 "success": True,

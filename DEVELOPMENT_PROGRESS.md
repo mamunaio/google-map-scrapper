@@ -22,6 +22,7 @@
 | **Phase 16** | Google Maps Listing Extraction Hardening, External Website Cleaning & UI Responsiveness | **COMPLETED & VERIFIED** | 123 Automated Tests Passing |
 | **Phase 17** | Phase 08.1 — Export Data Integrity & Extraction Fix (Audit Consistency, Locale & Address) | **COMPLETED & VERIFIED** | 128 Automated Tests Passing (9 Modules) |
 | **Phase 18** | Phase 08.1 — Verification Clarification, Raw Pytest Evidence & Real-World Live Validation | **COMPLETED & VERIFIED** | 128 Automated Tests Passing (9 Modules) |
+| **Phase 19** | Phase 08.2 — Data Quality Remediation (Cloudflare WAF, Email Quality, Priority Sync, Export Integrity) | **COMPLETED & VERIFIED** | 142 Automated Tests Passing (10 Modules) |
 
 ---
 
@@ -595,3 +596,77 @@
   10. **Service Experts Dallas** (Richardson, TX | Phone: +1 972-619-7607 | Website: serviceexperts.com | Email: Not Found)
 - Generated genuine 3-sheet Excel workbook: `LeadHunter_3Sheet_Live_Dallas_HVAC.xlsx` (15,621 bytes).
 - Confirmed Sheet 01 (16 cols), Sheet 02 (15 cols, no contradictions), and Sheet 03 (7 cols, 42 real opportunities, 0 phantom records).
+
+---
+
+## Phase 19: Phase 08.2 — Data Quality Remediation & Error Handling
+
+### 1. Cloudflare WAF and HTTP Error Handling (`services/website_crawler.py`, `services/export_service.py`)
+- Implemented `is_challenge_or_blocked(status_code, html_text, error_msg)` detecting:
+  - Cloudflare WAF challenges (`Attention Required! | Cloudflare`, `Just a moment...`, `cf-chl`, `cf-turnstile`).
+  - CAPTCHA mitigations (`verify you are human`, `hcaptcha`, `recaptcha`).
+  - Access Denied / HTTP 403 Forbidden pages.
+  - Network timeouts and connection drops.
+- When an access-denied or challenge response is received:
+  - Website audit status is set to `Blocked / Inconclusive`.
+  - SEO score is set to `None` / `N/A`.
+  - Audit dimensions are set to `Not Audited`.
+  - Challenge page HTML is NEVER parsed for SEO defects (prevents false missing meta description, canonical, or H1 defects).
+  - Emits 0 phantom opportunities; preserves preserved block evidence.
+
+### 2. Email Quality & Contact Verification Rigor (`services/email_service.py`, `services/export_service.py`)
+- Preserved `MX Only` distinct from `Verified` (never promotes MX presence to mailbox verification).
+- Expanded `INVALID_KEYWORDS` to filter out placeholder addresses:
+  - `filler@`, `user@`, `test@`, `sample@`, `demo@`, `placeholder@`, `yourname@`, `your_email`, `youremail`, `email_here`, `your-email`, `youremailhere`.
+  - Host/builder domain placeholders: `godaddy.com`, `residence.com`, `wix.com`, `squarespace.com`, `weebly.com`.
+- Implemented unrelated private external domain filtering:
+  - If a business domain is `texasairzone.com` or `alphahvac.site`, private external emails like `jane@residence.com` or `filler@godaddy.com` are rejected.
+  - Standard public providers (`gmail.com`, `yahoo.com`, `outlook.com`) remain supported.
+- Completely removed email prefix fallback that previously extracted names like "Jane", "Dispatch", or "Filler" and assigned "Business Owner" without Schema or on-page proof.
+- Added strict department and placeholder rejection in `clean_contact_person()` (`Dispatch`, `Estimates`, `Quotes`, `Office`, `Team`, etc.).
+
+### 3. Priority Synchronization (`services/lead_scoring.py`, `services/opportunity_analyzer.py`, `services/export_service.py`, `app.py`)
+- Resolved root cause of priority discrepancy:
+  - Fixed missing top-level `priority` return key in `analyze_business_opportunities()`.
+  - Connected `lead["Priority"]` directly to calculated research priority (`High`, `Medium`, `Low`, or `Manual Review`).
+  - Sheet 01 (Lead Tracker) and JSON exports now show 100% synchronized priority values, scores, and priority reasons.
+  - `Manual Review` is used strictly when crawls are blocked, incomplete, or unverified.
+
+### 4. Evidence-Based Lead Scoring (`services/lead_scoring.py`, `services/opportunity_analyzer.py`)
+- Differentiated lead capture explanations between:
+  - Dedicated quote/estimate workflows (`has_quote_form`).
+  - General contact forms (`has_contact_form`).
+  - Click-to-call links only (`has_phone_link`).
+- Opportunity findings distinguish detected public indicators from inconclusive internal processes:
+  - Missing public chatbot/voice agent/CRM is marked as `Needs Review` and reported as `No Public Chatbot Detected` / `No Public CRM Tracker Detected`, without assuming absence of internal operations.
+
+### 5. Performance Reporting Integrity (`services/performance_audit.py`, `services/export_service.py`)
+- Preserves `API Key Not Configured` when PageSpeed API credentials are not set.
+- Never fabricates PageSpeed scores or Core Web Vitals measurements.
+- Sheet 02 (Website Audit) accurately reports `Unknown` for performance status when API measurements are unavailable.
+
+### 6. Full Automated Regression Test Suite (`tests/test_data_quality_remediation.py`)
+- Added 14 new automated regression tests covering all requirements:
+  1. `test_case_01_http_403_response_handling`
+  2. `test_case_02_cloudflare_challenge_detection`
+  3. `test_case_03_captcha_response_detection`
+  4. `test_case_04_website_timeout_handling`
+  5. `test_case_05_invalid_or_blocked_website_response`
+  6. `test_case_06_mx_only_email_verification_status_preserved`
+  7. `test_case_07_email_domain_mismatch_rejection`
+  8. `test_case_08_placeholder_email_rejection`
+  9. `test_case_09_unsupported_decision_maker_identification`
+  10. `test_case_10_priority_synchronization`
+  11. `test_case_11_lead_scoring_evidence_consistency`
+  12. `test_case_12_missing_pagespeed_api_key`
+  13. `test_case_13_json_and_excel_consistency`
+  14. `test_case_14_exact_export_schema_validation`
+- Full suite expanded from 128 to **142 automated tests** across 10 modules: **142 passed, 0 failed, 0 skipped**.
+
+### 7. Fresh Real-World Live Scraping Run
+- Executed fresh live Dallas HVAC extraction against Google Maps and live websites.
+- Produced 10 genuine live leads in `LeadHunter_3Sheet_Live_Dallas_HVAC.xlsx` and `LeadHunter_3Sheet_Live_Dallas_HVAC.json`:
+  - Blocked Cloudflare WAF sites (`Quality 1 Energy Systems`, `Rescue Air`, `Service Experts Dallas`, `Aire Serv of Dallas`) show `Blocked / Inconclusive`, `Not Audited`, null SEO score, `Manual Review`, and 0 phantom opportunities.
+  - Reachable sites (`Texas AirZone`, `Harlen Johnson`, `Dallas Heating`, `Serveway Heating`, `Alpha Heating`, `Mondragon Mechanical`) show calculated priorities (`Medium`, `Low`), genuine clean emails, verified MX status, and zero placeholder addresses.
+  - JSON and Excel match 100% on business counts, priorities, scores, and emails.
+

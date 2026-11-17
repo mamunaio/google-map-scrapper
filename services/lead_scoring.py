@@ -108,9 +108,9 @@ def calculate_lead_score(
     seo_score = seo.get("seo_score")
     seo_status = seo.get("status", "")
 
-    if seo_status == "Scan Failed" or not seo:
+    if seo_status in ["Scan Failed", "Blocked / Inconclusive"] or not seo or seo_score is None:
         dim2 = 5.0
-        expl2 = "Technical SEO scan incomplete or unavailable; neutral score assigned without penalty."
+        expl2 = "Technical SEO scan inconclusive or blocked; neutral score assigned without penalty."
     elif seo_score is not None:
         if seo_score < 60:
             dim2 = 10.0
@@ -147,13 +147,24 @@ def calculate_lead_score(
         expl3 = "No contact forms or quote request CTAs detected on scanned pages; confirmed lead capture gap."
         gaps_identified.append(("Lead Capture", "No contact forms or conversion CTAs identified on scanned pages"))
     elif lc_status == "Detected":
-        if lc.get("details", {}).get("has_quote_form") is False:
+        details = lc.get("details", {}) or {}
+        has_quote = details.get("has_quote_form", False)
+        has_contact = details.get("has_contact_form", False)
+        has_phone = details.get("has_phone_link", False)
+        if has_quote:
+            dim3 = 2.0
+            expl3 = "Comprehensive quote/estimate request workflow detected on site."
+        elif has_contact:
             dim3 = 6.0
             expl3 = "General contact form present, but estimate/quote request workflow is missing."
             gaps_identified.append(("Lead Capture", "Basic contact form present, but no quote/estimate request workflow"))
+        elif has_phone:
+            dim3 = 7.0
+            expl3 = "Click-to-call phone link present, but no public web inquiry or quote form detected."
+            gaps_identified.append(("Lead Capture", "Click-to-call available, but missing interactive inquiry form"))
         else:
-            dim3 = 2.0
-            expl3 = "Comprehensive inquiry and lead capture forms detected on site."
+            dim3 = 4.0
+            expl3 = "Partial lead capture elements detected on site."
     else:
         dim3 = 5.0
         expl3 = "Lead capture presence is unconfirmed; neutral score applied."
@@ -309,8 +320,8 @@ def calculate_lead_score(
     is_failed_audit = (
         not website or
         perf_status == "Scan Failed" or
-        seo_status == "Scan Failed" or
-        (lc_status == "Scan Failed" and b_status == "Scan Failed")
+        seo_status in ["Scan Failed", "Blocked / Inconclusive"] or
+        (lc_status in ["Scan Failed", "Unknown"] and b_status in ["Scan Failed", "Unknown"] and chat_status in ["Scan Failed", "Unknown"])
     )
 
     all_critical_unknown = (

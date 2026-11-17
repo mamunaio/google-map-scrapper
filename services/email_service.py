@@ -18,7 +18,9 @@ from email_validator import validate_email, EmailNotValidError
 GENERIC_PREFIXES = [
     'info', 'contact', 'support', 'service', 'sales', 'admin',
     'office', 'team', 'hello', 'help', 'billing', 'mail', 'inquiry',
-    'appointment', 'customercare', 'frontdesk', 'reception', 'feedback', 'general'
+    'appointment', 'customercare', 'frontdesk', 'reception', 'feedback', 'general',
+    'dispatch', 'estimates', 'estimate', 'quote', 'quotes', 'schedule', 'scheduling',
+    'inquiries', 'jobs', 'careers', 'accounting', 'operations', 'marketing', 'orders', 'press'
 ]
 
 INVALID_EXTENSIONS = [
@@ -30,8 +32,19 @@ INVALID_KEYWORDS = [
     'sentry', 'example.com', 'domain.com', 'wixpress', 'noreply', 'no-reply',
     'wixsite.com', 'wordpress.com', 'cloudflare.com', 'github.com', 'bootstrap',
     'fontawesome', 'mysite.com', 'mywebsite.com', 'yoursite.com', 'sample.com',
-    'test@', 'admin@mysite', 'username@', 'fill@'
+    'test@', 'admin@mysite', 'username@', 'fill@', 'filler@', 'user@', 'demo@',
+    'placeholder@', 'yourname@', 'name@', 'admin@', 'domain@', 'godaddy.com',
+    'residence.com', 'wix.com', 'squarespace.com', 'weebly.com', 'sentry.io',
+    'schema.org', 'gravatar.com', 'w3.org', 'your_email', 'youremail',
+    'email_here', 'your-email', 'youremailhere', 'example@'
 ]
+
+PUBLIC_EMAIL_DOMAINS = {
+    'gmail.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'aol.com',
+    'icloud.com', 'live.com', 'msn.com', 'att.net', 'sbcglobal.net',
+    'comcast.net', 'me.com', 'mac.com', 'mail.com', 'zoho.com',
+    'proton.me', 'protonmail.com'
+}
 
 def decode_cloudflare_email(cf_hash: str) -> str:
     """Decodes Cloudflare email obfuscation hex strings."""
@@ -46,17 +59,22 @@ def decode_cloudflare_email(cf_hash: str) -> str:
     except Exception:
         return ""
 
-def clean_and_validate_emails(raw_emails: list, base_url: str = "") -> list:
+def clean_and_validate_emails(raw_emails: list, base_url: str = "", base_domain: str = "") -> list:
     """
     Cleans, deduplicates, and sorts email candidates by relevance and quality.
     Prioritizes decision-maker / named mailboxes on the business domain.
+    Rejects suspicious placeholder addresses and unrelated external private domains.
     """
-    base_domain = ""
-    if base_url:
+    if not base_domain and base_url:
         try:
-            base_domain = urlparse(base_url).netloc.lower().replace('www.', '')
+            target_url = base_url
+            if not target_url.startswith(('http://', 'https://')):
+                target_url = 'https://' + target_url
+            base_domain = urlparse(target_url).netloc.lower().replace('www.', '').strip()
         except Exception:
             pass
+    elif base_domain:
+        base_domain = base_domain.lower().replace('www.', '').strip()
 
     valid_emails = []
     seen = set()
@@ -71,7 +89,7 @@ def clean_and_validate_emails(raw_emails: list, base_url: str = "") -> list:
         if any(em_clean.endswith(ext) for ext in INVALID_EXTENSIONS):
             continue
 
-        # Check blacklist keywords
+        # Check blacklist keywords & placeholders
         if any(kw in em_clean for kw in INVALID_KEYWORDS):
             continue
 
@@ -83,6 +101,21 @@ def clean_and_validate_emails(raw_emails: list, base_url: str = "") -> list:
             val = validate_email(em_clean, check_deliverability=False)
             norm = val.normalized
             if norm not in seen:
+                em_domain = norm.split('@')[-1].lower()
+
+                # Unrelated domain check: if base_domain is known, require domain match or legitimate public provider
+                if base_domain:
+                    domain_matches = (
+                        base_domain in em_domain or
+                        em_domain in base_domain or
+                        em_domain.endswith('.' + base_domain) or
+                        base_domain.endswith('.' + em_domain)
+                    )
+                    is_public_provider = em_domain in PUBLIC_EMAIL_DOMAINS
+                    if not domain_matches and not is_public_provider:
+                        # Reject unrelated external private domain (e.g. residence.com, godaddy.com)
+                        continue
+
                 seen.add(norm)
                 valid_emails.append(norm)
         except EmailNotValidError:
