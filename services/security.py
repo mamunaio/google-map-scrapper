@@ -6,6 +6,7 @@ strict SSL verification, and safe HTTP request handling.
 
 import socket
 import ipaddress
+import re
 from urllib.parse import urlparse, urljoin
 import requests
 from urllib3.util import connection as urllib3_connection
@@ -263,3 +264,160 @@ def safe_http_get(url: str, headers: dict = None, max_bytes: int = MAX_RESPONSE_
             return response
     finally:
         session.close()
+
+# ---------------------------------------------------------------------------
+# Google Maps Playwright Security & SSRF Protection
+# ---------------------------------------------------------------------------
+
+GOOGLE_MAPS_DOMAIN_REGEX = re.compile(
+    r'^(?:[a-z0-9-]+\.)*(google\.(?:com|(?:com|co|org|net|gov|edu)\.[a-z]{2}|[a-z]{2})|goo\.gl)$',
+    re.IGNORECASE
+)
+
+AUTHORIZED_SUBRESOURCE_DOMAIN_REGEX = re.compile(
+    r'^(?:[a-z0-9-]+\.)*(google\.(?:com|(?:com|co|org|net|gov|edu)\.[a-z]{2}|[a-z]{2})|goo\.gl|gstatic\.com|googleapis\.com|googleusercontent\.com|ggpht\.com|googletagmanager\.com|google-analytics\.com)$',
+    re.IGNORECASE
+)
+
+_BROWSER_DNS_CACHE = {}
+
+def is_google_maps_domain(hostname: str) -> bool:
+    """
+    Checks whether a hostname belongs to an authorized Google Maps domain or shortlink.
+    Strictly forbids attacker variations (e.g. attacker-google.com, google.com.attacker.com).
+    """
+    if not hostname or not isinstance(hostname, str):
+        return False
+    clean_h = hostname.lower().strip('.')
+    if not GOOGLE_MAPS_DOMAIN_REGEX.match(clean_h):
+        return False
+    parts = clean_h.split('.')
+    return ('google' in parts or 'goo' in parts)
+
+def is_authorized_maps_subresource_host(hostname: str) -> bool:
+    """
+    Checks whether a hostname is an authorized Google subresource host (CDN, fonts, static assets, telemetry).
+    """
+    if not hostname or not isinstance(hostname, str):
+        return False
+    clean_h = hostname.lower().strip('.')
+    return bool(AUTHORIZED_SUBRESOURCE_DOMAIN_REGEX.match(clean_h))
+
+def is_valid_google_maps_pattern(url_or_path: str) -> bool:
+    """
+    Verifies that a URL path or query pattern matches a legitimate Google Maps feature.
+    """
+    if not url_or_path or not isinstance(url_or_path, str):
+        return False
+    u = url_or_path.lower()
+    return ("/maps" in u or
+            "/search" in u or
+            "/place" in u or
+            "?q=" in u or
+            "&q=" in u or
+            "goo.gl" in u)
+
+def validate_google_maps_url(url: str) -> str:
+    """
+    Validates that a URL is a legitimate Google Maps destination.
+    Enforces SSRF prevention (no localhost, private IPs, cloud metadata, link-local),
+    verifies that the host is a permitted Google Maps domain,
+    and checks that the URL path/query matches supported Google Maps patterns.
+    """
+    sanitized = validate_and_sanitize_url(url)
+    parsed = urlparse(sanitized)
+    hostname = (parsed.hostname or "").lower()
+
+    if not is_google_maps_domain(hostname):
+        raise SecurityError(f"Host '{hostname}' is not a permitted Google Maps domain.")
+
+    path = parsed.path.lower()
+    query = parsed.query.lower()
+
+    is_shortlink = (hostname == 'goo.gl' or hostname.endswith('.goo.gl'))
+    is_search = ("/maps/search" in path or path.startswith("/search") or query.startswith("q=") or "&q=" in query)
+    is_place = ('/maps/place' in path or '/place/' in path or '/maps/@' in path or '/maps/dir' in path)
+    is_maps_root = (path in ('/maps', '/maps/', '')) or ('maps.google.' in hostname)
+
+    if not (is_shortlink or is_search or is_place or is_maps_root):
+        raise SecurityError(f"URL path '{parsed.path}' is not a recognized Google Maps pattern.")
+
+    return sanitized
+
+def is_safe_browser_url(url: str, is_main_document: bool = False) -> tuple[bool, str]:
+    """
+    Validates destination URLs for browser requests in Playwright (both main document navigations
+    and subresources) to prevent SSRF, unauthorized redirects, and access to internal services.
+    """
+    if not url or not isinstance(url, str):
+        return False, "Empty or invalid URL"
+
+    url_str = url.strip()
+
+    # Allow about:blank for browser internal initialization
+    if url_str == 'about:blank':
+        return True, "Browser internal"
+
+    # Allow data: URLs ONLY for subresources (e.g. inline base64 images/canvas)
+    if url_str.startswith('data:'):
+        if is_main_document:
+            return False, "Data URLs are not permitted for main document navigation"
+        return True, "Inline data resource"
+
+    # Block all other non-http/https schemes
+    if not url_str.startswith(('http://', 'https://')):
+        scheme = url_str.split(':', 1)[0]
+        return False, f"Unsupported scheme: '{scheme}'"
+
+    parsed = urlparse(url_str)
+    hostname = parsed.hostname
+    if not hostname:
+        return False, "URL missing hostname"
+
+    clean_host = hostname.strip("[]").lower()
+
+    # Explicit domain blacklist
+    if clean_host in ('localhost', '127.0.0.1', '::1', '0.0.0.0') or clean_host.endswith(('.local', '.internal', '.localhost')):
+        return False, f"Access to local or private destination '{clean_host}' is forbidden"
+
+    # Check if host is an explicit IP literal
+    try:
+        ip_obj = ipaddress.ip_address(clean_host)
+        if not is_ip_allowed(str(ip_obj)):
+            return False, f"Destination IP '{clean_host}' is in a restricted or private range"
+        # Direct raw IP connections in browser are not authorized Google endpoints
+        return False, f"Direct IP destination '{clean_host}' is not permitted"
+    except ValueError:
+        pass  # Hostname is a domain name
+
+    # Domain authorization check
+    if is_main_document:
+        if not is_google_maps_domain(clean_host):
+            return False, f"Main document destination '{clean_host}' is not an authorized Google Maps host"
+    else:
+        if not (is_google_maps_domain(clean_host) or is_authorized_maps_subresource_host(clean_host)):
+            return False, f"Subresource destination '{clean_host}' is not an authorized Google subresource host"
+
+    # Verify DNS resolution points to public IP
+    cached = _BROWSER_DNS_CACHE.get(clean_host)
+    if cached is not None:
+        if not cached:
+            return False, f"Domain '{clean_host}' resolves to restricted IP (cached)"
+    else:
+        try:
+            addr_info = socket.getaddrinfo(clean_host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            resolved_ips = {item[4][0] for item in addr_info}
+            if not resolved_ips:
+                _BROWSER_DNS_CACHE[clean_host] = False
+                return False, f"Could not resolve host: {clean_host}"
+            for ip in resolved_ips:
+                if not is_ip_allowed(ip):
+                    _BROWSER_DNS_CACHE[clean_host] = False
+                    return False, f"Domain '{clean_host}' resolves to restricted IP: {ip}"
+            _BROWSER_DNS_CACHE[clean_host] = True
+        except Exception as e:
+            _BROWSER_DNS_CACHE[clean_host] = False
+            return False, f"DNS resolution failed for '{clean_host}': {e}"
+
+    return True, "OK"
+

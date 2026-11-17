@@ -11,19 +11,67 @@ import re
 from urllib.parse import urlparse, parse_qs, unquote
 from playwright.sync_api import sync_playwright
 
+from services.security import (
+    SecurityError,
+    validate_google_maps_url,
+    is_safe_browser_url,
+    is_google_maps_domain
+)
+
 PHONE_REGEX = re.compile(r'(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}')
 
 def is_maps_search_url(url: str) -> bool:
     """Detects whether a URL is a Google Maps search results query URL."""
     if not url or not isinstance(url, str):
         return False
-    u = url.lower()
-    is_google_maps = ("google." in u or "maps." in u) and ("maps" in u)
-    if not is_google_maps:
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+        if not is_google_maps_domain(hostname):
+            return False
+        path = parsed.path.lower()
+        query = parsed.query.lower()
+        return ("/maps/search" in path or
+                path.startswith("/search") or
+                ("maps" in hostname and (query.startswith("q=") or "&q=" in query) and "/place/" not in path))
+    except Exception:
         return False
-    return ("/maps/search" in u or
-            ("maps" in u and "/search?" in u) or
-            ("maps.google." in u and ("?q=" in u or "&q=" in u) and "/place/" not in u))
+
+def create_playwright_route_interceptor(page=None):
+    """
+    Creates a Playwright route interceptor that verifies every outgoing request,
+    redirect, and subresource against strict SSRF and Google authorization policies.
+    """
+    def route_interceptor(route):
+        request = route.request
+        req_url = request.url
+
+        # Check if this is a main document navigation request
+        is_main = False
+        try:
+            if hasattr(request, 'is_navigation_request') and callable(request.is_navigation_request):
+                if request.is_navigation_request():
+                    if page and hasattr(page, 'main_frame'):
+                        is_main = (request.frame == page.main_frame)
+                    else:
+                        is_main = True
+        except Exception:
+            is_main = False
+
+        is_safe, reason = is_safe_browser_url(req_url, is_main_document=is_main)
+        if not is_safe:
+            try:
+                route.abort("blockedbyclient")
+            except Exception:
+                pass
+            return
+
+        try:
+            route.continue_()
+        except Exception:
+            pass
+
+    return route_interceptor
 
 def normalize_place_url(raw_url: str) -> str:
     """Normalizes a Google Maps place URL for stable deduplication."""
@@ -222,9 +270,11 @@ def scrape_google_maps(url: str, max_results: int = 20) -> dict:
     """
     Main entry point for Google Maps scraping.
     Handles both Search URLs (multi-lead) and Place URLs (single-lead).
+    Enforces SSRF prevention, Google domain whitelist, and browser request interception.
     Returns honest failure when no business data can be extracted.
     """
-    is_search = is_maps_search_url(url)
+    clean_url = validate_google_maps_url(url)
+    is_search = is_maps_search_url(clean_url)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -233,8 +283,19 @@ def scrape_google_maps(url: str, max_results: int = 20) -> dict:
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
         )
         page = context.new_page()
+
+        # Enforce SSRF and unauthorized redirect/subresource protection at browser level
+        page.route("**/*", create_playwright_route_interceptor(page))
+
         try:
-            page.goto(url, timeout=45000, wait_until="domcontentloaded")
+            try:
+                page.goto(clean_url, timeout=45000, wait_until="domcontentloaded")
+            except Exception as e:
+                err_str = str(e)
+                if "BLOCKED_BY_CLIENT" in err_str or "net::ERR_" in err_str or "blocked" in err_str.lower():
+                    raise SecurityError(f"Navigation was blocked by security policy: {err_str}")
+                raise
+
             time.sleep(2.0)
 
             # Dismiss Google consent dialog if encountered
@@ -264,7 +325,7 @@ def scrape_google_maps(url: str, max_results: int = 20) -> dict:
                     "data": leads[0]
                 }
             else:
-                lead = scrape_maps_place_detail(page, url)
+                lead = scrape_maps_place_detail(page, clean_url)
                 if not lead or (not lead.get("Business Name") and not lead.get("Website")):
                     return {
                         "success": False,

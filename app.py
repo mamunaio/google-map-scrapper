@@ -8,7 +8,7 @@ import random
 from flask import Flask, render_template, request, jsonify, send_file
 from playwright.sync_api import sync_playwright
 
-from services.security import SecurityError
+from services.security import SecurityError, validate_google_maps_url
 from services.website_crawler import crawl_and_audit_website
 from services.export_service import generate_styled_excel
 from services.maps_scraper import scrape_google_maps
@@ -55,8 +55,9 @@ def scrape_api():
     try:
         # Option A: Google Maps Extraction (Search URLs and Place URLs)
         if type_ == 'maps':
+            clean_url = validate_google_maps_url(url)
             max_res = min(int(data.get('max_results', 20)), 50)
-            maps_res = scrape_google_maps(url, max_results=max_res)
+            maps_res = scrape_google_maps(clean_url, max_results=max_res)
 
             if not maps_res.get("success"):
                 return jsonify({

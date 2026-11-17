@@ -212,3 +212,37 @@
   - 10 new dedicated maps scraper tests covering URL detection, redirect cleanup, search card parsing, feed deduplication, place detail extraction, and honest empty failure.
   - 4 API integration tests verifying multi-lead search scraping, place URL scraping, HTTP 422 empty failure, and website fallback contracts.
   - Total automated test suite expanded from 59 to **73 tests** (100% passing).
+
+---
+
+## Phase 10: Google Maps Playwright SSRF, Redirect & Subresource Security Hardening
+
+### 1. Security Threat Identification
+- Initial Google Maps URL was previously passed directly to Playwright's `page.goto(url)` without pre-validation against the SSRF rules in `services/security.py`.
+- Browser navigations could potentially be targeted with internal destinations (`127.0.0.1`, `10.0.0.0/8`, `169.254.169.254`), arbitrary external hosts, or redirected to unauthorized endpoints.
+- Page subresources (scripts, images, stylesheets, fetch/XHR) were unmonitored by the Playwright process.
+
+### 2. Implementation Overview
+- **Strict Pre-Navigation URL Validation (`services/security.py`):**
+  - `is_google_maps_domain(hostname)`: Strictly allows only legitimate Google Maps hosts (`*.google.com`, `*.google.<ccTLD>`, `goo.gl`, `*.goo.gl`) using combined regex and structured token verification. Rejects `attacker-google.com` or `google.com.attacker.com`.
+  - `validate_google_maps_url(url)`: Runs standard `validate_and_sanitize_url(url)` (blocking localhost, private IPv4/IPv6, cloud metadata, link-local, and verifying DNS resolution), enforces domain whitelist, and checks supported feature patterns (`/maps/search`, `/maps/place`, `/search?`, `?q=`, `goo.gl/maps`).
+- **Playwright Route Interception & SSRF Filter (`services/maps_scraper.py`):**
+  - `create_playwright_route_interceptor(page)`: Attached via `page.route("**/*", ...)` to inspect every request across main navigation, redirects, and subresources.
+  - `is_safe_browser_url(url, is_main_document)`:
+    - Main document navigation & redirects: Must be an authorized Google Maps domain resolving to a public IP. Redirects to localhost, private IPs, or external arbitrary domains are aborted with `blockedbyclient`.
+    - Subresources: Must be authorized Google static / CDN assets (`*.gstatic.com`, `*.googleapis.com`, `*.googleusercontent.com`, `*.ggpht.com`, `*.googletagmanager.com`, `*.google-analytics.com`) or inline base64 data URLs. All subresources to private IPs, metadata, or unauthorized third-party domains are aborted with `blockedbyclient`.
+    - Integrated DNS caching (`_BROWSER_DNS_CACHE`) ensures zero latency overhead while guaranteeing continuous SSRF defense.
+- **Preflight Enforcement in API Gateway (`app.py`):**
+  - `/api/scrape` for `type == 'maps'` invokes `validate_google_maps_url(url)` before initiating Playwright. Catches `SecurityError` and returns HTTP 400 with descriptive error.
+- **Automated Security Regression Test Suite (`tests/test_security.py` & `tests/test_api.py`):**
+  - Added `TestGoogleMapsPlaywrightSecurity` with 8 dedicated tests:
+    - Valid Google Maps Search URL accepted.
+    - Valid Google Maps Place URL accepted.
+    - Arbitrary external host rejected.
+    - Localhost and private IP URLs rejected.
+    - Cloud metadata and IPv6 link-local destinations rejected.
+    - Redirects to unauthorized destinations blocked.
+    - Browser subresource requests to unauthorized destinations blocked.
+    - Preflight rejection before Playwright launch.
+  - Added 3 API SSRF tests for `type == 'maps'` in `tests/test_api.py`.
+  - Total automated test suite expanded to **84 tests** (100% passing).

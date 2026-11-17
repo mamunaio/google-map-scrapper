@@ -24,6 +24,27 @@ class TestAppAPI(unittest.TestCase):
         self.assertFalse(data["success"])
         self.assertIn("Security restriction", data["error"])
 
+    def test_scrape_api_maps_ssrf_blocked_localhost(self):
+        response = self.client.post('/api/scrape', json={"url": "http://127.0.0.1:8000/maps", "type": "maps"})
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.data)
+        self.assertFalse(data["success"])
+        self.assertIn("Security restriction", data["error"])
+
+    def test_scrape_api_maps_ssrf_blocked_external_domain(self):
+        response = self.client.post('/api/scrape', json={"url": "https://example.com/maps/search/hvac", "type": "maps"})
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.data)
+        self.assertFalse(data["success"])
+        self.assertIn("Security restriction", data["error"])
+
+    def test_scrape_api_maps_ssrf_blocked_metadata(self):
+        response = self.client.post('/api/scrape', json={"url": "http://169.254.169.254/latest", "type": "maps"})
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.data)
+        self.assertFalse(data["success"])
+        self.assertIn("Security restriction", data["error"])
+
     @patch('app.scrape_google_maps')
     @patch('app.crawl_and_audit_website')
     def test_scrape_api_maps_search_url_multi_lead(self, mock_crawl, mock_maps):

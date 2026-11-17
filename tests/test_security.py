@@ -11,8 +11,13 @@ from services.security import (
     _safe_create_connection,
     safe_http_get,
     SafeHTTPAdapter,
-    SecurityError
+    SecurityError,
+    validate_google_maps_url,
+    is_safe_browser_url,
+    is_google_maps_domain,
+    is_authorized_maps_subresource_host
 )
+from services.maps_scraper import create_playwright_route_interceptor, scrape_google_maps
 
 class TestSecurity(unittest.TestCase):
     # -------------------------------------------------------------
@@ -311,6 +316,187 @@ class TestSecurity(unittest.TestCase):
                 self.assertIn("example.com", resolved_hosts)
                 # Verify socket connected directly to the pinned public IP address
                 mock_sock.connect.assert_called_once_with(('93.184.216.34', 443))
+
+class TestGoogleMapsPlaywrightSecurity(unittest.TestCase):
+    """
+    Automated security regression tests for Google Maps Playwright navigation,
+    SSRF defense, domain whitelist validation, and browser route/redirect/subresource filtering.
+    """
+
+    def test_valid_google_maps_search_url_accepted(self):
+        url = "https://www.google.com/maps/search/HVAC+contractors+in+Dallas,+TX"
+        sanitized = validate_google_maps_url(url)
+        self.assertEqual(sanitized, url)
+
+        # Query format
+        q_url = "https://maps.google.com/?q=HVAC+Dallas"
+        self.assertEqual(validate_google_maps_url(q_url), q_url)
+
+    def test_valid_google_maps_place_url_accepted(self):
+        url = "https://www.google.com/maps/place/Dallas+HVAC/@32.7767,-96.7970,14z"
+        sanitized = validate_google_maps_url(url)
+        self.assertEqual(sanitized, url)
+
+        # Shortlink
+        short = "https://maps.app.goo.gl/abcdef123"
+        self.assertEqual(validate_google_maps_url(short), short)
+
+    def test_arbitrary_external_host_rejected(self):
+        invalid_hosts = [
+            "https://example.com/maps/search/HVAC",
+            "https://bing.com/maps",
+            "https://evil-google.com/maps",
+            "https://google.com.attacker.com/maps",
+            "https://yahoo.com/maps",
+            "https://www.google.com/finance",  # Legitimate Google host, but unauthorized non-maps pattern
+        ]
+        for url in invalid_hosts:
+            with self.subTest(url=url):
+                with self.assertRaises(SecurityError):
+                    validate_google_maps_url(url)
+
+    def test_localhost_and_private_ip_urls_rejected(self):
+        private_urls = [
+            "http://127.0.0.1:8000/maps",
+            "http://localhost:5000/maps",
+            "http://10.0.0.1/maps",
+            "http://192.168.1.1/maps",
+            "http://172.16.0.1/maps",
+            "http://0.0.0.0:8000/maps",
+        ]
+        for url in private_urls:
+            with self.subTest(url=url):
+                with self.assertRaises(SecurityError):
+                    validate_google_maps_url(url)
+
+    def test_cloud_metadata_and_ipv6_link_local_rejected(self):
+        metadata_urls = [
+            "http://169.254.169.254/latest/meta-data",
+            "http://[fe80::1]/maps",
+            "http://[::1]:8080/maps",
+            "file:///etc/passwd",
+            "gopher://127.0.0.1:8000/",
+        ]
+        for url in metadata_urls:
+            with self.subTest(url=url):
+                with self.assertRaises(SecurityError):
+                    validate_google_maps_url(url)
+
+    def test_redirects_to_unauthorized_destinations_blocked(self):
+        mock_page = MagicMock()
+        mock_page.main_frame = MagicMock()
+
+        interceptor = create_playwright_route_interceptor(mock_page)
+
+        # Case A: Redirect to localhost
+        route_localhost = MagicMock()
+        req_localhost = MagicMock()
+        req_localhost.url = "http://127.0.0.1:8000/internal-admin"
+        req_localhost.is_navigation_request.return_value = True
+        req_localhost.frame = mock_page.main_frame
+        route_localhost.request = req_localhost
+
+        interceptor(route_localhost)
+        route_localhost.abort.assert_called_once_with("blockedbyclient")
+        route_localhost.continue_.assert_not_called()
+
+        # Case B: Redirect to arbitrary external destination
+        route_external = MagicMock()
+        req_external = MagicMock()
+        req_external.url = "https://evil.com/phishing"
+        req_external.is_navigation_request.return_value = True
+        req_external.frame = mock_page.main_frame
+        route_external.request = req_external
+
+        interceptor(route_external)
+        route_external.abort.assert_called_once_with("blockedbyclient")
+        route_external.continue_.assert_not_called()
+
+        # Case C: Valid navigation to Google Maps
+        route_valid = MagicMock()
+        req_valid = MagicMock()
+        req_valid.url = "https://www.google.com/maps/place/Dallas+Pro+HVAC"
+        req_valid.is_navigation_request.return_value = True
+        req_valid.frame = mock_page.main_frame
+        route_valid.request = req_valid
+
+        interceptor(route_valid)
+        route_valid.continue_.assert_called_once()
+        route_valid.abort.assert_not_called()
+
+    def test_browser_subresource_requests_to_unauthorized_destinations_blocked(self):
+        mock_page = MagicMock()
+        mock_page.main_frame = MagicMock()
+
+        interceptor = create_playwright_route_interceptor(mock_page)
+
+        # Case A: Subresource requesting cloud metadata IP
+        route_meta = MagicMock()
+        req_meta = MagicMock()
+        req_meta.url = "http://169.254.169.254/latest/meta-data"
+        req_meta.is_navigation_request.return_value = False
+        route_meta.request = req_meta
+
+        interceptor(route_meta)
+        route_meta.abort.assert_called_once_with("blockedbyclient")
+        route_meta.continue_.assert_not_called()
+
+        # Case B: Subresource requesting local network
+        route_local = MagicMock()
+        req_local = MagicMock()
+        req_local.url = "http://127.0.0.1:8000/leak.png"
+        req_local.is_navigation_request.return_value = False
+        route_local.request = req_local
+
+        interceptor(route_local)
+        route_local.abort.assert_called_once_with("blockedbyclient")
+        route_local.continue_.assert_not_called()
+
+        # Case C: Subresource requesting untrusted third-party host
+        route_evil = MagicMock()
+        req_evil = MagicMock()
+        req_evil.url = "https://evil.com/tracker.js"
+        req_evil.is_navigation_request.return_value = False
+        route_evil.request = req_evil
+
+        interceptor(route_evil)
+        route_evil.abort.assert_called_once_with("blockedbyclient")
+        route_evil.continue_.assert_not_called()
+
+        # Case D: Authorized Google subresource (gstatic)
+        route_static = MagicMock()
+        req_static = MagicMock()
+        req_static.url = "https://maps.gstatic.com/tactile/omnibox/compass-2x.png"
+        req_static.is_navigation_request.return_value = False
+        route_static.request = req_static
+
+        interceptor(route_static)
+        route_static.continue_.assert_called_once()
+        route_static.abort.assert_not_called()
+
+        # Case E: Inline base64 data URL
+        route_data = MagicMock()
+        req_data = MagicMock()
+        req_data.url = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        req_data.is_navigation_request.return_value = False
+        route_data.request = req_data
+
+        interceptor(route_data)
+        route_data.continue_.assert_called_once()
+        route_data.abort.assert_not_called()
+
+    def test_scrape_google_maps_preflight_blocks_invalid_url(self):
+        # Localhost rejected before Playwright launches
+        with self.assertRaises(SecurityError):
+            scrape_google_maps("http://127.0.0.1:8000/maps")
+
+        # Arbitrary external host rejected before Playwright launches
+        with self.assertRaises(SecurityError):
+            scrape_google_maps("https://example.com/search?q=hvac")
+
+        # Cloud metadata rejected before Playwright launches
+        with self.assertRaises(SecurityError):
+            scrape_google_maps("http://169.254.169.254/latest")
 
 if __name__ == '__main__':
     unittest.main()
