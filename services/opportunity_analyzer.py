@@ -213,20 +213,48 @@ def analyze_business_opportunities(
     # Opportunity 7: Mobile Usability & Responsive Redesign
     mobile_info = technical_result.get("mobile_usability", {})
     is_tech_valid = technical_result.get("status") not in ["Inconclusive", "Blocked / Inconclusive"]
-    if is_tech_valid and (not mobile_info.get("has_viewport") or mobile_info.get("overflow_risk")):
+    has_confirmed_viewport_issue = bool(
+        mobile_info and (
+            mobile_info.get("has_viewport") is False or
+            mobile_info.get("fixed_viewport_width") is True or
+            mobile_info.get("overflow_risk") is True
+        )
+    )
+    if is_tech_valid and has_confirmed_viewport_issue:
+        vp_evidence = (
+            "Missing <meta name='viewport'> tag on scanned page."
+            if mobile_info.get("has_viewport") is False
+            else f"Non-responsive fixed-width viewport configuration detected ({mobile_info.get('viewport_content', '')})."
+        )
         opportunities.append({
             "Business Name": biz,
             "Opportunity Category": "Website Development",
             "Finding": "Mobile Viewport / Formatting Issues",
-            "Evidence": "Missing viewport meta tag or fixed pixel widths detected causing horizontal overflow risks on mobile viewports.",
+            "Evidence": vp_evidence,
             "Confidence": "High",
             "Research Status": "Detected",
             "Recommended Service": "Mobile-Responsive Layout Optimization",
             "Related Finding": "Mobile Viewport / Formatting Issues",
             "Evidence URL": evidence_url,
-            "Evidence Description": "Missing viewport meta tag or fixed pixel widths detected causing horizontal overflow risks on mobile viewports.",
-            "Potential Business Impact": "Mobile devices may render page content with horizontal overflow or scaling issues.",
+            "Evidence Description": vp_evidence,
+            "Potential Business Impact": "Mobile devices may scale the page improperly without a responsive device-width viewport configuration.",
             "Confidence Level": "High"
+        })
+    elif is_tech_valid and mobile_info.get("overflow_warning"):
+        warn_evidence = "Inline wide layout container detected in static HTML; visual mobile testing is required to confirm whether external CSS overrides width."
+        opportunities.append({
+            "Business Name": biz,
+            "Opportunity Category": "Website Development",
+            "Finding": "Potential Fixed-Width Layout Container (Needs Visual Review)",
+            "Evidence": warn_evidence,
+            "Confidence": "Low",
+            "Research Status": "Needs Review",
+            "Recommended Service": "Mobile-Responsive Layout Review",
+            "Related Finding": "Inline Fixed-Width Layout Container (Needs Review)",
+            "Evidence URL": evidence_url,
+            "Evidence Description": warn_evidence,
+            "Potential Business Impact": "Inline fixed-width container styles may cause horizontal scrolling on small screens if not overridden by responsive stylesheets.",
+            "Confidence Level": "Low"
         })
 
     # Opportunity 8: SSL Security & HTTPS Enforcement

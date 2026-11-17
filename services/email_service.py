@@ -291,29 +291,50 @@ def find_decision_maker_from_html(html_text: str, business_name: str = ""):
     def is_valid_human_name(name_cand: str) -> bool:
         if not name_cand or not isinstance(name_cand, str):
             return False
-        clean = re.sub(r'[^a-zA-Z\s]', '', name_cand).strip()
-        parts = clean.split()
-        if not (1 <= len(parts) <= 3):
+        # Allow Latin letters (including accented characters like José), spaces, hyphens, and apostrophes
+        clean = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ\s'’\-]", '', name_cand).strip()
+        parts = [p for p in clean.split() if p]
+        # Require full human name (2 to 4 tokens, e.g. 'Phillip Cody', 'Jose Luis Mondragon')
+        if not (2 <= len(parts) <= 4):
             return False
-        # Cannot be predominantly lowercase or uppercase single letters
-        if any(len(p) == 1 and not p.isalpha() for p in parts):
+        # Every token must start with an uppercase letter and have >=2 alphabetic chars (except middle initial like 'J.')
+        for idx_p, p in enumerate(parts):
+            alpha_only = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ]", "", p)
+            if not alpha_only:
+                return False
+            if idx_p in (0, len(parts) - 1) and len(alpha_only) < 2:
+                return False
+            if not p[0].isupper():
+                return False
+        # Reject if matches or is contained within business name
+        cand_lower = re.sub(r'[^a-z0-9\s]', '', clean.lower()).strip()
+        if normalized_biz and (cand_lower == normalized_biz or normalized_biz in cand_lower or cand_lower in normalized_biz):
             return False
-        # Reject if matches business name
-        cand_lower = clean.lower()
-        if normalized_biz and (cand_lower == normalized_biz or normalized_biz in cand_lower):
-            return False
-        # Reject if significant token overlap with business name
+        # Reject if significant token overlap with business name industry/brand words
         cand_words = set(cand_lower.split())
+        if biz_words and len(cand_words.intersection(biz_words)) >= max(2, len(cand_words)):
+            return False
         if biz_words and len(cand_words.intersection(biz_words)) >= max(1, len(cand_words) // 2):
-            if any(w in cand_words for w in ['hvac', 'air', 'heating', 'cooling', 'plumbing', 'roofing', 'service', 'company', 'services']):
+            if any(w in cand_words for w in ['hvac', 'air', 'heating', 'cooling', 'plumbing', 'roofing', 'service', 'company', 'services', 'mechanical', 'energy', 'systems']):
                 return False
         blacklist = {
-            'call', 'contact', 'about', 'service', 'services', 'home', 'privacy', 'terms', 'hvac', 'houston',
-            'dallas', 'air', 'heating', 'cooling', 'conditioning', 'schedule', 'read', 'more', 'our', 'business',
-            'company', 'plumbing', 'electric', 'contractor', 'contractors', 'emergency', 'repair', 'installation',
-            'solutions', 'group', 'team', 'technicians', 'pro', 'pros', 'experts', 'reviews', 'request', 'quote'
+            'call', 'contact', 'about', 'service', 'services', 'home', 'hom', 'homeowner', 'homeowners',
+            'privacy', 'terms', 'hvac', 'houston', 'dallas', 'texas', 'austin', 'fort', 'worth',
+            'arlington', 'plano', 'irving', 'garland', 'richardson', 'mesquite', 'carrollton', 'coppell', 'rowlett',
+            'air', 'heating', 'cooling', 'conditioning', 'schedule', 'read', 'more', 'our', 'business',
+            'company', 'plumbing', 'electric', 'electrical', 'contractor', 'contractors', 'emergency',
+            'repair', 'installation', 'solutions', 'group', 'team', 'technicians', 'pro', 'pros',
+            'experts', 'reviews', 'request', 'quote', 'american', 'national', 'commercial', 'residential',
+            'local', 'family', 'premier', 'quality', 'trusted', 'certified', 'licensed', 'master',
+            'best', 'top', 'great', 'first', 'star', 'metro', 'north', 'south', 'east', 'west',
+            'central', 'dfw', 'comfort', 'energy', 'mechanical', 'customer', 'customers', 'office',
+            'management', 'owner', 'founder', 'president', 'ceo', 'principal', 'climate', 'control',
+            'systems', 'tech', 'unit', 'units', 'new', 'your', 'the', 'and', 'for', 'with', 'from',
+            'that', 'this', 'property', 'building', 'house', 'small', 'large', 'general', 'manager',
+            'every', 'each', 'many', 'most', 'some', 'meet', 'visit', 'today', 'now', 'here', 'welcome',
+            'proud', 'serving', 'since', 'years', 'experience', 'award', 'winning'
         }
-        if any(w.lower() in blacklist for w in parts):
+        if any(re.sub(r"[^a-z]", "", w.lower()) in blacklist for w in parts):
             return False
         return True
 
@@ -357,12 +378,18 @@ def find_decision_maker_from_html(html_text: str, business_name: str = ""):
             except Exception:
                 pass
 
-        # 2. Heuristic text search
-        text = soup.get_text(separator=' ')
+        # 2. Heuristic text search (explicitly escaped separator classes prevent character-range truncation)
+        text = re.sub(r'\s+', ' ', soup.get_text(separator=' '))
+        upper_c = r"[A-ZÀ-ÖØ-Þ]"
+        lower_c = r"[a-zà-öø-ÿ]"
+        name_token = rf"(?:{upper_c}['’]{upper_c}{lower_c}+|{upper_c}{lower_c}+(?:['’\-]{upper_c}{lower_c}+)?)"
+        full_name_pat = rf"({name_token}(?:\s+{name_token}){{1,3}})"
+        role_pat = r"(?:Owner|Founder|Co-Founder|President|CEO|Principal)"
+
         patterns = [
-            r'(?:Owner|Founder|Co-Founder|President|CEO|Principal)\s*[:\-–]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})',
-            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s*[,-–|]\s*(?:Owner|Founder|Co-Founder|President|CEO|Principal)',
-            r'Meet\s+(?:the\s+Owner|our\s+Founder|the\s+Founder)\s*[:\-–]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})'
+            rf"\b{role_pat}(?:\s*[:\-–—]\s*|\s+){full_name_pat}\b",
+            rf"\b{full_name_pat}(?:\s*[,\-–—|]\s*|\s+){role_pat}\b",
+            rf"\bMeet\s+(?:the\s+Owner|our\s+Founder|the\s+Founder|Owner|Founder)\s*[:\-–—,]?\s*{full_name_pat}\b"
         ]
 
         for pat in patterns:

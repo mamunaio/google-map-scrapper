@@ -559,8 +559,11 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
 
         # 7. Mobile / Viewport Status
         mob_info = tech.get("mobile_usability", {})
-        if any(n in tech_finding_names for n in ["Missing Responsive Viewport Meta Tag", "Missing Viewport Meta Tag", "Mobile Viewport Width Mismatch", "Horizontal Content Overflow Risk", "Potential Mobile Horizontal Overflow"]) or mob_info.get("status") in ["Non-Responsive", "Overflow Risk"] or "Needs Improvement" in str(mob_info.get("status", "")):
+        mob_status_str = str(mob_info.get("status", ""))
+        if any(n in tech_finding_names for n in ["Missing Responsive Viewport Meta Tag", "Missing Viewport Meta Tag", "Fixed-Width Viewport Meta Tag", "Mobile Viewport Width Mismatch", "Horizontal Content Overflow Risk", "Potential Mobile Horizontal Overflow"]) or mob_info.get("status") in ["Non-Responsive", "Overflow Risk"] or "Non-Responsive" in mob_status_str or "Needs Improvement" in mob_status_str:
             mob_status = "Confirmed issue"
+        elif "Needs Review" in mob_status_str or mob_info.get("overflow_warning"):
+            mob_status = "Needs Review"
         elif mob_info.get("status") in ["Mobile-Friendly", "Responsive", "Passed"] or mob_info.get("has_viewport"):
             mob_status = "Passed"
         else:

@@ -19,6 +19,7 @@ PROVIDER_SIGNATURES = {
         {"name": "Housecall Pro", "patterns": [r"housecallpro\.com", r"online-booking\.housecallpro\.com"]},
         {"name": "Jobber", "patterns": [r"getjobber\.com", r"clienthub\.getjobber\.com"]},
         {"name": "ServiceTitan", "patterns": [r"servicetitan\.com", r"schedule\.servicetitan\.com"]},
+        {"name": "ScheduleEngine", "patterns": [r"router\.scheduleengine\.net", r"ScheduleEngine\.show"]},
         {"name": "vCita", "patterns": [r"vcita\.com", r"livesite\.vcita\.com"]},
         {"name": "Chili Piper", "patterns": [r"js\.chilipiper\.com", r"chilipiper\.com"]},
         {"name": "HubSpot Meetings", "patterns": [r"meetings\.hubspot\.com"]},
@@ -40,6 +41,7 @@ PROVIDER_SIGNATURES = {
         {"name": "Olark", "patterns": [r"static\.olark\.com", r"olark\.identify"]},
         {"name": "Chaport", "patterns": [r"chaport\.com"]},
         {"name": "Tawk.to", "patterns": [r"embed\.tawk\.to", r"Tawk_API"]},
+        {"name": "ScheduleEngine Webchat", "patterns": [r"webchat\.scheduleengine\.net"]},
     ],
     "voice_agent": [
         {"name": "Vapi AI", "patterns": [r"vapi\.ai", r"cdn\.vapi\.ai"]},

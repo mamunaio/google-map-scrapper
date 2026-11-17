@@ -116,12 +116,19 @@ def audit_technical_and_mobile(html_text: str, current_url: str, final_url: str,
     viewport_tag = soup.find('meta', attrs={'name': re.compile(r'^viewport$', re.IGNORECASE)})
     has_viewport = bool(viewport_tag and viewport_tag.get('content'))
     viewport_content = viewport_tag.get('content', '') if viewport_tag else ""
+    viewport_lower = viewport_content.lower()
+
+    # Check for explicit fixed-width non-responsive viewport meta tag (e.g. width=1024 without device-width)
+    fixed_vp_match = re.search(r'\bwidth\s*=\s*(\d{3,4})\b', viewport_lower)
+    fixed_viewport_width = bool(
+        has_viewport and 'device-width' not in viewport_lower and fixed_vp_match and int(fixed_vp_match.group(1)) > 600
+    )
 
     # Check for responsive CSS indicators
     responsive_indicators = []
-    if 'width=device-width' in viewport_content.lower():
+    if 'width=device-width' in viewport_lower:
         responsive_indicators.append("Device-width viewport configuration")
-    if 'initial-scale=1' in viewport_content.lower():
+    if 'initial-scale=1' in viewport_lower:
         responsive_indicators.append("Initial-scale zoom initialization")
 
     # Search styles for media queries
@@ -135,9 +142,32 @@ def audit_technical_and_mobile(html_text: str, current_url: str, final_url: str,
     if any(fw in html_sample for fw in ['bootstrap', 'tailwind', 'flex', 'grid', 'col-sm-', 'col-md-', 'w-full', 'max-w-']):
         responsive_indicators.append("Responsive layout utility classes")
 
-    # Horizontal overflow risk checks (fixed wide pixel widths like width="1200" or style="width: 1400px")
-    fixed_wide_elements = re.findall(r'(?:width|min-width)\s*[:=]\s*["\']?\s*([1-9]\d{3,4})\s*(?:px)?["\']?', html_sample)
-    overflow_risk = len(fixed_wide_elements) > 0
+    # Static inline layout-container width check:
+    # Strictly excludes @media breakpoints, max-width, <img>/<svg>/<meta>/<script>/JSON-LD attributes.
+    # Static HTML alone cannot prove rendered overflow on a device-width viewport, so inline hints
+    # are recorded as low-confidence Needs Review warnings rather than confirmed High-Confidence defects.
+    inline_wide_containers = []
+    layout_tags = ('body', 'div', 'section', 'main', 'table', 'header', 'footer', 'nav', 'article', 'aside', 'form')
+    for el in soup.find_all(layout_tags):
+        style_attr = (el.get('style') or '').lower()
+        if style_attr:
+            # Skip elements that constrain width responsively
+            if re.search(r'max-width\s*:\s*100(?:%|vw)', style_attr):
+                continue
+            # Negative lookbehind prevents matching max-width
+            matches = re.findall(r'(?<![a-z-])(?:width|min-width)\s*:\s*([1-9]\d{3,4})\s*px', style_attr)
+            for m in matches:
+                inline_wide_containers.append(f"<{el.name} style='width:{m}px'>")
+        elif el.name == 'table':
+            width_attr = str(el.get('width') or '').strip().lower().rstrip('px')
+            if width_attr.isdigit() and int(width_attr) > 1000:
+                inline_wide_containers.append(f"<table width='{width_attr}'>")
+        if len(inline_wide_containers) >= 3:
+            break
+
+    # Confirmed horizontal overflow risk requires structural viewport defect, not a bare CSS breakpoint/image width
+    overflow_risk = fixed_viewport_width
+    overflow_warning = bool(inline_wide_containers) and not overflow_risk
 
     if not has_viewport:
         findings.append({
@@ -149,26 +179,38 @@ def audit_technical_and_mobile(html_text: str, current_url: str, final_url: str,
             "suggested_improvement": "Add <meta name='viewport' content='width=device-width, initial-scale=1.0'> to the HTML head.",
             "detection_method": "DOM Head Parser"
         })
-    elif overflow_risk:
+    elif fixed_viewport_width:
         findings.append({
-            "name": "Potential Mobile Horizontal Overflow",
-            "severity": "Medium",
+            "name": "Fixed-Width Viewport Meta Tag",
+            "severity": "High",
             "affected_url": final_url,
-            "evidence": f"Found fixed width definitions exceeding 1000px ({fixed_wide_elements[:2]}).",
-            "explanation": "Hardcoded pixel widths can exceed smartphone screen widths, causing awkward horizontal scrolling.",
-            "suggested_improvement": "Replace fixed pixel widths with relative percentages or responsive CSS (max-width: 100%).",
-            "detection_method": "CSS Dimension Scanner"
+            "evidence": f"Viewport meta tag sets fixed desktop width: '{viewport_content}'.",
+            "explanation": "A fixed numeric viewport width prevents mobile scaling to device-width.",
+            "suggested_improvement": "Replace fixed viewport width with width=device-width, initial-scale=1.0.",
+            "detection_method": "DOM Head Parser"
+        })
+    elif overflow_warning:
+        findings.append({
+            "name": "Inline Fixed-Width Layout Container (Needs Review)",
+            "severity": "Low",
+            "affected_url": final_url,
+            "evidence": f"Inline wide container attribute(s) detected: {', '.join(inline_wide_containers[:2])}. Static HTML cannot confirm whether external CSS overrides width on mobile.",
+            "explanation": "Inline pixel widths exceeding 1000px on layout containers may cause horizontal scrolling if not overridden by responsive CSS.",
+            "suggested_improvement": "Verify rendered mobile layout and replace inline fixed widths with responsive max-width rules if overflow occurs.",
+            "detection_method": "DOM Inline Style Inspector"
         })
 
     # Nuanced mobile readiness status
     if not has_viewport:
         mobile_status = "Poor (No Viewport)"
-    elif len(responsive_indicators) >= 2 and not overflow_risk:
+    elif fixed_viewport_width:
+        mobile_status = "Non-Responsive (Fixed Viewport Width)"
+    elif overflow_warning:
+        mobile_status = "Needs Review (Inline fixed-width container detected)"
+    elif len(responsive_indicators) >= 2:
         mobile_status = "Optimized (Viewport & Responsive Structure Detected)"
-    elif has_viewport and not overflow_risk:
-        mobile_status = "Standard (Viewport configured, basic layout)"
     else:
-        mobile_status = "Needs Improvement (Responsive warnings detected)"
+        mobile_status = "Standard (Viewport configured, basic layout)"
 
     return {
         "ssl_certificate": ssl_info,
@@ -176,9 +218,11 @@ def audit_technical_and_mobile(html_text: str, current_url: str, final_url: str,
         "mobile_usability": {
             "status": mobile_status,
             "has_viewport": has_viewport,
+            "fixed_viewport_width": fixed_viewport_width,
             "viewport_content": viewport_content,
             "responsive_indicators": responsive_indicators,
-            "overflow_risk": overflow_risk
+            "overflow_risk": overflow_risk,
+            "overflow_warning": overflow_warning
         },
         "findings": findings
     }

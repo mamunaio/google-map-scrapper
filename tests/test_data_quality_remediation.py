@@ -1006,4 +1006,183 @@ def test_case_23_ssl_inspection_uses_certifi_and_preserves_original_sni_hostname
     assert res["days_remaining"] > 0
 
 
+# -----------------------------------------------------------------------------
+# 24. Mobile Overflow Detector Excludes Responsive CSS, max-width & Image Widths
+# -----------------------------------------------------------------------------
+def test_case_24_mobile_overflow_ignores_responsive_css_breakpoints_and_image_widths():
+    from services.technical_audit import audit_technical_and_mobile
+    from services.opportunity_analyzer import analyze_business_opportunities
+
+    # 1. Negative test: modern responsive page with @media (min-width: 1024px), max-width: 1200px,
+    #    <img width="1600">, <svg width="2400">, og:image:width=1200, JSON-LD width: 1200
+    responsive_html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta property="og:image:width" content="1200">
+        <script type="application/ld+json">{"@type": "ImageObject", "width": 1200}</script>
+        <style>
+            .container { max-width: 1170px; margin: 0 auto; }
+            @media (min-width: 1024px) { .grid { display: grid; } }
+            @media (min-width: 1200px) { .hero { max-width: 1400px; } }
+        </style>
+    </head>
+    <body>
+        <div class="container" style="width: 1200px; max-width: 100%;">
+            <img src="hero.jpg" width="1600" height="900" alt="HVAC" />
+            <svg width="2400" height="100"></svg>
+        </div>
+    </body>
+    </html>
+    """
+    with patch("services.technical_audit.inspect_ssl_certificate", return_value={"status": "Valid", "days_remaining": 60}):
+        tech = audit_technical_and_mobile(responsive_html, "https://example.com", "https://example.com", 200, True)
+
+    mob = tech["mobile_usability"]
+    assert mob["has_viewport"] is True
+    assert mob["overflow_risk"] is False
+    assert mob["overflow_warning"] is False
+    assert "Optimized" in mob["status"]
+    assert not any("Overflow" in f.get("name", "") for f in tech["findings"])
+
+    opps = analyze_business_opportunities(
+        features_result={}, seo_result={"seo_score": 95, "findings": []},
+        technical_result=tech, decision_maker="", email="", business_name="Resp HVAC", target_url="https://example.com"
+    )
+    assert not any(o["Opportunity Category"] == "Website Development" for o in opps["detected_opportunities"])
+
+    # 2. Inline wide container without max-width: 100% on a valid device-width page -> Needs Review / Low (NOT High/Detected)
+    inline_wide_html = """
+    <html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
+    <body><div style="width: 1400px;">Wide Container</div></body></html>
+    """
+    with patch("services.technical_audit.inspect_ssl_certificate", return_value={"status": "Valid", "days_remaining": 60}):
+        tech_warn = audit_technical_and_mobile(inline_wide_html, "https://example.com", "https://example.com", 200, True)
+    assert tech_warn["mobile_usability"]["overflow_risk"] is False
+    assert tech_warn["mobile_usability"]["overflow_warning"] is True
+    assert "Needs Review" in tech_warn["mobile_usability"]["status"]
+
+    opps_warn = analyze_business_opportunities(
+        features_result={}, seo_result={"seo_score": 95, "findings": []},
+        technical_result=tech_warn, decision_maker="", email="", business_name="Warn HVAC", target_url="https://example.com"
+    )
+    webdev_opps = [o for o in opps_warn["detected_opportunities"] if o["Opportunity Category"] == "Website Development"]
+    assert len(webdev_opps) == 1
+    assert webdev_opps[0]["Research Status"] == "Needs Review"
+    assert webdev_opps[0]["Confidence"] == "Low"
+
+    # 3. Positive test: Explicit fixed-width non-responsive viewport -> Confirmed High-Confidence Detected
+    fixed_vp_html = """
+    <html><head><meta name="viewport" content="width=1200"></head><body><p>Desktop only</p></body></html>
+    """
+    with patch("services.technical_audit.inspect_ssl_certificate", return_value={"status": "Valid", "days_remaining": 60}):
+        tech_fixed = audit_technical_and_mobile(fixed_vp_html, "https://example.com", "https://example.com", 200, True)
+    assert tech_fixed["mobile_usability"]["fixed_viewport_width"] is True
+    assert tech_fixed["mobile_usability"]["overflow_risk"] is True
+
+    opps_fixed = analyze_business_opportunities(
+        features_result={}, seo_result={"seo_score": 95, "findings": []},
+        technical_result=tech_fixed, decision_maker="", email="", business_name="Fixed VP HVAC", target_url="https://example.com"
+    )
+    webdev_fixed = [o for o in opps_fixed["detected_opportunities"] if o["Opportunity Category"] == "Website Development"]
+    assert len(webdev_fixed) == 1
+    assert webdev_fixed[0]["Research Status"] == "Detected"
+    assert webdev_fixed[0]["Confidence"] == "High"
+
+
+# -----------------------------------------------------------------------------
+# 25. Contact Person Extraction Fixes Truncation, Multi-Word Names & Non-Persons
+# -----------------------------------------------------------------------------
+def test_case_25_contact_person_fixes_truncation_preserves_multiword_and_rejects_non_persons():
+    # 1. Fixed truncation cases observed in Phase 09
+    html_cody = "<html><body><p>Phillip Cody, Owner of Cody &amp; Sons Plumbing, Heating &amp; Air</p></body></html>"
+    name_cody, _ = find_decision_maker_from_html(html_cody, business_name="Cody & Sons Plumbing, Heating & Air")
+    assert name_cody == "Phillip Cody"
+
+    html_kiser = "<html><body><p>Richard Henderson | Founder</p></body></html>"
+    name_kiser, _ = find_decision_maker_from_html(html_kiser, business_name="M. B. Kiser Heating & Air Conditioning Co. Inc.")
+    assert name_kiser == "Richard Henderson"
+
+    # 2. Multi-word & hyphenated/apostrophe human names preserved
+    html_multi = "<html><body><p>Founder: Jose Luis Mondragon</p></body></html>"
+    name_multi, _ = find_decision_maker_from_html(html_multi, business_name="Mondragon Mechanical LLC")
+    assert name_multi == "Jose Luis Mondragon"
+
+    html_hyph = "<html><body><p>Mary-Anne O'Connor, CEO</p></body></html>"
+    name_hyph, _ = find_decision_maker_from_html(html_hyph, business_name="Apex Cooling")
+    assert name_hyph == "Mary-Anne O'Connor"
+
+    # 3. Negative tests: Non-person phrases and business names MUST be rejected (return None)
+    html_texas_home = "<html><body><p>Every Texas Home Owner deserves reliable AC repair.</p></body></html>"
+    name_tx, _ = find_decision_maker_from_html(html_texas_home, business_name="5 Star HVAC Contractors")
+    assert name_tx is None
+
+    html_biz_as_owner = "<html><body><p>Owner: Dallas Comfort Systems</p></body></html>"
+    name_biz, _ = find_decision_maker_from_html(html_biz_as_owner, business_name="Dallas Comfort Systems")
+    assert name_biz is None
+
+    html_brand = "<html><body><p>Trusted Family Experts, President</p></body></html>"
+    name_brand, _ = find_decision_maker_from_html(html_brand, business_name="Acme Air")
+    assert name_brand is None
+
+
+# -----------------------------------------------------------------------------
+# 26. Safe UTF-8 Encoding Detection Prevents Mojibake When Charset Header Omitted
+# -----------------------------------------------------------------------------
+def test_case_26_utf8_mojibake_safe_encoding_detection():
+    import requests
+    from services.security import safe_http_get
+
+    raw_utf8 = "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Dallas\u2013Fort Worth | Texas AirZone</title></head><body></body></html>".encode("utf-8")
+
+    fake_resp = requests.Response()
+    fake_resp.status_code = 200
+    fake_resp.url = "https://www.texasairzone.com/"
+    fake_resp.headers["Content-Type"] = "text/html"  # No charset -> requests defaults to ISO-8859-1
+    fake_resp.encoding = "ISO-8859-1"
+    fake_resp.iter_content = lambda chunk_size=16384: iter([raw_utf8])
+    fake_resp.close = lambda: None
+
+    with patch("services.security.validate_and_sanitize_url", side_effect=lambda u: u), \
+         patch("services.security.requests.Session.get", return_value=fake_resp):
+        resp = safe_http_get("https://www.texasairzone.com/")
+
+    assert resp.encoding.lower() == "utf-8"
+    assert "Dallas\u2013Fort Worth" in resp.text
+    assert "â€" not in resp.text
+
+
+# -----------------------------------------------------------------------------
+# 27. ScheduleEngine Verified DOM/Script Markers Detection
+# -----------------------------------------------------------------------------
+def test_case_27_schedule_engine_verified_markers():
+    from services.business_feature_detector import detect_business_features
+
+    # Airtron live markers: router.scheduleengine.net (booking) + webchat.scheduleengine.net (chatbot)
+    html_airtron = """
+    <html><head>
+        <script src="https://webchat.scheduleengine.net/webchat-v1.js"></script>
+        <script src="https://router.scheduleengine.net/common/v2/se_inc.js"></script>
+    </head><body></body></html>
+    """
+    feats_a = detect_business_features(html_airtron)
+    assert feats_a["booking"]["status"] == "Detected"
+    assert "ScheduleEngine" in feats_a["booking"]["providers"]
+    assert feats_a["chatbot"]["status"] == "Detected"
+    assert "ScheduleEngine Webchat" in feats_a["chatbot"]["providers"]
+
+    # Moss live marker: ScheduleEngine.show() (booking only, should NOT falsely trigger chatbot)
+    html_moss = """
+    <html><body>
+        <script>function openBook() { typeof ScheduleEngine !== 'undefined' && ScheduleEngine.show(); }</script>
+    </body></html>
+    """
+    feats_m = detect_business_features(html_moss)
+    assert feats_m["booking"]["status"] == "Detected"
+    assert "ScheduleEngine" in feats_m["booking"]["providers"]
+    assert feats_m["chatbot"]["status"] == "Not Detected"
+
+
+
 

@@ -266,6 +266,25 @@ def safe_http_get(url: str, headers: dict = None, max_bytes: int = MAX_RESPONSE_
                 response.close()
 
             response._content = bytes(content)
+            # Safe character encoding detection when Content-Type omits an explicit charset
+            # (prevents requests' RFC-2616 ISO-8859-1 fallback from producing UTF-8 mojibake)
+            content_type_hdr = (response.headers.get('Content-Type') or '').lower()
+            if 'charset=' not in content_type_hdr and response._content:
+                head_ascii = response._content[:4096].decode('ascii', errors='ignore')
+                meta_cs = re.search(
+                    r'<meta[^>]+charset=["\']?\s*([a-zA-Z0-9_\-]+)',
+                    head_ascii,
+                    re.IGNORECASE
+                )
+                if meta_cs:
+                    response.encoding = meta_cs.group(1).strip()
+                else:
+                    try:
+                        response._content.decode('utf-8')
+                        response.encoding = 'utf-8'
+                    except UnicodeDecodeError:
+                        if response.apparent_encoding:
+                            response.encoding = response.apparent_encoding
             response.ssl_verified = True
             return response
     finally:
