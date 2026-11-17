@@ -2,14 +2,14 @@
 LeadHunter Business Feature Detection Engine
 Detects digital infrastructure, marketing, and business automation capabilities:
 Lead Capture, Booking/Appointment, Chatbot, Voice AI, CRM, Review Management, Analytics.
-Uses an extensible signature registry.
+Strictly distinguishes: Detected, Not Detected, Unknown, Scan Failed.
+Never presumes missing DOM evidence confirms absolute business absence of a system.
 """
 
 import re
 from bs4 import BeautifulSoup
 
 # EXTENSIBLE SIGNATURE REGISTRY
-# Each category contains signatures with regex patterns, script src markers, or DOM indicators.
 PROVIDER_SIGNATURES = {
     "booking": [
         {"name": "Calendly", "patterns": [r"calendly\.com", r"assets\.calendly\.com"]},
@@ -85,7 +85,7 @@ PROVIDER_SIGNATURES = {
 }
 
 def detect_signatures_in_html(html_text: str, category_key: str):
-    """Matches signatures in HTML, scripts, and embedded links."""
+    """Matches signatures in HTML, script tags, and embedded links."""
     detected = []
     signatures = PROVIDER_SIGNATURES.get(category_key, [])
 
@@ -100,7 +100,7 @@ def detect_signatures_in_html(html_text: str, category_key: str):
 
 def detect_lead_capture_mechanisms(soup: BeautifulSoup, html_text: str):
     """
-    Detects forms, quote requests, phone call links, email links, and CTAs.
+    Detects forms, quote requests, click-to-call links, email links, and CTAs.
     """
     has_contact_form = False
     has_quote_form = False
@@ -133,7 +133,6 @@ def detect_lead_capture_mechanisms(soup: BeautifulSoup, html_text: str):
         elif href.startswith('mailto:'):
             has_email_link = True
 
-        # Check for High-converting CTA buttons
         cta_keywords = [
             'get free quote', 'request a quote', 'free estimate', 'book online',
             'schedule service', 'call now', 'schedule now', 'free inspection', 'contact us today'
@@ -143,7 +142,6 @@ def detect_lead_capture_mechanisms(soup: BeautifulSoup, html_text: str):
             if text not in prominent_ctas and len(prominent_ctas) < 3:
                 prominent_ctas.append(text)
 
-    # 3. Overall Lead Capture status
     evidence = []
     if has_quote_form: evidence.append("Online Quote/Estimate Request Form")
     elif has_contact_form: evidence.append("Standard Contact Form")
@@ -168,17 +166,33 @@ def detect_business_features(html_text: str):
     """
     Main entry point for Business Feature Detection Engine.
     Inspects HTML and returns structured findings for all 7 feature categories.
+    Strictly distinguishes: Detected, Not Detected, Unknown, Scan Failed.
     """
-    if not html_text:
+    categories = ["lead_capture", "booking", "chatbot", "voice_agent", "crm", "review_management", "analytics"]
+
+    if not html_text or not isinstance(html_text, str) or len(html_text.strip()) == 0:
         return {
-            cat: {"status": "Scan Failed", "providers": [], "evidence": "No HTML content received"}
-            for cat in ["lead_capture", "booking", "chatbot", "voice_agent", "crm", "review_management", "analytics"]
+            cat: {
+                "category": cat.replace("_", " ").title(),
+                "status": "Scan Failed",
+                "providers": [],
+                "evidence": "No readable HTML content received from server."
+            }
+            for cat in categories
         }
 
     try:
         soup = BeautifulSoup(html_text, 'html.parser')
     except Exception:
-        soup = BeautifulSoup("", 'html.parser')
+        return {
+            cat: {
+                "category": cat.replace("_", " ").title(),
+                "status": "Scan Failed",
+                "providers": [],
+                "evidence": "HTML parser exception occurred during scan."
+            }
+            for cat in categories
+        }
 
     results = {}
 
@@ -187,26 +201,34 @@ def detect_business_features(html_text: str):
     results["lead_capture"] = {
         "category": "Lead Capture",
         "status": lead_cap["status"],
-        "providers": ["Custom Form / CTA"] if lead_cap["status"] == "Detected" else [],
-        "evidence": ", ".join(lead_cap["evidence"]) if lead_cap["evidence"] else "No interactive contact forms or CTAs found on scanned pages",
+        "providers": ["On-Page Form / CTA"] if lead_cap["status"] == "Detected" else [],
+        "evidence": ", ".join(lead_cap["evidence"]) if lead_cap["evidence"] else "No interactive contact forms or CTAs observed on scanned pages.",
         "details": lead_cap["details"]
     }
 
     # 2. Booking and Appointment
     booking_providers = detect_signatures_in_html(html_text, "booking")
-    # Also check for booking keywords in links if no provider script was detected
+    has_booking_link = False
     if not booking_providers:
         for a in soup.find_all('a', href=True):
             href_text = (a.get('href', '') + " " + a.get_text()).lower()
             if any(b in href_text for b in ['/schedule', '/book-online', '/booking', 'appointment']):
-                booking_providers.append("Internal Booking Page")
+                booking_providers.append("Internal Booking Link")
+                has_booking_link = True
                 break
+
+    if booking_providers:
+        b_status = "Detected"
+        b_ev = f"Identified: {', '.join(booking_providers)}"
+    else:
+        b_status = "Not Detected"
+        b_ev = "No client-facing scheduling widgets or calendar integrations observed on scanned pages (external/off-site booking portal may still exist)."
 
     results["booking"] = {
         "category": "Booking & Appointment",
-        "status": "Detected" if booking_providers else "Not Detected",
+        "status": b_status,
         "providers": booking_providers,
-        "evidence": f"Found: {', '.join(booking_providers)}" if booking_providers else "No scheduling widgets or booking integrations found"
+        "evidence": b_ev
     }
 
     # 3. Chatbot
@@ -215,7 +237,7 @@ def detect_business_features(html_text: str):
         "category": "Live Chat & Chatbot",
         "status": "Detected" if chat_providers else "Not Detected",
         "providers": chat_providers,
-        "evidence": f"Found: {', '.join(chat_providers)}" if chat_providers else "No live chat or conversational bot scripts detected"
+        "evidence": f"Identified: {', '.join(chat_providers)}" if chat_providers else "No live chat or conversational bot scripts detected on scanned pages."
     }
 
     # 4. Voice Agent
@@ -224,16 +246,23 @@ def detect_business_features(html_text: str):
         "category": "AI Voice Agent",
         "status": "Detected" if voice_providers else "Not Detected",
         "providers": voice_providers,
-        "evidence": f"Found: {', '.join(voice_providers)}" if voice_providers else "No AI voice agent scripts or telephone automation detected"
+        "evidence": f"Identified: {', '.join(voice_providers)}" if voice_providers else "No AI voice agent scripts or telephony automation integrations observed."
     }
 
-    # 5. CRM
+    # 5. CRM & Lead Management
     crm_providers = detect_signatures_in_html(html_text, "crm")
+    if crm_providers:
+        crm_status = "Detected"
+        crm_ev = f"Identified client-side scripts: {', '.join(crm_providers)}"
+    else:
+        crm_status = "Not Detected"
+        crm_ev = "No client-side CRM scripts or embedded forms detected on scanned pages (server-side CRM or off-page pipeline may exist)."
+
     results["crm"] = {
         "category": "CRM & Pipeline Management",
-        "status": "Detected" if crm_providers else "Not Detected",
+        "status": crm_status,
         "providers": crm_providers,
-        "evidence": f"Found: {', '.join(crm_providers)}" if crm_providers else "No CRM tracking or embedded CRM forms found"
+        "evidence": crm_ev
     }
 
     # 6. Review & Reputation Management
@@ -242,7 +271,7 @@ def detect_business_features(html_text: str):
         "category": "Review Management",
         "status": "Detected" if review_providers else "Not Detected",
         "providers": review_providers,
-        "evidence": f"Found: {', '.join(review_providers)}" if review_providers else "No review widgets or reputation platform integrations found"
+        "evidence": f"Identified: {', '.join(review_providers)}" if review_providers else "No third-party review widgets or reputation platform integrations observed on scanned pages."
     }
 
     # 7. Marketing & Analytics
@@ -251,7 +280,7 @@ def detect_business_features(html_text: str):
         "category": "Marketing & Analytics",
         "status": "Detected" if analytics_providers else "Not Detected",
         "providers": analytics_providers,
-        "evidence": f"Found: {', '.join(analytics_providers)}" if analytics_providers else "No Google Analytics, Meta Pixel or tag managers detected"
+        "evidence": f"Identified: {', '.join(analytics_providers)}" if analytics_providers else "No Google Analytics, Meta Pixel, or tag managers detected on scanned pages."
     }
 
     return results

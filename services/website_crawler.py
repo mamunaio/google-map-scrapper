@@ -240,7 +240,8 @@ def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_na
         technical_result=tech_audit,
         decision_maker=decision_maker_str,
         email=email,
-        business_name=business_name
+        business_name=business_name,
+        target_url=final_url
     )
 
     # Step 7: Combine all results (preserving existing backward-compatible keys!)

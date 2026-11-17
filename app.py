@@ -134,18 +134,20 @@ def audit_api():
 
 @app.route('/api/export-excel', methods=['POST'])
 def export_excel_api():
-    """Generates and serves a styled Excel file with full lead intelligence columns."""
+    """Generates and serves a styled Excel file in Format A or Format B."""
     data = request.json or {}
     leads = data.get('leads', [])
+    format_type = data.get('format_type', 'standard_3_sheet')
     if not leads:
         return jsonify({"success": False, "error": "No lead records provided"}), 400
 
     try:
-        excel_buffer = generate_styled_excel(leads)
+        excel_buffer = generate_styled_excel(leads, format_type=format_type)
+        filename = "LeadHunter_3Sheet_Intelligence.xlsx" if format_type == "standard_3_sheet" else "LeadHunter_Source_Enriched.xlsx"
         return send_file(
             excel_buffer,
             as_attachment=True,
-            download_name="LeadHunter_Intelligence_Export.xlsx",
+            download_name=filename,
             mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     except Exception as e:

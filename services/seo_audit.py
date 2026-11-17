@@ -250,21 +250,46 @@ def audit_page_seo(html_text: str, page_url: str):
             "detection_method": "Meta Property Parser"
         })
 
-    # 10. Links count
-    internal_links = 0
-    external_links = 0
+    # 10. Links count & bounded broken internal link probe
+    internal_links = []
+    external_links_count = 0
     for a in soup.find_all('a', href=True):
         href = a['href'].strip()
         if href.startswith(('tel:', 'mailto:', 'javascript:', '#')):
             continue
-        parsed_href = urlparse(urljoin(page_url, href))
+        full_href = urljoin(page_url, href)
+        parsed_href = urlparse(full_href)
         if base_domain in parsed_href.netloc.lower():
-            internal_links += 1
+            clean_link = full_href.split('#')[0]
+            if clean_link not in internal_links and clean_link != page_url.rstrip('/'):
+                internal_links.append(clean_link)
         else:
-            external_links += 1
+            external_links_count += 1
 
-    metrics["internal_links_count"] = internal_links
-    metrics["external_links_count"] = external_links
+    metrics["internal_links_count"] = len(internal_links)
+    metrics["external_links_count"] = external_links_count
+    metrics["broken_internal_links"] = []
+
+    # Safe bounded broken internal link probe (max 3 candidate links, 3s timeout)
+    for target_link in internal_links[:3]:
+        try:
+            probe_resp = safe_http_get(target_link, timeout=(2, 3), max_bytes=2048)
+            if probe_resp.status_code in [404, 410, 500, 502, 503]:
+                metrics["broken_internal_links"].append({
+                    "url": target_link,
+                    "status_code": probe_resp.status_code
+                })
+                findings.append({
+                    "name": "Broken Internal Link Detected",
+                    "severity": "High" if probe_resp.status_code in [404, 410] else "Medium",
+                    "affected_url": target_link,
+                    "evidence": f"Target link returned HTTP status {probe_resp.status_code}.",
+                    "explanation": "Broken internal links cause visitor drop-off and waste search engine crawl budget.",
+                    "suggested_improvement": "Fix or remove references to inaccessible internal URLs.",
+                    "detection_method": "HTTP Link Probe"
+                })
+        except Exception:
+            pass  # Non-fatal: do not fail audit on probe timeouts
 
     # Calculate overall SEO Health Score (0-100)
     score = 100

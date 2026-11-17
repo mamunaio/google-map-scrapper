@@ -1,150 +1,195 @@
 """
-LeadHunter Opportunity Analyzer & Lead Prioritization Service
-Generates evidence-based B2B service recommendations, lead scoring (0-100),
-and tailored outreach angles based on real technical and infrastructure gaps.
-Never blanket-recommends services without supporting evidence.
+LeadHunter Business Opportunity Analyzer
+Generates evidence-backed business opportunities using a strict 9-field schema.
+Purges unsupported conversion claims, ranking guarantees, and speculative statistics.
 """
 
-def analyze_business_opportunities(features_result: dict, seo_result: dict, technical_result: dict, decision_maker: str, email: str, business_name: str = ""):
+from services.lead_scoring import calculate_lead_score
+
+def analyze_business_opportunities(
+    features_result: dict,
+    seo_result: dict,
+    technical_result: dict,
+    decision_maker: str,
+    email: str,
+    business_name: str = "",
+    target_url: str = "",
+    scoring_weights: dict = None
+):
     """
     Evaluates detected infrastructure and on-page audits to identify concrete business gaps.
+    Returns structured 9-field opportunity records and links to explainable lead scoring.
     """
     opportunities = []
     outreach_hooks = []
 
-    dm_name = decision_maker.split('(')[0].strip() if decision_maker else ""
-    first_name = dm_name.split()[0] if dm_name else "Team"
     biz = business_name or "your company"
+    evidence_url = target_url or "scanned website"
 
-    # 1. Booking & Scheduling Automation
+    # Opportunity 1: Booking & Self-Service Scheduling
     booking = features_result.get("booking", {})
-    if booking.get("status") == "Not Detected":
+    b_status = booking.get("status", "")
+    if b_status == "Not Detected":
         opportunities.append({
-            "service": "Online Booking & Appointment Scheduling Automation",
-            "category": "Workflow Automation",
-            "priority": "High",
-            "evidence": "No self-service scheduling widgets (Calendly, Acuity, ServiceTitan, etc.) detected on site.",
-            "impact": "Prospective clients who want immediate booking may bounce to competitors who offer instant appointment confirmation.",
-            "solution": "Integrate a frictionless, automated scheduling flow synced with your dispatch calendar."
+            "Business Name": biz,
+            "Opportunity Category": "Workflow Automation",
+            "Related Finding": "Missing Online Scheduling Widget",
+            "Evidence URL": evidence_url,
+            "Evidence Description": "No self-service scheduling scripts or embedded booking widgets (Calendly, Acuity, ServiceTitan, etc.) identified on scanned pages.",
+            "Potential Business Impact": "Prospective clients seeking immediate appointment scheduling cannot self-book and must wait for manual callback.",
+            "Recommended Service": "Online Booking & Appointment Scheduling Integration",
+            "Confidence Level": "High",
+            "Research Status": "Identified"
         })
-        outreach_hooks.append(f"Notice you don't currently offer instant online scheduling for {biz}—setting that up typically lifts local booking conversion by 25-30%.")
+        outreach_hooks.append(
+            f"Noticed {biz}'s website currently requires phone calls or plain emails for appointments—adding self-service online scheduling allows customers to book directly."
+        )
 
-    # 2. 24/7 AI Chatbot & After-Hours Lead Capture
+    # Opportunity 2: Conversational Lead Capture / 24/7 Chatbot
     chatbot = features_result.get("chatbot", {})
     if chatbot.get("status") == "Not Detected":
         opportunities.append({
-            "service": "24/7 AI Chatbot & Conversational Lead Capture",
-            "category": "AI Automation",
-            "priority": "High",
-            "evidence": "No live chat or automated chatbot scripts detected on scanned pages.",
-            "impact": "Over 40% of home/business inquiries occur after 6 PM; without an automated agent, after-hours leads often go unanswered.",
-            "solution": "Deploy an AI concierge trained on your service pricing and FAQ to qualify and capture after-hours leads."
+            "Business Name": biz,
+            "Opportunity Category": "AI Automation",
+            "Related Finding": "Absence of Live Chat / Chatbot Widget",
+            "Evidence URL": evidence_url,
+            "Evidence Description": "No conversational widget scripts or live chat providers detected in page DOM.",
+            "Potential Business Impact": "Inquiries outside standard operating hours may go unanswered if visitors do not wish to leave a static contact form submission.",
+            "Recommended Service": "24/7 AI Chatbot & Conversational Lead Capture",
+            "Confidence Level": "High",
+            "Research Status": "Identified"
         })
-        outreach_hooks.append(f"Most local customers looking for {biz} after 6 PM won't wait until tomorrow morning—an automated 24/7 chat concierge captures those before they call a competitor.")
+        outreach_hooks.append(
+            f"Observed that {biz}'s website doesn't have an interactive chat widget—deploying an automated concierge can capture and qualify after-hours inquiries."
+        )
 
-    # 3. AI Voice Agent Integration
+    # Opportunity 3: AI Voice Receptionist / Phone Overflow
     voice_agent = features_result.get("voice_agent", {})
     if voice_agent.get("status") == "Not Detected":
         opportunities.append({
-            "service": "AI Voice Receptionist & Missed Call Follow-Up",
-            "category": "AI Voice Automation",
-            "priority": "Medium",
-            "evidence": "No automated telephone or AI voice agent integrations detected.",
-            "impact": "Unanswered inbound phone calls during peak job hours lead to lost revenue.",
-            "solution": "Implement an automated AI phone answering assistant to handle overflow, take messages, and book estimates."
+            "Business Name": biz,
+            "Opportunity Category": "AI Voice Automation",
+            "Related Finding": "No AI Phone Integration Detected",
+            "Evidence URL": evidence_url,
+            "Evidence Description": "No telephony automation or AI voice agent provider markers identified in page assets.",
+            "Potential Business Impact": "Inbound callers during field work or peak hours may reach standard voicemail, delaying quote response time.",
+            "Recommended Service": "AI Voice Receptionist & Missed Call Follow-Up Automation",
+            "Confidence Level": "Medium",
+            "Research Status": "Needs Review"
         })
 
-    # 4. CRM & Lead-to-Customer Pipeline
+    # Opportunity 4: CRM Integration & Pipeline Tracking
     crm = features_result.get("crm", {})
     if crm.get("status") == "Not Detected":
         opportunities.append({
-            "service": "Automated CRM & Lead Management Pipeline",
-            "category": "CRM Integration",
-            "priority": "Medium",
-            "evidence": "No centralized CRM tracking or embedded CRM forms found (HubSpot, GoHighLevel, Salesforce, etc.).",
-            "impact": "Inquiries received via plain email or forms lack automated multi-touch follow-up and pipeline visibility.",
-            "solution": "Set up a unified CRM with automated SMS/email sequences to re-engage past leads and nurture quotes."
+            "Business Name": biz,
+            "Opportunity Category": "CRM Integration",
+            "Related Finding": "No CRM Tracking or Forms Detected",
+            "Evidence URL": evidence_url,
+            "Evidence Description": "No embedded forms or analytics trackers from known CRM providers (HubSpot, GoHighLevel, Salesforce, Zoho, etc.) detected on scanned pages.",
+            "Potential Business Impact": "Inbound leads may require manual copying into spreadsheets, increasing risk of delayed lead follow-ups.",
+            "Recommended Service": "Centralized CRM Integration & Lead Workflow Automation",
+            "Confidence Level": "Medium",
+            "Research Status": "Needs Review"
         })
 
-    # 5. Review & Reputation Management Automation
+    # Opportunity 5: Review & Reputation Management Automation
     reviews = features_result.get("review_management", {})
     if reviews.get("status") == "Not Detected":
         opportunities.append({
-            "service": "Automated Review Generation & Reputation Management",
-            "category": "Reputation Automation",
-            "priority": "High",
-            "evidence": "No review generation widgets or reputation tools (Birdeye, Podium, Trustpilot) detected.",
-            "impact": "Businesses without automated post-job review collection average 60% fewer monthly 5-star reviews on Google Maps.",
-            "solution": "Automate 1-click SMS/email review requests immediately following job completion."
+            "Business Name": biz,
+            "Opportunity Category": "Reputation Automation",
+            "Related Finding": "Missing Review Widget / Automation",
+            "Evidence URL": evidence_url,
+            "Evidence Description": "No third-party review widgets (Birdeye, Podium, Trustpilot) or automated review request links identified.",
+            "Potential Business Impact": "Relying strictly on manual review requests often leads to slower feedback collection compared to automated post-service flows.",
+            "Recommended Service": "Automated Review Request & Reputation Management System",
+            "Confidence Level": "High",
+            "Research Status": "Identified"
         })
-        outreach_hooks.append("Automating your post-service 5-star Google review requests can systematically push you into the top 3 of Google Maps local pack.")
+        outreach_hooks.append(
+            f"Setting up an automated SMS review collection flow for {biz} can help systematically collect feedback from satisfied clients right after service completion."
+        )
 
-    # 6. Technical SEO & Organic Visibility
+    # Opportunity 6: Technical SEO Optimization
     seo_findings = seo_result.get("findings", [])
-    high_seo_issues = [f for f in seo_findings if f.get("severity") == "High"]
-    if high_seo_issues or seo_result.get("seo_score", 100) < 75:
-        issue_names = [f["name"] for f in high_seo_issues[:2]]
+    high_seo = [f for f in seo_findings if isinstance(f, dict) and f.get("severity") == "High"]
+    if high_seo or seo_result.get("seo_score", 100) < 75:
+        primary_issue = high_seo[0]["name"] if high_seo else "On-Page Metadata Gaps"
+        evidence_text = high_seo[0]["evidence"] if high_seo else "Page title, meta description, or heading hierarchy lacks optimization."
         opportunities.append({
-            "service": "Technical SEO & Search Visibility Optimization",
-            "category": "Technical SEO",
-            "priority": "High" if high_seo_issues else "Medium",
-            "evidence": f"Identified on-page SEO gaps: {', '.join(issue_names) if issue_names else 'Sub-optimal metadata and headings'}.",
-            "impact": "Search engine crawlers struggle to index and rank pages with missing titles, descriptions, or broken heading hierarchies.",
-            "solution": "Resolve metadata gaps, implement LocalBusiness Schema.org JSON-LD, and optimize heading structures."
+            "Business Name": biz,
+            "Opportunity Category": "Technical SEO",
+            "Related Finding": primary_issue,
+            "Evidence URL": evidence_url,
+            "Evidence Description": evidence_text,
+            "Potential Business Impact": "Search engine crawlers may fail to index important service keywords, limiting organic search discoverability.",
+            "Recommended Service": "Technical SEO Optimization & Structured Data Implementation",
+            "Confidence Level": "High",
+            "Research Status": "Verified"
         })
-        outreach_hooks.append(f"Spotted a couple of quick technical fixes on {biz}'s website (like missing schema/metadata) that could give you an immediate boost in local organic rankings.")
+        outreach_hooks.append(
+            f"Spotted a couple of technical on-page items on {biz}'s website (like {primary_issue.lower()}) that search engines look for when ranking local service queries."
+        )
 
-    # 7. Mobile Usability & Website Modernization
+    # Opportunity 7: Mobile Usability & Responsive Redesign
     mobile_info = technical_result.get("mobile_usability", {})
     if not mobile_info.get("has_viewport") or mobile_info.get("overflow_risk"):
         opportunities.append({
-            "service": "Mobile UX Optimization & Responsive Redesign",
-            "category": "Website Development",
-            "priority": "High",
-            "evidence": "Mobile viewport warnings or fixed-width layout overflow detected.",
-            "impact": "Over 65% of local service searches originate on smartphones; poor mobile UX immediately turns away customers.",
-            "solution": "Modernize the responsive CSS framework with mobile-first viewport scaling and fluid touch targets."
+            "Business Name": biz,
+            "Opportunity Category": "Website Development",
+            "Related Finding": "Mobile Viewport / Formatting Issues",
+            "Evidence URL": evidence_url,
+            "Evidence Description": "Missing viewport meta tag or fixed pixel widths detected causing horizontal overflow risks on mobile viewports.",
+            "Potential Business Impact": "Mobile visitors may experience horizontal scrolling or layout truncation, reducing form submission completion.",
+            "Recommended Service": "Mobile-Responsive Layout Optimization",
+            "Confidence Level": "High",
+            "Research Status": "Verified"
         })
 
-    # 8. SSL Security & Trust
+    # Opportunity 8: SSL Security & HTTPS Enforcement
     ssl_info = technical_result.get("ssl_certificate", {})
     if ssl_info.get("status") in ["Expired", "Plain HTTP", "Invalid"]:
         opportunities.append({
-            "service": "SSL Security Certificate Installation & HTTPS Enforcement",
-            "category": "Website Security",
-            "priority": "Critical",
-            "evidence": f"SSL Status: {ssl_info.get('status')} - {ssl_info.get('evidence')}",
-            "impact": "Browsers display prominent 'Not Secure' warnings to all visitors.",
-            "solution": "Deploy an updated SSL certificate and enforce permanent 301 HTTPS redirects."
+            "Business Name": biz,
+            "Opportunity Category": "Website Security",
+            "Related Finding": f"SSL Status: {ssl_info.get('status')}",
+            "Evidence URL": evidence_url,
+            "Evidence Description": ssl_info.get("evidence", "Certificate is expired or plain HTTP is served."),
+            "Potential Business Impact": "Modern browsers mark the website as 'Not Secure', discouraging visitors from entering contact details.",
+            "Recommended Service": "SSL Certificate Renewal & HTTPS 301 Enforcement",
+            "Confidence Level": "High",
+            "Research Status": "Verified"
         })
 
-    # LEAD OPPORTUNITY SCORING (0 - 100)
-    # Calculated on:
-    # - Concrete high-value gaps (+15 to +20 each)
-    # - Reachability: Decision maker identified (+20)
-    # - Reachability: Verified email found (+15)
-    # - Reachability: Direct phone found (+10)
-    score = 30  # Baseline
-    if dm_name: score += 20
-    if email and '@' in email: score += 15
-    if len(opportunities) >= 3: score += 20
-    elif len(opportunities) >= 1: score += 10
-    if any(o["priority"] in ["Critical", "High"] for o in opportunities): score += 15
+    # Build mock container for lead scoring calculation
+    scoring_input = {
+        "Website": target_url,
+        "Email": email,
+        "Decision Maker": decision_maker,
+        "intelligence": {
+            "seo": seo_result,
+            "technical": technical_result,
+            "features": features_result,
+            "performance": {},
+            "opportunities": {"detected_opportunities": opportunities}
+        }
+    }
 
-    score = min(100, max(10, score))
-
-    if score >= 80:
-        priority_tier = "High Priority Prospect"
-    elif score >= 60:
-        priority_tier = "Medium Priority Prospect"
-    else:
-        priority_tier = "Standard Prospect"
+    scoring = calculate_lead_score(
+        audit_data=scoring_input,
+        weights=scoring_weights,
+        business_name=biz
+    )
 
     return {
-        "lead_score": score,
-        "priority_tier": priority_tier,
+        "lead_score": scoring["research_score"],
+        "priority_tier": scoring["research_priority"],
+        "scoring_details": scoring,
         "opportunities_count": len(opportunities),
         "detected_opportunities": opportunities,
         "outreach_hooks": outreach_hooks,
-        "summary": f"{len(opportunities)} high-value opportunity gaps detected with {priority_tier} status."
+        "main_gap": scoring["main_identified_gap"],
+        "next_action": scoring["suggested_next_action"],
+        "summary": f"{len(opportunities)} evidence-backed opportunity gaps identified. Lead Priority: {scoring['research_priority']}."
     }
