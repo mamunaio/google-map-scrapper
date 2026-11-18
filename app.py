@@ -5,25 +5,94 @@ Flask Application & API Gateway
 
 import io
 import os
+import re
 import hmac
 import time
+import uuid
 import random
 import logging
-import threading
-from collections import deque
 from functools import wraps
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template, request, jsonify, send_file, g
+from werkzeug.middleware.proxy_fix import ProxyFix
+from whitenoise import WhiteNoise
 
-from services.security import SecurityError, validate_google_maps_url
+from services.browser_runtime import check_chromium_available
+from services.job_queue import (
+    JobNotFoundError,
+    QueueUnavailableError,
+    WorkerUnavailableError,
+    check_redis_health,
+    count_active_workers,
+    enqueue_scrape_job,
+    get_job_result_payload,
+    get_job_status_payload,
+)
+from services.rate_limiter import SharedSlidingWindowRateLimiter
+from services.runtime_config import (
+    configure_logging,
+    get_bool_env,
+    get_configured_api_key,
+    get_int_env,
+    get_redis_url,
+    get_trusted_proxy_hops,
+    is_production_env,
+    redact_email_for_log,
+    redact_url_for_log,
+    request_id_var,
+    should_enable_debug,
+    validate_startup_config,
+)
+from services.security import SecurityError, validate_and_sanitize_url, validate_google_maps_url
 from services.website_crawler import crawl_and_audit_website
 from services.export_service import generate_styled_excel, generate_lead_tracker_csv
 from services.maps_scraper import scrape_google_maps, clean_external_website_url, ensure_english_maps_url
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+configure_logging()
 logger = logging.getLogger("leadhunter.app")
 
 app = Flask(__name__)
-app.config['MAX_CONTENT_LENGTH'] = int(os.getenv('MAX_CONTENT_LENGTH', 5 * 1024 * 1024))  # 5 MB
+app.config['MAX_CONTENT_LENGTH'] = get_int_env(
+    'MAX_CONTENT_LENGTH',
+    5 * 1024 * 1024,
+    min_value=1024,
+    max_value=50 * 1024 * 1024,
+)
+
+# Serve static assets efficiently with cache headers
+_static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+if os.path.isdir(_static_dir):
+    app.wsgi_app = WhiteNoise(
+        app.wsgi_app,
+        root=_static_dir,
+        prefix="static/",
+        max_age=31536000 if is_production_env() else 0,
+    )
+
+_base_wsgi_app = app.wsgi_app
+
+
+def apply_trusted_proxy_middleware(flask_app: Flask, hops: int | None = None) -> int:
+    """
+    Applies Werkzeug `ProxyFix` ONLY when `TRUSTED_PROXY_HOPS` is explicitly > 0.
+    When `hops == 0`, leaves the WSGI app unwrapped so spoofable X-Forwarded-* headers are ignored.
+    """
+    resolved_hops = get_trusted_proxy_hops(strict=True) if hops is None else int(hops)
+    if resolved_hops < 0 or resolved_hops > 10:
+        raise ValueError("TRUSTED_PROXY_HOPS must be an integer between 0 and 10.")
+    if resolved_hops > 0:
+        flask_app.wsgi_app = ProxyFix(
+            _base_wsgi_app,
+            x_for=resolved_hops,
+            x_proto=resolved_hops,
+            x_host=resolved_hops,
+            x_prefix=resolved_hops,
+        )
+    else:
+        flask_app.wsgi_app = _base_wsgi_app
+    return resolved_hops
+
+
+_configured_proxy_hops = apply_trusted_proxy_middleware(app, hops=get_trusted_proxy_hops(strict=False))
 
 ALLOWED_SCRAPE_TYPES = {'maps', 'website'}
 ALLOWED_EXCEL_FORMATS = {'standard_3_sheet', 'source_enriched'}
@@ -32,79 +101,9 @@ MAX_TEXT_FIELD_LENGTH = 200
 MAX_RESULTS_MIN = 1
 MAX_RESULTS_MAX = 50
 MAX_EXPORT_LEADS = 1000
+SAFE_ID_PATTERN = re.compile(r'^[A-Za-z0-9_.:-]{1,128}$')
 
-
-def is_production_env() -> bool:
-    """Detects production execution mode from standard environment variables."""
-    leadhunter_env = os.getenv('LEADHUNTER_ENV', '').strip().lower()
-    flask_env = os.getenv('FLASK_ENV', '').strip().lower()
-    render_flag = os.getenv('RENDER', '').strip().lower()
-    return (
-        leadhunter_env in ('prod', 'production')
-        or flask_env in ('prod', 'production')
-        or render_flag in ('1', 'true', 'yes')
-    )
-
-
-def should_enable_debug() -> bool:
-    """
-    Flask debug mode is disabled by default and strictly forbidden in production.
-    Can only be enabled locally via FLASK_DEBUG=true when not in production.
-    """
-    if is_production_env():
-        return False
-    return os.getenv('FLASK_DEBUG', '').strip().lower() in ('1', 'true', 'yes')
-
-
-def get_configured_api_key() -> str:
-    """Reads the API key strictly from environment configuration (never hardcoded)."""
-    return os.getenv('LEADHUNTER_API_KEY', '').strip()
-
-
-class SlidingWindowRateLimiter:
-    """
-    Thread-safe in-memory sliding-window rate limiter keyed strictly on the peer IP
-    (`request.remote_addr`). Spoofable headers such as `X-Forwarded-For` are ignored.
-
-    Limitation: In-memory state is per-process. Multi-worker or multi-instance
-    deployments require a shared store (e.g., Redis) for global rate limiting.
-    """
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._hits: dict[str, deque[float]] = {}
-
-    def _get_limits(self) -> tuple[int, int]:
-        try:
-            max_req = max(1, int(os.getenv('RATE_LIMIT_MAX_REQUESTS', '30')))
-        except ValueError:
-            max_req = 30
-        try:
-            window_sec = max(1, int(os.getenv('RATE_LIMIT_WINDOW_SECONDS', '60')))
-        except ValueError:
-            window_sec = 60
-        return max_req, window_sec
-
-    def check(self, client_key: str) -> tuple[bool, int]:
-        max_req, window_sec = self._get_limits()
-        now = time.monotonic()
-        cutoff = now - window_sec
-        with self._lock:
-            bucket = self._hits.setdefault(client_key, deque())
-            while bucket and bucket[0] <= cutoff:
-                bucket.popleft()
-            if len(bucket) >= max_req:
-                retry_after = max(1, int(window_sec - (now - bucket[0])) + 1)
-                return False, retry_after
-            bucket.append(now)
-            return True, 0
-
-    def reset(self):
-        with self._lock:
-            self._hits.clear()
-
-
-rate_limiter = SlidingWindowRateLimiter()
+rate_limiter = SharedSlidingWindowRateLimiter()
 
 
 def _extract_provided_api_key() -> str:
@@ -141,7 +140,7 @@ def require_api_auth_and_rate_limit(fn):
                 "error": "Unauthorized: valid API key required."
             }), 401
 
-        # 2. Per-client sliding-window rate limit (strictly keyed on peer remote_addr)
+        # 2. Per-client sliding-window rate limit (keyed on peer/trusted-proxy remote_addr)
         client_ip = request.remote_addr or "unknown"
         allowed, retry_after = rate_limiter.check(client_ip)
         if not allowed:
@@ -176,12 +175,74 @@ def _validate_optional_text(value, field_name: str, max_len: int = MAX_TEXT_FIEL
     return cleaned, None
 
 
+def _validate_scrape_payload(data: dict):
+    """Shared strict payload validation for both synchronous `/api/scrape` and async `/api/jobs`."""
+    raw_url = data.get('url')
+    if not isinstance(raw_url, str) or not raw_url.strip():
+        return None, (jsonify({"success": False, "error": "URL is required"}), 400)
+    url = raw_url.strip()
+    if len(url) > MAX_URL_LENGTH:
+        return None, (jsonify({"success": False, "error": f"URL exceeds maximum length of {MAX_URL_LENGTH} characters."}), 400)
+
+    type_ = data.get('type', 'website')
+    if not isinstance(type_, str) or type_ not in ALLOWED_SCRAPE_TYPES:
+        return None, (jsonify({"success": False, "error": "Invalid 'type'. Must be 'website' or 'maps'."}), 400)
+
+    hint_dm, dm_err = _validate_optional_text(data.get('decision_maker', ''), 'decision_maker')
+    if dm_err:
+        return None, (jsonify({"success": False, "error": dm_err}), 400)
+
+    biz_name_input, biz_err = _validate_optional_text(data.get('business_name', ''), 'business_name')
+    if biz_err:
+        return None, (jsonify({"success": False, "error": biz_err}), 400)
+
+    # Strict validation for max_results when provided (genuine JSON int only, range 1..50)
+    if 'max_results' not in data:
+        max_res = 20
+    else:
+        raw_max_res = data['max_results']
+        if isinstance(raw_max_res, bool) or not isinstance(raw_max_res, int):
+            return None, (jsonify({"success": False, "error": "Invalid 'max_results'. Must be an integer between 1 and 50."}), 400)
+        max_res = raw_max_res
+    if not (MAX_RESULTS_MIN <= max_res <= MAX_RESULTS_MAX):
+        return None, (jsonify({"success": False, "error": f"Invalid 'max_results'. Must be between {MAX_RESULTS_MIN} and {MAX_RESULTS_MAX}."}), 400)
+
+    return {
+        "url": url,
+        "type": type_,
+        "decision_maker": hint_dm,
+        "business_name": biz_name_input,
+        "max_results": max_res,
+    }, None
+
+
+@app.before_request
+def bind_request_correlation_id():
+    incoming = (request.headers.get('X-Request-ID') or '').strip()
+    req_id = incoming if (incoming and SAFE_ID_PATTERN.match(incoming)) else uuid.uuid4().hex[:16]
+    g._request_id_token = request_id_var.set(req_id)
+    g.request_id = req_id
+
+
 @app.after_request
 def add_security_headers(response):
+    req_id = getattr(g, 'request_id', None)
+    if req_id:
+        response.headers['X-Request-ID'] = req_id
     response.headers.setdefault('X-Content-Type-Options', 'nosniff')
     response.headers.setdefault('X-Frame-Options', 'DENY')
     response.headers.setdefault('Referrer-Policy', 'no-referrer')
     return response
+
+
+@app.teardown_request
+def clear_request_correlation_id(_exc):
+    token = getattr(g, '_request_id_token', None)
+    if token is not None:
+        try:
+            request_id_var.reset(token)
+        except Exception:
+            pass
 
 
 @app.errorhandler(413)
@@ -201,6 +262,167 @@ def index():
     return render_template('index.html')
 
 
+@app.route('/healthz', methods=['GET'])
+def healthz():
+    """Lightweight unauthenticated liveness endpoint for container orchestrators."""
+    return jsonify({
+        "status": "ok",
+        "service": "leadhunter-studio",
+    }), 200
+
+
+@app.route('/readyz', methods=['GET'])
+def readyz():
+    """
+    Readiness endpoint checking required runtime dependencies without exposing secrets:
+    - LEADHUNTER_API_KEY presence
+    - Redis broker connectivity (required when REDIS_URL is configured or in production)
+    - Active RQ worker visibility (required when REQUIRE_ACTIVE_WORKER=true)
+    - Playwright Chromium executable availability
+    """
+    prod = is_production_env()
+    api_key_ok = bool(get_configured_api_key())
+    redis_configured = bool(get_redis_url())
+    require_redis = prod or redis_configured
+    require_worker = get_bool_env("REQUIRE_ACTIVE_WORKER", False)
+
+    if require_redis:
+        redis_ok, redis_msg = check_redis_health()
+        workers_online = count_active_workers() if redis_ok else 0
+    else:
+        redis_ok, redis_msg = True, "Redis not configured (local fallback mode)"
+        workers_online = 0
+
+    chromium_ok, chromium_msg = check_chromium_available()
+    worker_ok = (workers_online >= 1) if require_worker else True
+
+    ready = api_key_ok and redis_ok and worker_ok and chromium_ok
+    payload = {
+        "status": "ready" if ready else "not_ready",
+        "checks": {
+            "api_key_configured": api_key_ok,
+            "redis": {"ok": redis_ok, "detail": redis_msg},
+            "workers": {"ok": worker_ok, "online": workers_online, "required": require_worker},
+            "chromium": {"ok": chromium_ok, "detail": chromium_msg},
+        },
+    }
+    return jsonify(payload), (200 if ready else 503)
+
+
+@app.route('/api/jobs', methods=['POST'])
+@require_api_auth_and_rate_limit
+def create_job_api():
+    """
+    Asynchronous background job submission endpoint (Redis + RQ).
+    Enqueues Google Maps multi-lead scraping or website enrichment without blocking web workers.
+    """
+    data, err_resp = _parse_json_object()
+    if err_resp:
+        return err_resp
+
+    validated, val_err = _validate_scrape_payload(data)
+    if val_err:
+        return val_err
+
+    url = validated["url"]
+    scrape_type = validated["type"]
+
+    # Fail fast on SSRF / invalid target URLs before enqueueing to Redis
+    try:
+        if scrape_type == 'maps':
+            validate_google_maps_url(url)
+        else:
+            validate_and_sanitize_url(url)
+    except SecurityError as se:
+        logger.warning("Job submission blocked by security policy for %s: %s", redact_url_for_log(url), se)
+        return jsonify({"success": False, "error": f"Security restriction: {se}"}), 400
+
+    try:
+        enqueued = enqueue_scrape_job(
+            url=url,
+            scrape_type=scrape_type,
+            max_results=validated["max_results"],
+            business_name=validated["business_name"],
+            decision_maker=validated["decision_maker"],
+        )
+        job_id = enqueued["job_id"]
+        return jsonify({
+            "success": True,
+            "job_id": job_id,
+            "status": enqueued["status"],
+            "deduplicated": enqueued["deduplicated"],
+            "workers_online": enqueued["workers_online"],
+            "poll_url": f"/api/jobs/{job_id}",
+            "result_url": f"/api/jobs/{job_id}/result",
+        }), 202
+    except QueueUnavailableError:
+        logger.error("Failed to enqueue job: Redis queue unavailable")
+        return jsonify({
+            "success": False,
+            "code": "queue_unavailable",
+            "error": "Background job queue is temporarily unavailable.",
+        }), 503
+    except WorkerUnavailableError:
+        logger.error("Failed to enqueue job: no active RQ workers")
+        return jsonify({
+            "success": False,
+            "code": "worker_unavailable",
+            "error": "No background workers are currently available to process jobs.",
+        }), 503
+    except Exception:
+        logger.exception("Internal error enqueueing background job")
+        return jsonify({
+            "success": False,
+            "error": "Internal server error while scheduling background job.",
+        }), 500
+
+
+@app.route('/api/jobs/<job_id>', methods=['GET'])
+@require_api_auth_and_rate_limit
+def get_job_status_api(job_id: str):
+    """Returns status and progress metadata for an asynchronous scrape/enrichment job."""
+    if not SAFE_ID_PATTERN.match(job_id or ""):
+        return jsonify({"success": False, "error": "Invalid job_id format."}), 400
+
+    try:
+        payload = get_job_status_payload(job_id)
+        return jsonify(payload), 200
+    except JobNotFoundError:
+        return jsonify({"success": False, "error": "Job not found or expired."}), 404
+    except QueueUnavailableError:
+        return jsonify({
+            "success": False,
+            "code": "queue_unavailable",
+            "error": "Background job queue is temporarily unavailable.",
+        }), 503
+    except Exception:
+        logger.exception("Internal error fetching status for job_id=%s", job_id)
+        return jsonify({"success": False, "error": "Internal server error while checking job status."}), 500
+
+
+@app.route('/api/jobs/<job_id>/result', methods=['GET'])
+@require_api_auth_and_rate_limit
+def get_job_result_api(job_id: str):
+    """Returns the completed result payload for an asynchronous scrape/enrichment job."""
+    if not SAFE_ID_PATTERN.match(job_id or ""):
+        return jsonify({"success": False, "error": "Invalid job_id format."}), 400
+
+    try:
+        payload, status_code = get_job_result_payload(job_id)
+        return jsonify(payload), status_code
+    except JobNotFoundError:
+        return jsonify({"success": False, "error": "Job not found or expired."}), 404
+    except QueueUnavailableError:
+        return jsonify({
+            "success": False,
+            "code": "queue_unavailable",
+            "error": "Background job queue is temporarily unavailable.",
+        }), 503
+    except Exception:
+        logger.exception("Internal error fetching result for job_id=%s", job_id)
+        return jsonify({"success": False, "error": "Internal server error while retrieving job result."}), 500
+
+
 @app.route('/api/scrape', methods=['POST'])
 @require_api_auth_and_rate_limit
 def scrape_api():
@@ -213,35 +435,15 @@ def scrape_api():
     if err_resp:
         return err_resp
 
-    raw_url = data.get('url')
-    if not isinstance(raw_url, str) or not raw_url.strip():
-        return jsonify({"success": False, "error": "URL is required"}), 400
-    url = raw_url.strip()
-    if len(url) > MAX_URL_LENGTH:
-        return jsonify({"success": False, "error": f"URL exceeds maximum length of {MAX_URL_LENGTH} characters."}), 400
+    validated, val_err = _validate_scrape_payload(data)
+    if val_err:
+        return val_err
 
-    type_ = data.get('type', 'website')
-    if not isinstance(type_, str) or type_ not in ALLOWED_SCRAPE_TYPES:
-        return jsonify({"success": False, "error": "Invalid 'type'. Must be 'website' or 'maps'."}), 400
-
-    hint_dm, dm_err = _validate_optional_text(data.get('decision_maker', ''), 'decision_maker')
-    if dm_err:
-        return jsonify({"success": False, "error": dm_err}), 400
-
-    biz_name_input, biz_err = _validate_optional_text(data.get('business_name', ''), 'business_name')
-    if biz_err:
-        return jsonify({"success": False, "error": biz_err}), 400
-
-    # Strict validation for max_results when provided (genuine JSON int only, range 1..50)
-    if 'max_results' not in data:
-        max_res = 20
-    else:
-        raw_max_res = data['max_results']
-        if isinstance(raw_max_res, bool) or not isinstance(raw_max_res, int):
-            return jsonify({"success": False, "error": "Invalid 'max_results'. Must be an integer between 1 and 50."}), 400
-        max_res = raw_max_res
-    if not (MAX_RESULTS_MIN <= max_res <= MAX_RESULTS_MAX):
-        return jsonify({"success": False, "error": f"Invalid 'max_results'. Must be between {MAX_RESULTS_MIN} and {MAX_RESULTS_MAX}."}), 400
+    url = validated["url"]
+    type_ = validated["type"]
+    hint_dm = validated["decision_maker"]
+    biz_name_input = validated["business_name"]
+    max_res = validated["max_results"]
 
     result = {
         "Business Name": biz_name_input,
@@ -262,11 +464,11 @@ def scrape_api():
         # Option A: Google Maps Extraction (Search URLs and Place URLs)
         if type_ == 'maps':
             clean_url = ensure_english_maps_url(validate_google_maps_url(url))
-            logger.info(f"[Maps] Starting extraction for URL: {clean_url} (max_results={max_res})")
+            logger.info("[Maps] Starting extraction for target=%s (max_results=%d)", redact_url_for_log(clean_url), max_res)
             maps_res = scrape_google_maps(clean_url, max_results=max_res)
 
             if not maps_res.get("success"):
-                logger.warning(f"[Maps] Extraction failed or returned no listings for: {clean_url}")
+                logger.warning("[Maps] Extraction failed or returned no listings for target=%s", redact_url_for_log(clean_url))
                 return jsonify({
                     "success": False,
                     "error": maps_res.get("error", "No business details or listings could be extracted from this Google Maps URL."),
@@ -293,7 +495,7 @@ def scrape_api():
 
                 # If website was extracted and valid, run Website Intelligence & Contact Enrichment
                 if clean_website:
-                    logger.info(f"[Enrichment {idx}/{total_leads}] Auditing website for '{biz_name}': {clean_website}")
+                    logger.info("[Enrichment %d/%d] Auditing website for '%s': %s", idx, total_leads, biz_name, redact_url_for_log(clean_website))
                     try:
                         audit_data = crawl_and_audit_website(
                             clean_website,
@@ -321,9 +523,23 @@ def scrape_api():
                         lead["Lead Score"] = audit_data.get("Lead Score") if audit_data.get("Lead Score") is not None else (opps.get("lead_score") or 0)
                         lead["Main Opportunity"] = audit_data.get("Main Opportunity") or opps.get("main_gap") or ""
                         lead["Notes"] = audit_data.get("Notes") or scoring.get("priority_reason") or ""
-                        logger.info(f"[Enrichment {idx}/{total_leads}] Successfully enriched '{biz_name}' (Email: {lead['Email'] or 'None'}, Priority: {lead['Priority']})")
+                        logger.info(
+                            "[Enrichment %d/%d] Successfully enriched '%s' (email=%s, priority=%s)",
+                            idx,
+                            total_leads,
+                            biz_name,
+                            redact_email_for_log(lead['Email']),
+                            lead['Priority'],
+                        )
                     except Exception as e:
-                        logger.warning(f"[Enrichment {idx}/{total_leads}] Website enrichment failed for '{biz_name}' ({clean_website}): {e}. Retaining Maps lead data.")
+                        logger.warning(
+                            "[Enrichment %d/%d] Website enrichment failed for '%s' (%s): %s. Retaining Maps lead data.",
+                            idx,
+                            total_leads,
+                            biz_name,
+                            redact_url_for_log(clean_website),
+                            e,
+                        )
                         lead.setdefault("Website Status", "Crawl failed")
                         lead.setdefault("Priority", "Manual Review")
                         lead.setdefault("Lead Score", 0)
@@ -339,7 +555,7 @@ def scrape_api():
 
                 enriched_leads.append(lead)
 
-            logger.info(f"[Maps] Completed processing all {len(enriched_leads)} leads for {clean_url}")
+            logger.info("[Maps] Completed processing all %d leads for target=%s", len(enriched_leads), redact_url_for_log(clean_url))
 
             return jsonify({
                 "success": True,
@@ -415,7 +631,7 @@ def scrape_api():
             })
 
     except SecurityError as se:
-        logger.warning("Security validation blocked %s: %s", url, se)
+        logger.warning("Security validation blocked target=%s: %s", redact_url_for_log(url), se)
         return jsonify({"success": False, "error": f"Security restriction: {se}", "data": None, "leads": []}), 400
     except Exception:
         logger.exception("Internal API error processing scrape request")
@@ -515,4 +731,5 @@ def export_csv_api():
 
 
 if __name__ == '__main__':
-    app.run(debug=should_enable_debug(), port=int(os.getenv('PORT', 5000)))
+    port = get_int_env('PORT', 5000, min_value=1, max_value=65535)
+    app.run(debug=should_enable_debug(), port=port)

@@ -10,6 +10,7 @@ import re
 import threading
 import select
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse, urljoin
 import requests
 from urllib3.util import connection as urllib3_connection
@@ -723,17 +724,25 @@ class SafeBrowserProxy:
     - Aborts connections immediately if a hostname resolves to a private IP,
       localhost, cloud metadata, or link-local address (preventing DNS rebinding).
     """
-    def __init__(self, allow_public_hosts: bool = False):
+    def __init__(self, allow_public_hosts: bool = False, max_worker_threads: int = 32):
         self.allow_public_hosts = allow_public_hosts
+        self.max_worker_threads = max(4, int(max_worker_threads))
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_sock.bind(('127.0.0.1', 0))
         self.port = self.server_sock.getsockname()[1]
         self.server_sock.listen(50)
         self.running = False
         self.thread = None
+        self._executor = None
+        self._active_sockets = set()
+        self._sockets_lock = threading.Lock()
 
     def start(self):
         self.running = True
+        self._executor = ThreadPoolExecutor(
+            max_workers=self.max_worker_threads,
+            thread_name_prefix="safe-proxy",
+        )
         self.thread = threading.Thread(target=self._run, daemon=True)
         self.thread.start()
 
@@ -743,8 +752,22 @@ class SafeBrowserProxy:
             self.server_sock.close()
         except Exception:
             pass
+        with self._sockets_lock:
+            sockets_to_close = list(self._active_sockets)
+            self._active_sockets.clear()
+        for sock in sockets_to_close:
+            try:
+                sock.close()
+            except Exception:
+                pass
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=2.0)
+        if self._executor is not None:
+            try:
+                self._executor.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+            self._executor = None
 
     def __enter__(self):
         self.start()
@@ -758,8 +781,15 @@ class SafeBrowserProxy:
         while self.running:
             try:
                 client_sock, _ = self.server_sock.accept()
-                t = threading.Thread(target=self._handle_client, args=(client_sock,), daemon=True)
-                t.start()
+                with self._sockets_lock:
+                    self._active_sockets.add(client_sock)
+                if self._executor is not None and self.running:
+                    self._executor.submit(self._handle_client, client_sock)
+                else:
+                    try:
+                        client_sock.close()
+                    except Exception:
+                        pass
             except socket.timeout:
                 continue
             except Exception:
@@ -1045,6 +1075,8 @@ class SafeBrowserProxy:
                     upstream_sock.close()
                 except Exception as e:
                     logger.debug("SafeBrowserProxy: Error closing upstream socket: %s", e)
+            with self._sockets_lock:
+                self._active_sockets.discard(client_sock)
             try:
                 client_sock.close()
             except Exception as e:

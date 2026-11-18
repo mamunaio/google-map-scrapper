@@ -4,12 +4,19 @@ Coordinates safe HTTP fetching, Playwright fallback, deep candidate crawling,
 email/social extraction, technical audits, feature detection, and opportunity scoring.
 """
 
+import logging
 import time
 from datetime import datetime, timezone
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
+from services.browser_runtime import (
+    acquire_browser_slot,
+    get_chromium_launch_options,
+    safe_close_playwright_resources,
+)
+from services.runtime_config import redact_url_for_log
 from services.security import (
     safe_http_get,
     validate_and_sanitize_url,
@@ -92,83 +99,71 @@ def scrape_with_playwright_fallback(url: str, existing_fb: str = "", existing_in
     """
     # Fail closed immediately if the initial URL fails SSRF / scheme / DNS validation
     safe_url = validate_and_sanitize_url(url)
+    logger = logging.getLogger("leadhunter.website_crawler")
 
     try:
-        with SafeBrowserProxy(allow_public_hosts=True) as proxy:
-            with sync_playwright() as p:
-                browser = None
-                context = None
-                page = None
-                try:
-                    browser = p.chromium.launch(headless=True)
-                    context = browser.new_context(
-                        proxy={"server": f"http://127.0.0.1:{proxy.port}"},
-                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-                    )
-                    page = context.new_page()
-                    page.route("**/*", create_public_website_route_interceptor(page))
-
-                    page.goto(safe_url, timeout=12000, wait_until='domcontentloaded')
-                    time.sleep(0.5)
-
+        with acquire_browser_slot():
+            with SafeBrowserProxy(allow_public_hosts=True) as proxy:
+                with sync_playwright() as p:
+                    browser = None
+                    context = None
+                    page = None
                     try:
-                        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        browser = p.chromium.launch(**get_chromium_launch_options())
+                        context = browser.new_context(
+                            proxy={"server": f"http://127.0.0.1:{proxy.port}"},
+                            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+                        )
+                        page = context.new_page()
+                        page.route("**/*", create_public_website_route_interceptor(page))
+
+                        page.goto(safe_url, timeout=12000, wait_until='domcontentloaded')
                         time.sleep(0.5)
-                    except Exception:
-                        pass
 
-                    html = page.content()
-                    email, fb, insta, linkedin, _ = extract_emails_and_socials(html, base_url=safe_url)
-                    dm_name, dm_role = find_decision_maker_from_html(html, business_name=business_name)
-
-                    fb = fb or existing_fb
-                    insta = insta or existing_insta
-                    linkedin = linkedin or existing_linkedin
-
-                    # Crawl candidates if still missing info (bounded to 2 candidates, 8s timeout)
-                    if not (email and fb and linkedin and dm_name):
-                        candidate_links = find_candidate_pages(html, safe_url, max_candidates=2)
-                        for curl in candidate_links:
-                            try:
-                                safe_curl = validate_and_sanitize_url(curl)
-                            except SecurityError:
-                                continue
-                            try:
-                                page.goto(safe_curl, timeout=8000, wait_until='domcontentloaded')
-                                c_html = page.content()
-                                c_email, c_fb, c_insta, c_linkedin, _ = extract_emails_and_socials(c_html, base_url=safe_url)
-                                if not dm_name:
-                                    dm_name, dm_role = find_decision_maker_from_html(c_html, business_name=business_name)
-                                email = email or c_email
-                                fb = fb or c_fb
-                                insta = insta or c_insta
-                                linkedin = linkedin or c_linkedin
-                                if email and fb and linkedin and dm_name:
-                                    break
-                            except Exception:
-                                pass
-
-                    return html, email, fb, insta, linkedin, dm_name, dm_role
-                finally:
-                    if page:
                         try:
-                            page.close()
+                            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                            time.sleep(0.5)
                         except Exception:
                             pass
-                    if context:
-                        try:
-                            context.close()
-                        except Exception:
-                            pass
-                    if browser:
-                        try:
-                            browser.close()
-                        except Exception:
-                            pass
+
+                        html = page.content()
+                        email, fb, insta, linkedin, _ = extract_emails_and_socials(html, base_url=safe_url)
+                        dm_name, dm_role = find_decision_maker_from_html(html, business_name=business_name)
+
+                        fb = fb or existing_fb
+                        insta = insta or existing_insta
+                        linkedin = linkedin or existing_linkedin
+
+                        # Crawl candidates if still missing info (bounded to 2 candidates, 8s timeout)
+                        if not (email and fb and linkedin and dm_name):
+                            candidate_links = find_candidate_pages(html, safe_url, max_candidates=2)
+                            for curl in candidate_links:
+                                try:
+                                    safe_curl = validate_and_sanitize_url(curl)
+                                except SecurityError:
+                                    continue
+                                try:
+                                    page.goto(safe_curl, timeout=8000, wait_until='domcontentloaded')
+                                    c_html = page.content()
+                                    c_email, c_fb, c_insta, c_linkedin, _ = extract_emails_and_socials(c_html, base_url=safe_url)
+                                    if not dm_name:
+                                        dm_name, dm_role = find_decision_maker_from_html(c_html, business_name=business_name)
+                                    email = email or c_email
+                                    fb = fb or c_fb
+                                    insta = insta or c_insta
+                                    linkedin = linkedin or c_linkedin
+                                    if email and fb and linkedin and dm_name:
+                                        break
+                                except Exception:
+                                    pass
+
+                        return html, email, fb, insta, linkedin, dm_name, dm_role
+                    finally:
+                        safe_close_playwright_resources(page=page, context=context, browser=browser)
     except SecurityError:
         raise
     except Exception as e:
-        print(f"Playwright fallback error for {safe_url}: {e}")
+        logger.warning("Playwright fallback error for %s: %s", redact_url_for_log(safe_url), e)
         return "", "", existing_fb, existing_insta, existing_linkedin, None, None
 
 def is_challenge_or_blocked(status_code: int = 200, html_text: str = "", error_msg: str = None) -> tuple[bool, str]:

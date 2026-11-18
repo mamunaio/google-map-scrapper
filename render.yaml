@@ -1,9 +1,81 @@
+# LeadHunter Studio — Render Docker Blueprint (Web + RQ Worker + Managed Redis)
 services:
+  # 1. Production Web API & UI Service (Gunicorn + Flask)
   - type: web
-    name: google-map-scrapper
-    env: python
-    buildCommand: "./build.sh"
-    startCommand: "gunicorn app:app"
+    name: leadhunter-web
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /healthz
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.10.0
+      - key: LEADHUNTER_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LOG_FORMAT
+        value: json
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
+      - key: WEB_CONCURRENCY
+        value: "2"
+      - key: GUNICORN_THREADS
+        value: "4"
+      - key: GUNICORN_TIMEOUT
+        value: "60"
+      - key: GUNICORN_GRACEFUL_TIMEOUT
+        value: "30"
+      - key: BROWSER_MAX_CONCURRENCY
+        value: "1"
+      - key: REQUIRE_ACTIVE_WORKER
+        value: "true"
+      - key: RATE_LIMIT_MAX_REQUESTS
+        value: "30"
+      - key: RATE_LIMIT_WINDOW_SECONDS
+        value: "60"
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: leadhunter-redis
+          property: connectionString
+      - key: LEADHUNTER_API_KEY
+        sync: false
+      - key: GOOGLE_PAGESPEED_API_KEY
+        sync: false
+
+  # 2. Isolated Background Worker Service (RQ + Playwright Chromium, same Docker image)
+  - type: worker
+    name: leadhunter-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python worker.py
+    envVars:
+      - key: LEADHUNTER_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: LOG_FORMAT
+        value: json
+      - key: BROWSER_MAX_CONCURRENCY
+        value: "1"
+      - key: JOB_TIMEOUT_SECONDS
+        value: "900"
+      - key: JOB_RESULT_TTL_SECONDS
+        value: "3600"
+      - key: JOB_FAILURE_TTL_SECONDS
+        value: "3600"
+      - key: JOB_MAX_RETRIES
+        value: "2"
+      - key: RQ_QUEUE_NAME
+        value: leadhunter
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: leadhunter-redis
+          property: connectionString
+      - key: GOOGLE_PAGESPEED_API_KEY
+        sync: false
+
+  # 3. Managed Redis Broker & Shared Rate-Limit Store
+  - type: redis
+    name: leadhunter-redis
+    ipAllowList: []
+    maxmemoryPolicy: noeviction

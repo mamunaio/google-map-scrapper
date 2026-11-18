@@ -6,7 +6,7 @@ and provides local asset diagnostics when no API key is set. Never fabricates sc
 
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
 from bs4 import BeautifulSoup
 
@@ -92,7 +92,7 @@ def audit_website_performance(url: str, html_text: str = "", local_elapsed_sec: 
     - Runs PageSpeed Insights if API key is present or requested.
     - Accurately tracks audit status, timestamp, Core Web Vitals, and local diagnostics.
     """
-    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     key = api_key or os.getenv("GOOGLE_PAGESPEED_API_KEY", "")
 
     local_diag = analyze_local_asset_diagnostics(html_text, local_elapsed_sec)

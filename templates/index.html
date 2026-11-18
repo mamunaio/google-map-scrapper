@@ -793,7 +793,88 @@
             processQueue();
         }
 
-        // Core Processing Queue
+        async function safeParseJsonResponse(response) {
+            const contentType = (response.headers.get('content-type') || '').toLowerCase();
+            if (contentType.includes('application/json')) {
+                return await response.json();
+            }
+            return {
+                success: false,
+                error: `Unexpected server response (HTTP ${response.status})`
+            };
+        }
+
+        async function runAsyncScrapeJob(payload) {
+            const submitResp = await fetch('/api/jobs', {
+                method: 'POST',
+                headers: getApiHeaders(),
+                body: JSON.stringify(payload)
+            });
+            const submitData = await safeParseJsonResponse(submitResp);
+
+            // Local single-website convenience fallback ONLY if Redis queue is not configured locally
+            if (submitResp.status === 503 && submitData.code === 'queue_unavailable' && payload.type === 'website') {
+                log(`[i] Background queue not configured locally; running direct website audit...`);
+                const syncResp = await fetch('/api/scrape', {
+                    method: 'POST',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify(payload)
+                });
+                return await safeParseJsonResponse(syncResp);
+            }
+
+            if (!submitResp.ok || !submitData.success || !submitData.job_id) {
+                return {
+                    success: false,
+                    error: submitData.error || `Failed to enqueue background job (HTTP ${submitResp.status})`
+                };
+            }
+
+            const jobId = submitData.job_id;
+            sessionStorage.setItem('leadhunter_last_job_id', jobId);
+            if (submitData.deduplicated) {
+                log(`[i] Attached to existing active job ${jobId} (status: ${submitData.status})`);
+            } else {
+                log(`[i] Queued background job ${jobId}`);
+            }
+
+            const pollIntervalMs = 2000;
+            const maxPolls = 500; // ~16 minutes upper poll guard
+            for (let attempt = 0; attempt < maxPolls; attempt++) {
+                await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+                const statusResp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
+                    method: 'GET',
+                    headers: getApiHeaders()
+                });
+                const statusData = await safeParseJsonResponse(statusResp);
+                if (!statusResp.ok || !statusData.success) {
+                    return {
+                        success: false,
+                        error: statusData.error || `Job status check failed (HTTP ${statusResp.status})`
+                    };
+                }
+
+                const prog = statusData.progress || {};
+                if (prog.message) {
+                    document.getElementById('statusSubText').textContent = String(prog.message);
+                }
+
+                if (statusData.status === 'finished' || statusData.status === 'failed' || statusData.status === 'timed_out' || statusData.status === 'canceled') {
+                    const resultResp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/result`, {
+                        method: 'GET',
+                        headers: getApiHeaders()
+                    });
+                    return await safeParseJsonResponse(resultResp);
+                }
+            }
+
+            return {
+                success: false,
+                error: `Timed out waiting for background job ${jobId} to finish.`
+            };
+        }
+
+        // Core Processing Queue (uses asynchronous /api/jobs workflow)
         async function processQueue() {
             let completed = 0;
             let successCount = 0;
@@ -806,9 +887,9 @@
                 const url = item.url;
                 if (scrapeMode === 'maps') {
                     document.getElementById('statusText').textContent = 'Scanning Google Maps & Extracting Leads...';
-                    document.getElementById('statusSubText').textContent = 'Extracting feed listings, verifying contact info & auditing websites.';
+                    document.getElementById('statusSubText').textContent = 'Running in background worker: extracting listings, verifying contacts & auditing websites.';
                     document.getElementById('progressCount').textContent = `Processing query ${i + 1}/${total}...`;
-                    log(`[${i + 1}/${total}] Scanning Google Maps: ${url} (extracting listings and auditing websites)...`);
+                    log(`[${i + 1}/${total}] Submitting Google Maps job: ${url}`);
                 } else {
                     document.getElementById('statusText').textContent = 'Auditing Websites...';
                     log(`[${i + 1}/${total}] Auditing: ${url}`);
@@ -820,18 +901,12 @@
                         fetchUrl = 'https://' + url;
                     }
 
-                    const response = await fetch('/api/scrape', {
-                        method: 'POST',
-                        headers: getApiHeaders(),
-                        body: JSON.stringify({
-                            url: fetchUrl,
-                            type: scrapeMode,
-                            business_name: item.business_name || '',
-                            decision_maker: item.decision_maker || ''
-                        })
+                    const res = await runAsyncScrapeJob({
+                        url: fetchUrl,
+                        type: scrapeMode,
+                        business_name: item.business_name || '',
+                        decision_maker: item.decision_maker || ''
                     });
-
-                    const res = await response.json();
 
                     const incomingLeads = (res.leads && Array.isArray(res.leads)) 
                         ? res.leads 

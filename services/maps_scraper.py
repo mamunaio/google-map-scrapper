@@ -12,6 +12,11 @@ import logging
 from urllib.parse import urlparse, parse_qs, unquote, urlencode
 from playwright.sync_api import sync_playwright
 
+from services.browser_runtime import (
+    acquire_browser_slot,
+    get_chromium_launch_options,
+    safe_close_playwright_resources,
+)
 from services.security import (
     SecurityError,
     validate_google_maps_url,
@@ -380,7 +385,7 @@ def extract_search_listing_card(card) -> dict:
             "Source URL": place_url or ""
         }
     except Exception as e:
-        print(f"Error extracting search card: {e}")
+        logger.warning("Error extracting search card: %s", e)
         return None
 
 def scrape_maps_search_feed(page, max_results: int = 20) -> list[dict]:
@@ -617,93 +622,80 @@ def scrape_google_maps(url: str, max_results: int = 20) -> dict:
     url_kind = "search query" if is_search else "place detail"
     logger.info(f"[Maps] Initiating Google Maps navigation ({url_kind}): {clean_url}")
 
-    with SafeBrowserProxy() as proxy:
-        with sync_playwright() as p:
-            browser = None
-            context = None
-            page = None
-            try:
-                browser = p.chromium.launch(headless=True)
-                context = browser.new_context(
-                    locale="en-US",
-                    extra_http_headers={
-                        "Accept-Language": "en-US,en;q=0.9"
-                    },
-                    proxy={"server": f"http://127.0.0.1:{proxy.port}"},
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
-                )
-                page = context.new_page()
-
-                # Enforce SSRF and unauthorized redirect/subresource protection at browser level
-                page.route("**/*", create_playwright_route_interceptor(page))
-
+    with acquire_browser_slot():
+        with SafeBrowserProxy() as proxy:
+            with sync_playwright() as p:
+                browser = None
+                context = None
+                page = None
                 try:
-                    page.goto(clean_url, timeout=45000, wait_until="domcontentloaded")
-                except Exception as e:
-                    err_str = str(e)
-                    if "BLOCKED_BY_CLIENT" in err_str or "net::ERR_" in err_str or "blocked" in err_str.lower():
-                        raise SecurityError(f"Navigation was blocked by security policy: {err_str}")
-                    raise
+                    browser = p.chromium.launch(**get_chromium_launch_options())
+                    context = browser.new_context(
+                        locale="en-US",
+                        extra_http_headers={
+                            "Accept-Language": "en-US,en;q=0.9"
+                        },
+                        proxy={"server": f"http://127.0.0.1:{proxy.port}"},
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+                    )
+                    page = context.new_page()
 
-                time.sleep(2.0)
+                    # Enforce SSRF and unauthorized redirect/subresource protection at browser level
+                    page.route("**/*", create_playwright_route_interceptor(page))
 
-                # Dismiss Google consent dialog if encountered
-                try:
-                    consent_btn = page.locator('button:has-text("Accept all"), form[action*="consent"] button')
-                    if consent_btn.count() > 0:
-                        consent_btn.first.click()
-                        time.sleep(1.0)
-                except Exception:
-                    pass
+                    try:
+                        page.goto(clean_url, timeout=45000, wait_until="domcontentloaded")
+                    except Exception as e:
+                        err_str = str(e)
+                        if "BLOCKED_BY_CLIENT" in err_str or "net::ERR_" in err_str or "blocked" in err_str.lower():
+                            raise SecurityError(f"Navigation was blocked by security policy: {err_str}")
+                        raise
 
-                if is_search:
-                    leads = scrape_maps_search_feed(page, max_results=max_results)
-                    if not leads:
+                    time.sleep(2.0)
+
+                    # Dismiss Google consent dialog if encountered
+                    try:
+                        consent_btn = page.locator('button:has-text("Accept all"), form[action*="consent"] button')
+                        if consent_btn.count() > 0:
+                            consent_btn.first.click()
+                            time.sleep(1.0)
+                    except Exception:
+                        pass
+
+                    if is_search:
+                        leads = scrape_maps_search_feed(page, max_results=max_results)
+                        if not leads:
+                            return {
+                                "success": False,
+                                "error": "No business listings found at the provided Google Maps search URL.",
+                                "leads": [],
+                                "count": 0,
+                                "is_search": True
+                            }
                         return {
-                            "success": False,
-                            "error": "No business listings found at the provided Google Maps search URL.",
-                            "leads": [],
-                            "count": 0,
-                            "is_search": True
+                            "success": True,
+                            "leads": leads,
+                            "count": len(leads),
+                            "is_search": True,
+                            "data": leads[0]
                         }
-                    return {
-                        "success": True,
-                        "leads": leads,
-                        "count": len(leads),
-                        "is_search": True,
-                        "data": leads[0]
-                    }
-                else:
-                    lead = scrape_maps_place_detail(page, clean_url)
-                    if not lead or (not lead.get("Business Name") and not lead.get("Website")):
+                    else:
+                        lead = scrape_maps_place_detail(page, clean_url)
+                        if not lead or (not lead.get("Business Name") and not lead.get("Website")):
+                            return {
+                                "success": False,
+                                "error": "No business details found at the provided Google Maps place URL.",
+                                "leads": [],
+                                "count": 0,
+                                "is_search": False,
+                                "data": None
+                            }
                         return {
-                            "success": False,
-                            "error": "No business details found at the provided Google Maps place URL.",
-                            "leads": [],
-                            "count": 0,
+                            "success": True,
+                            "leads": [lead],
+                            "count": 1,
                             "is_search": False,
-                            "data": None
+                            "data": lead
                         }
-                    return {
-                        "success": True,
-                        "leads": [lead],
-                        "count": 1,
-                        "is_search": False,
-                        "data": lead
-                    }
-            finally:
-                if page:
-                    try:
-                        page.close()
-                    except Exception:
-                        pass
-                if context:
-                    try:
-                        context.close()
-                    except Exception:
-                        pass
-                if browser:
-                    try:
-                        browser.close()
-                    except Exception:
-                        pass
+                finally:
+                    safe_close_playwright_resources(page=page, context=context, browser=browser)
