@@ -36,6 +36,20 @@ services:
         value: "1"
       - key: REQUIRE_ACTIVE_WORKER
         value: "true"
+      - key: RQ_QUEUE_NAME
+        value: leadhunter
+      - key: JOB_TIMEOUT_SECONDS
+        value: "900"
+      - key: JOB_RESULT_TTL_SECONDS
+        value: "3600"
+      - key: JOB_FAILURE_TTL_SECONDS
+        value: "3600"
+      - key: JOB_MAX_RETRIES
+        value: "2"
+      - key: JOB_DEDUP_TTL_SECONDS
+        value: "900"
+      - key: WORKER_HEARTBEAT_MAX_AGE_SECONDS
+        value: "120"
       - key: RATE_LIMIT_MAX_REQUESTS
         value: "30"
       - key: RATE_LIMIT_WINDOW_SECONDS
@@ -69,6 +83,8 @@ services:
         value: json
       - key: BROWSER_MAX_CONCURRENCY
         value: "1"
+      - key: RQ_QUEUE_NAME
+        value: leadhunter
       - key: JOB_TIMEOUT_SECONDS
         value: "900"
       - key: JOB_RESULT_TTL_SECONDS
@@ -77,8 +93,12 @@ services:
         value: "3600"
       - key: JOB_MAX_RETRIES
         value: "2"
-      - key: RQ_QUEUE_NAME
-        value: leadhunter
+      - key: JOB_DEDUP_TTL_SECONDS
+        value: "900"
+      - key: WORKER_HEARTBEAT_MAX_AGE_SECONDS
+        value: "120"
+      - key: WORKER_TTL_SECONDS
+        value: "120"
       - key: REDIS_URL
         fromService:
           type: redis
