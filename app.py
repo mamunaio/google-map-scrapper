@@ -232,16 +232,14 @@ def scrape_api():
     if biz_err:
         return jsonify({"success": False, "error": biz_err}), 400
 
-    # Strict validation for max_results when provided
-    raw_max_res = data.get('max_results', 20)
-    if isinstance(raw_max_res, bool):
-        return jsonify({"success": False, "error": "Invalid 'max_results'. Must be an integer between 1 and 50."}), 400
-    try:
-        if isinstance(raw_max_res, float) and not raw_max_res.is_integer():
-            raise ValueError("non-integer float")
-        max_res = int(raw_max_res)
-    except (ValueError, TypeError):
-        return jsonify({"success": False, "error": "Invalid 'max_results'. Must be an integer between 1 and 50."}), 400
+    # Strict validation for max_results when provided (genuine JSON int only, range 1..50)
+    if 'max_results' not in data:
+        max_res = 20
+    else:
+        raw_max_res = data['max_results']
+        if isinstance(raw_max_res, bool) or not isinstance(raw_max_res, int):
+            return jsonify({"success": False, "error": "Invalid 'max_results'. Must be an integer between 1 and 50."}), 400
+        max_res = raw_max_res
     if not (MAX_RESULTS_MIN <= max_res <= MAX_RESULTS_MAX):
         return jsonify({"success": False, "error": f"Invalid 'max_results'. Must be between {MAX_RESULTS_MIN} and {MAX_RESULTS_MAX}."}), 400
 

@@ -3,9 +3,10 @@
 **Repository:** `D:\Github Files\google-map-scrapper` (`mamunaio/google-map-scrapper`)  
 **Branch:** `feature/lead-intelligence-phase-05-08`  
 **Pre-Change Baseline HEAD:** `b36be9a9d8ebaa9e95aebde979a8e9e424a04797`  
+**Initial Phase 10.1A Commit:** `4c5e2e71a5f427df47387e246c8ec9cfaa43af4a`  
 **`origin/main` Status:** Untouched at `d7ca71e103cc87e5659fcd9f010dd4f90bc56c61`  
 **Reference Audit:** `PHASE_10_PRODUCTION_READINESS_AUDIT.md`  
-**Scope:** Strictly limited to the four approved security findings (`CRIT-01`, `CRIT-03`, `HIGH-01`, `HIGH-02`).
+**Scope:** Strictly limited to the four approved security findings (`CRIT-01`, `CRIT-03`, `HIGH-01`, `HIGH-02`) plus two targeted post-review corrections (Correction A & Correction B).
 
 ---
 
@@ -38,7 +39,7 @@ Before editing any file, the repository state was verified:
 ### Modified & Created Test Files
 | File | Summary |
 |---|---|
-| `tests/test_security_phase10_1a.py` *(new)* | Added 23 comprehensive security test methods (54 subtests) covering all mandatory SSRF, Auth/Rate-Limit/Validation/Debug, real Chromium DOM XSS, and SSL/SMTP socket hardening cases. |
+| `tests/test_security_phase10_1a.py` *(new)* | Added 26 comprehensive security test methods (82 subtests) covering all mandatory SSRF (including main-frame and child-iframe `data:` navigation blocking), Auth/Rate-Limit/strict `max_results` JSON-int Validation/Debug, real Chromium DOM XSS, and SSL/SMTP socket hardening cases. |
 | `tests/test_api.py` | Configured test `LEADHUNTER_API_KEY`, `X-API-Key` header, and `rate_limiter.reset()` in `setUp`/`tearDown` to test authenticated API contracts cleanly. |
 | `tests/test_data_quality_remediation.py` | Updated `test_case_23` mock target from raw `socket.create_connection` to `create_pinned_public_socket`, preserving `certifi.where()` and `server_hostname="www.airtron.com"` assertions. |
 | `tests/test_email_service.py` | Patched `services.email_service.resolve_and_validate_public_ips` in `test_verify_email_smtp_statuses` for mocked `mail.example.com.` and asserted `smtplib.SMTP` connects to the pinned IP literal `'93.184.216.34'`. |
@@ -82,6 +83,19 @@ Before editing any file, the repository state was verified:
   - `verify_email_smtp()` resolves the highest-priority MX hostname via `resolve_and_validate_public_ips(mx_host, port=25, allow_ip_literal=False)` prior to opening any SMTP socket. Private, loopback, IPv6 loopback/link-local, metadata, or mixed-IP rebinding MX targets are rejected immediately (`False, "Invalid"`).
   - Validated public MX hosts connect via `smtplib.SMTP(pinned_mx_ip, 25, timeout=timeout)` directly to the pinned IP literal (zero secondary DNS lookup), preserving `Verified` vs `MX Only` vs `Invalid` vs `Not Found` vs `Unverified` semantics and closing sockets cleanly in `finally`.
 
+### 3.5 Targeted Post-Review Corrections (Applied on top of `4c5e2e71a5f427df47387e246c8ec9cfaa43af4a`)
+
+#### Correction A — Block `data:` Navigations in Every Frame (`services/security.py`)
+- Updated `is_safe_public_browser_url(url, is_main_document=False, is_navigation=False)` to evaluate `is_nav_request = bool(is_navigation or is_main_document)` with case-insensitive scheme matching (`url_lower`).
+- Unconditionally blocks **all** `data:` URLs whenever `is_nav_request` is `True` (covering both main-frame navigations and child `<iframe>` navigations).
+- Permits safe inline `data:` resources (`SAFE_INLINE_DATA_PREFIXES`: `data:image/`, `data:font/`, `data:application/font`, `data:application/x-font`, `data:text/css`, `data:audio/`, `data:video/`) strictly for non-navigation subresources, while rejecting active `data:text/html` / `data:text/javascript` payloads even as subresources.
+- Updated `create_public_website_route_interceptor(page)` to compute `is_nav = bool(req.is_navigation_request()) or (getattr(req, "resource_type", None) == "document")` independently of `req.frame == page.main_frame` and pass both `is_main_document=is_main` and `is_navigation=is_nav`, preventing child iframe `data:` navigation bypass while keeping `about:blank` and HTTP/HTTPS DNS/IP/proxy enforcement intact.
+
+#### Correction B — Strict `max_results` JSON Integer Validation (`app.py`)
+- Updated `scrape_api()` to accept **only** a genuine JSON integer (`isinstance(raw_max_res, int)` and `not isinstance(raw_max_res, bool)`) within `1..50` when `max_results` is present in the JSON payload.
+- Explicitly rejects booleans (`true`/`false`), numeric strings (`"20"`), floats including integral floats (`20.0`), `null`, and out-of-range integers (`0`, `-1`, `51`) with HTTP `400`.
+- Preserves the default value of `20` when `max_results` is omitted.
+
 ---
 
 ## 4. Security Boundaries, Trust Assumptions & Remaining Limitations
@@ -95,7 +109,7 @@ In accordance with engineering honesty standards, the following boundaries and r
 3. **API Key Transport & Browser Session Storage (`CRIT-03`):**
    - `LEADHUNTER_API_KEY` is entered by the operator in the UI and stored only in browser `sessionStorage` (cleared when the tab closes) and transmitted via `X-API-Key`. Production deployments **must** serve the app strictly over HTTPS (TLS termination at the reverse proxy) so `X-API-Key` is encrypted in transit.
 4. **Playwright Fallback `data:` Subresources (`CRIT-01`):**
-   - Inline `data:` URLs are blocked for main-document navigation and permitted only for non-navigation subresources (such as inline base64 images/fonts common on real business sites). Browser network egress for all HTTP/HTTPS traffic is enforced at both the Playwright route layer and the local `SafeBrowserProxy` TCP layer.
+   - Inline `data:` URLs are unconditionally blocked for **all** navigation requests (main frame and child iframes) and permitted only for non-navigation media/font/CSS subresources (`SAFE_INLINE_DATA_PREFIXES`). Active document/script `data:` payloads are blocked even on non-navigation subresources. Browser network egress for all HTTP/HTTPS traffic across every frame is enforced at both the Playwright route layer and the local `SafeBrowserProxy` TCP layer.
 5. **SMTP STARTTLS / Opportunistic Plaintext (`HIGH-02`):**
    - `verify_email_smtp()` performs standard port-25 `HELO`/`MAIL FROM`/`RCPT TO` deliverability probes directly against the pinned public MX IP without transmitting sensitive user data. Note that connecting by IP literal prevents DNS rebinding; if STARTTLS certificate hostname verification were ever added in the future, `mx_host` would need to be passed as SNI separately.
 6. **Out-of-Scope Production Blockers Deferred to Phase 10.1B / 10.1C:**
@@ -123,29 +137,38 @@ Automated static scans were executed across `app.py`, `services/`, and `template
 
 ### Targeted Security Regression Suite
 - Command: `.\.venv\Scripts\python.exe -m pytest tests/test_security_phase10_1a.py -v`
-- Result: **23 passed, 54 subtests passed, 0 failed** (in `3.42s`)
+- Result: **26 passed, 82 subtests passed, 0 failed** (in `9.60s`)
 
 ### Full Repository Test Suite
 - Command: `.\.venv\Scripts\python.exe -m pytest -v`
 - Baseline (pre-Phase 10.1A): **155 passed, 0 failed**
-- Post-Phase 10.1A: **178 passed, 71 subtests passed, 0 failed** (in `16.49s`, `+23` new security test functions / `+54` new subtests)
+- Post-Phase 10.1A (initial commit `4c5e2e7`): **178 passed, 71 subtests passed, 0 failed**
+- Post-Phase 10.1A Targeted Corrections (current): **181 passed, 99 subtests passed, 0 failed** (in `21.52s`, `+26` new security test functions / `+82` new subtests over baseline)
 - Export schema parity (`16 / 15 / 7 / CSV-16`), `MX Only` vs `Verified` semantics, Cloudflare `Blocked / Inconclusive` handling, accented/`O'Connor`/team-card contact extraction, and `Manual Review` priority handling all passed with zero regressions.
 
 ---
 
 ## 7. Git Diff Summary
 
+### Targeted Corrections Diff (`4c5e2e7..HEAD`)
 ```text
- app.py                                 | 311 +++++++++++++++--
+ app.py                            |  18 ++--
+ services/security.py              |  55 +++++++++----
+ tests/test_security_phase10_1a.py | 169 ++++++++++++++++++++++++++++++++++++++
+```
+
+### Cumulative Phase 10.1A Diff (`b36be9a..HEAD`)
+```text
+ app.py                                 | 309 +++++++++++++++--
  services/email_service.py              |  20 +-
- services/security.py                   | 180 +++++++++-
+ services/security.py                   | 211 +++++++++-
  services/technical_audit.py            |  25 +-
  services/website_crawler.py            | 146 +++++---
  templates/index.html                   | 611 +++++++++++++++++++++++++--------
  tests/test_api.py                      |  44 ++-
  tests/test_data_quality_remediation.py |   6 +-
  tests/test_email_service.py            |   5 +-
- tests/test_security_phase10_1a.py      | (new file, 456 lines)
+ tests/test_security_phase10_1a.py      | (new file, 625 lines)
 ```
 
 ---
@@ -154,8 +177,8 @@ Automated static scans were executed across `app.py`, `services/`, and `template
 
 | Audit ID | Severity | Finding | Status | Verification Evidence |
 |---|---|---|---|---|
-| **CRIT-01** | Critical | Playwright Fallback SSRF / DNS Rebinding | **Fixed** | `SafeBrowserProxy(allow_public_hosts=True)` + `create_public_website_route_interceptor()` + pre-flight & candidate URL validation + guaranteed `try/finally` cleanup; 9 test methods covering localhost, RFC1918, IPv6, metadata, DNS rebinding, redirects, candidate URLs, subresources, and exception cleanup. |
-| **CRIT-03** | Critical | Unauthenticated API, Missing Rate Limiting, Weak Input Validation & Hardcoded `debug=True` | **Fixed** *(with documented single-process rate-limit caveat)* | Fail-closed `LEADHUNTER_API_KEY` auth (`503`/`401`), peer-IP sliding-window rate limiter (`429`, ignores `X-Forwarded-For`), `MAX_CONTENT_LENGTH` (`413`), strict JSON/type/range validation (`400`), sanitized `500` errors, `should_enable_debug()` disabled by default and forbidden in production; 7 test methods passing. |
+| **CRIT-01** | Critical | Playwright Fallback SSRF / DNS Rebinding (+ Correction A: All-Frame `data:` Navigation Blocking) | **Fixed** | `SafeBrowserProxy(allow_public_hosts=True)` + `create_public_website_route_interceptor()` + all-frame `is_navigation_request()` / `document` `data:` navigation blocking + pre-flight & candidate URL validation + guaranteed `try/finally` cleanup; 11 test methods passing. |
+| **CRIT-03** | Critical | Unauthenticated API, Missing Rate Limiting, Weak Input Validation (+ Correction B: Strict `max_results` JSON Integer) & Hardcoded `debug=True` | **Fixed** *(with documented single-process rate-limit caveat)* | Fail-closed `LEADHUNTER_API_KEY` auth (`503`/`401`), peer-IP sliding-window rate limiter (`429`, ignores `X-Forwarded-For`), `MAX_CONTENT_LENGTH` (`413`), strict JSON-int `max_results` (`20`, `"20"`, `20.0`, `true`, `0`, `-1`, `51`, omitted), sanitized `500` errors, `should_enable_debug()` disabled by default and forbidden in production; 8 test methods passing. |
 | **HIGH-01** | High | DOM-Based XSS in `templates/index.html` | **Fixed** | Zero `.innerHTML` and zero inline data-interpolated `onclick` handlers across entire template; strict `sanitizeExternalUrl()` (`http:`/`https:` only); verified via static checks and live headless Chromium DOM execution across all attack vectors. |
 | **HIGH-02** | High | Raw SSL & SMTP Socket SSRF / DNS Rebinding | **Fixed** | `resolve_and_validate_public_ips()` + `create_pinned_public_socket()` enforced before SSL and SMTP connections; zero secondary DNS lookups; private/loopback/IPv6/metadata/rebound hosts blocked; strict `certifi` `CERT_REQUIRED` + `check_hostname=True` + SNI preserved; 5 test methods passing. |
 
@@ -163,8 +186,8 @@ Automated static scans were executed across `app.py`, `services/`, and `template
 
 ## 9. Final Security Verdict
 
-**Phase 10.1A Verdict: PASS (Ready for User Review Before Phase 10.1B)**
+**Phase 10.1A Verdict: PASS (Updated With Post-Review Corrections A & B — Ready for Independent Review)**
 
-All four approved Phase 10.1A security vulnerabilities (`CRIT-01`, `CRIT-03`, `HIGH-01`, `HIGH-02`) are remediated within strict scope, validated by 178 passing tests (including real Chromium DOM XSS testing and live proxy DNS-rebinding tests) and clean static sink checks, with zero regressions to approved export schemas or Phase 09.1 data quality behavior.
+All four approved Phase 10.1A security vulnerabilities (`CRIT-01`, `CRIT-03`, `HIGH-01`, `HIGH-02`) and both targeted post-review corrections (all-frame `data:` navigation blocking and strict `max_results` JSON integer validation) are implemented, verified by **181 passing tests (99 subtests)** and clean static sink checks, with zero regressions to approved export schemas or Phase 09.1 behavior.
 
-Per governance rules, execution stops here on `feature/lead-intelligence-phase-05-08`. Awaiting explicit user review and approval before proceeding to **Phase 10.1B**.
+Per governance rules, execution stops here on `feature/lead-intelligence-phase-05-08`. Awaiting independent review and explicit approval before proceeding to **Phase 10.1B**.

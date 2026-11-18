@@ -536,25 +536,48 @@ def create_pinned_public_socket(hostname: str, port: int, timeout: float = 5.0, 
     raise OSError(f"Failed to connect to any validated public IP for {hostname}:{port}")
 
 
-def is_safe_public_browser_url(url: str, is_main_document: bool = False) -> tuple[bool, str]:
+SAFE_INLINE_DATA_PREFIXES = (
+    'data:image/',
+    'data:font/',
+    'data:application/font',
+    'data:application/x-font',
+    'data:text/css',
+    'data:audio/',
+    'data:video/',
+)
+
+
+def is_safe_public_browser_url(
+    url: str,
+    is_main_document: bool = False,
+    is_navigation: bool = False,
+) -> tuple[bool, str]:
     """
-    Validates destination URLs for public website Playwright crawls (main documents and subresources).
-    Enforces HTTP/HTTPS schemes, blocks localhost/private/loopback/link-local/metadata/reserved ranges,
-    and performs real-time DNS resolution (no stale cache) to defeat DNS rebinding.
+    Validates destination URLs for public website Playwright crawls (main documents,
+    child frame navigations, and non-navigation subresources).
+    Enforces HTTP/HTTPS schemes, blocks `data:` URLs for ANY navigation request
+    (main frame or child iframe), blocks localhost/private/loopback/link-local/metadata/reserved
+    ranges, and performs real-time DNS resolution (no stale cache) to defeat DNS rebinding.
     """
     if not url or not isinstance(url, str):
         return False, "Empty or invalid URL"
 
     url_str = url.strip()
-    if url_str == 'about:blank':
+    url_lower = url_str.lower()
+
+    if url_lower == 'about:blank':
         return True, "Browser internal"
 
-    if url_str.startswith('data:'):
-        if is_main_document:
-            return False, "Data URLs are not permitted for main document navigation"
-        return True, "Inline data resource"
+    is_nav_request = bool(is_navigation or is_main_document)
 
-    if not url_str.startswith(('http://', 'https://')):
+    if url_lower.startswith('data:'):
+        if is_nav_request:
+            return False, "Data URLs are not permitted for navigation requests"
+        if url_lower.startswith(SAFE_INLINE_DATA_PREFIXES):
+            return True, "Inline data resource"
+        return False, "Unsafe or active data URL media type is not permitted"
+
+    if not url_lower.startswith(('http://', 'https://')):
         scheme = url_str.split(':', 1)[0]
         return False, f"Unsupported scheme: '{scheme}'"
 
@@ -576,16 +599,18 @@ def is_safe_public_browser_url(url: str, is_main_document: bool = False) -> tupl
 def create_public_website_route_interceptor(page):
     """
     Creates a Playwright route interceptor for public website SPA crawling.
-    Validates every navigation and subresource request in real time before allowing it through
-    SafeBrowserProxy(allow_public_hosts=True).
+    Validates every navigation (main frame and child iframes) and subresource request
+    in real time before allowing it through SafeBrowserProxy(allow_public_hosts=True).
     """
     def handle_route(route):
         req = route.request
         req_url = req.url
-        is_main = req.is_navigation_request() and (req.frame == page.main_frame)
-        safe, reason = is_safe_public_browser_url(req_url, is_main_document=is_main)
+        is_nav = bool(req.is_navigation_request()) or (getattr(req, "resource_type", None) == "document")
+        is_main = is_nav and (req.frame == page.main_frame)
+        safe, reason = is_safe_public_browser_url(req_url, is_main_document=is_main, is_navigation=is_nav)
         if not safe:
-            logger.warning("[PublicBrowserGuard] Blocked %s request to %s: %s", "navigation" if is_main else "subresource", req_url, reason)
+            req_kind = "main navigation" if is_main else ("frame navigation" if is_nav else "subresource")
+            logger.warning("[PublicBrowserGuard] Blocked %s request to %s: %s", req_kind, req_url, reason)
             route.abort("blockedbyclient")
             return
         route.continue_()

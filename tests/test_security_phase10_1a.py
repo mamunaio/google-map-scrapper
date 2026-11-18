@@ -246,6 +246,121 @@ class TestCrit01PlaywrightSSRF(unittest.TestCase):
         mock_browser.close.assert_called_once()
         self.assertTrue(proxy_exited["called"])
 
+    def test_data_url_navigations_blocked_in_main_and_child_frames_while_safe_data_subresources_allowed(self):
+        mock_page = MagicMock()
+        child_frame = MagicMock()  # Distinct from mock_page.main_frame
+        interceptor = create_public_website_route_interceptor(mock_page)
+
+        # 1. Main-frame data: navigation rejected (unit + route interceptor)
+        for data_nav in [
+            "data:text/html,<script>alert(1)</script>",
+            "DATA:text/html;base64,PGh0bWw+PC9odG1sPg==",
+            "data:image/svg+xml,<svg onload=alert(1)>",
+        ]:
+            with self.subTest(case="main_frame_data_nav", url=data_nav):
+                safe, _ = is_safe_public_browser_url(data_nav, is_main_document=True, is_navigation=True)
+                self.assertFalse(safe)
+
+                mock_route = MagicMock()
+                mock_route.request.url = data_nav
+                mock_route.request.is_navigation_request.return_value = True
+                mock_route.request.resource_type = "document"
+                mock_route.request.frame = mock_page.main_frame
+                interceptor(mock_route)
+                mock_route.abort.assert_called_once_with("blockedbyclient")
+                mock_route.continue_.assert_not_called()
+
+        # 2. Child iframe data: navigation rejected (is_navigation_request=True, frame != main_frame)
+        for iframe_data_nav in [
+            "data:text/html,<h1>Injected Child Frame</h1>",
+            "data:application/xhtml+xml,<html/>",
+            "data:image/png;base64,iVBORw0KGgo=",
+        ]:
+            with self.subTest(case="child_iframe_data_nav", url=iframe_data_nav):
+                safe, _ = is_safe_public_browser_url(iframe_data_nav, is_main_document=False, is_navigation=True)
+                self.assertFalse(safe)
+
+                mock_route = MagicMock()
+                mock_route.request.url = iframe_data_nav
+                mock_route.request.is_navigation_request.return_value = True
+                mock_route.request.resource_type = "document"
+                mock_route.request.frame = child_frame
+                interceptor(mock_route)
+                mock_route.abort.assert_called_once_with("blockedbyclient")
+                mock_route.continue_.assert_not_called()
+
+        # 3. Non-navigation safe inline data: image/font subresources allowed (and about:blank allowed)
+        for safe_inline in [
+            "data:image/png;base64,iVBORw0KGgo=",
+            "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'/>",
+            "data:font/woff2;base64,d09GMgABAAAAAA==",
+            "data:application/font-woff2;base64,d09GMgABAAAAAA==",
+            "about:blank",
+        ]:
+            with self.subTest(case="safe_inline_subresource", url=safe_inline):
+                safe, _ = is_safe_public_browser_url(safe_inline, is_main_document=False, is_navigation=False)
+                self.assertTrue(safe)
+
+                mock_route = MagicMock()
+                mock_route.request.url = safe_inline
+                mock_route.request.is_navigation_request.return_value = False
+                mock_route.request.resource_type = "image"
+                mock_route.request.frame = child_frame
+                interceptor(mock_route)
+                mock_route.continue_.assert_called_once()
+                mock_route.abort.assert_not_called()
+
+        # 4. Active data:text/html or data:text/javascript blocked even as non-navigation subresource
+        for active_data in [
+            "data:text/html,<script>alert(1)</script>",
+            "data:text/javascript,alert(1)",
+        ]:
+            with self.subTest(case="active_data_subresource", url=active_data):
+                safe, _ = is_safe_public_browser_url(active_data, is_main_document=False, is_navigation=False)
+                self.assertFalse(safe)
+
+    def test_child_iframe_http_private_metadata_blocked_and_public_resources_allowed(self):
+        mock_page = MagicMock()
+        child_frame = MagicMock()
+        interceptor = create_public_website_route_interceptor(mock_page)
+
+        # HTTP/HTTPS child iframe requests to private and metadata IPs rejected
+        for blocked_iframe_url in [
+            "http://10.0.0.5/internal-frame",
+            "http://172.16.0.12/dashboard",
+            "http://192.168.1.1/status",
+            "http://127.0.0.1:8000/admin",
+            "http://169.254.169.254/latest/meta-data/",
+            "https://[::1]/secret",
+        ]:
+            with self.subTest(blocked_iframe_url=blocked_iframe_url):
+                mock_route = MagicMock()
+                mock_route.request.url = blocked_iframe_url
+                mock_route.request.is_navigation_request.return_value = True
+                mock_route.request.resource_type = "document"
+                mock_route.request.frame = child_frame
+                interceptor(mock_route)
+                mock_route.abort.assert_called_once_with("blockedbyclient")
+                mock_route.continue_.assert_not_called()
+
+        # Legitimate public main navigation, child iframe navigation, and subresources remain functional
+        public_gai = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+        with patch("services.security.socket.getaddrinfo", return_value=public_gai):
+            for url, is_nav, frame, rtype in [
+                ("https://public-hvac.example.com/", True, mock_page.main_frame, "document"),
+                ("https://booking.public-widget.example.com/embed", True, child_frame, "document"),
+                ("https://cdn.public-hvac.example.com/styles.css", False, mock_page.main_frame, "stylesheet"),
+            ]:
+                with self.subTest(public_url=url, is_nav=is_nav):
+                    mock_route = MagicMock()
+                    mock_route.request.url = url
+                    mock_route.request.is_navigation_request.return_value = is_nav
+                    mock_route.request.resource_type = rtype
+                    mock_route.request.frame = frame
+                    interceptor(mock_route)
+                    mock_route.continue_.assert_called_once()
+                    mock_route.abort.assert_not_called()
+
 
 # =============================================================================
 # 2. CRIT-03 — AUTHENTICATION, RATE LIMITING, INPUT VALIDATION & DEBUG TESTS
@@ -423,6 +538,60 @@ class TestCrit03AuthRateLimitAndValidation(unittest.TestCase):
             body = json.loads(resp_500.data)
             self.assertNotIn("SECRET_DB_DSN", body["error"])
             self.assertNotIn("postgres://", body["error"])
+
+    @patch("app.validate_google_maps_url", side_effect=lambda u: u)
+    @patch("app.scrape_google_maps")
+    def test_max_results_strict_json_integer_validation(self, mock_maps, _mock_validate):
+        auth = {"X-API-Key": "super-secret-phase10-1a-key"}
+        maps_url = "https://www.google.com/maps/search/HVAC+Dallas+TX"
+        mock_maps.return_value = {
+            "success": True,
+            "is_search": True,
+            "leads": [{"Business Name": "Dallas Air", "Website": "", "Phone Number": "214-555-0100"}],
+        }
+
+        # Valid genuine JSON integer 20 -> accepted
+        r_valid = self.client.post(
+            "/api/scrape",
+            data=json.dumps({"url": maps_url, "type": "maps", "max_results": 20}),
+            content_type="application/json",
+            headers=auth,
+        )
+        self.assertEqual(r_valid.status_code, 200)
+        self.assertEqual(mock_maps.call_args.kwargs["max_results"], 20)
+
+        # Omitted max_results -> accepted with default value 20
+        mock_maps.reset_mock()
+        r_omitted = self.client.post(
+            "/api/scrape",
+            data=json.dumps({"url": maps_url, "type": "maps"}),
+            content_type="application/json",
+            headers=auth,
+        )
+        self.assertEqual(r_omitted.status_code, 200)
+        self.assertEqual(mock_maps.call_args.kwargs["max_results"], 20)
+
+        # Invalid types and out-of-range values MUST be rejected with 400
+        rejected_raw_values = [
+            ('"20"', "numeric string"),
+            ('20.0', "float equal to integer"),
+            ('true', "JSON boolean"),
+            ('0', "below minimum"),
+            ('-1', "negative integer"),
+            ('51', "above maximum"),
+        ]
+        for raw_json_val, label in rejected_raw_values:
+            with self.subTest(case=label, raw_value=raw_json_val):
+                mock_maps.reset_mock()
+                raw_body = f'{{"url": "{maps_url}", "type": "maps", "max_results": {raw_json_val}}}'
+                resp = self.client.post(
+                    "/api/scrape",
+                    data=raw_body,
+                    content_type="application/json",
+                    headers=auth,
+                )
+                self.assertEqual(resp.status_code, 400, f"Expected 400 for {label} ({raw_json_val}), got {resp.status_code}")
+                mock_maps.assert_not_called()
 
     def test_debug_mode_disabled_by_default_and_never_enabled_in_production(self):
         # Disabled by default
