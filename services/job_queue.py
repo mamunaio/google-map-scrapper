@@ -275,8 +275,9 @@ def _compare_and_delete_key_strict(connection, key: str, expected_value: str) ->
 
     Distinguishes all three outcomes:
     - True:  Redis completed the atomic delete and ownership matched.
-    - False: Redis completed the atomic check and ownership did NOT match (key untouched).
-    - Raises QueueUnavailableError: Redis failed or was unavailable so outcome is unknown.
+    - False: Redis completed the atomic check and confirmed ownership did NOT match (key untouched).
+    - Raises QueueUnavailableError: Redis failed, was unavailable, or WATCH retries were exhausted
+      so the ownership/delete outcome could not be confirmed.
     """
     try:
         deleted = connection.eval(_COMPARE_AND_DELETE_LUA, 1, key, expected_value)
@@ -292,6 +293,7 @@ def _compare_and_delete_key_strict(connection, key: str, expected_value: str) ->
         ) from exc
 
     # Atomic WATCH/MULTI/EXEC fallback for test emulators without Lua EVAL
+    last_watch_exc: redis.WatchError | None = None
     for _ in range(10):
         try:
             with connection.pipeline() as pipe:
@@ -304,13 +306,16 @@ def _compare_and_delete_key_strict(connection, key: str, expected_value: str) ->
                 pipe.delete(key)
                 pipe.execute()
                 return True
-        except redis.WatchError:
+        except redis.WatchError as exc:
+            last_watch_exc = exc
             continue
         except Exception as exc:
             raise QueueUnavailableError(
                 "Background job broker became unavailable while releasing job reservation; please retry."
             ) from exc
-    return False
+    raise QueueUnavailableError(
+        "Background job broker experienced repeated transaction conflicts while releasing job reservation; please retry."
+    ) from last_watch_exc
 
 
 def _compare_and_delete_key(connection, key: str, expected_value: str) -> bool:
@@ -330,8 +335,9 @@ def _compare_and_swap_key_strict(
 
     Distinguishes all three outcomes:
     - True:  Redis completed the atomic CAS and ownership matched (key updated).
-    - False: Redis completed the atomic CAS and ownership did NOT match (key untouched).
-    - Raises QueueUnavailableError: Redis failed or was unavailable so outcome is unknown.
+    - False: Redis completed the atomic check and confirmed ownership did NOT match (key untouched).
+    - Raises QueueUnavailableError: Redis failed, was unavailable, or WATCH retries were exhausted
+      so the ownership/CAS outcome could not be confirmed.
     """
     try:
         swapped = connection.eval(_COMPARE_AND_SWAP_LUA, 1, key, expected_value, new_value, str(int(ex)))
@@ -347,6 +353,7 @@ def _compare_and_swap_key_strict(
         ) from exc
 
     # Atomic WATCH/MULTI/EXEC fallback for test emulators without Lua EVAL
+    last_watch_exc: redis.WatchError | None = None
     for _ in range(10):
         try:
             with connection.pipeline() as pipe:
@@ -359,13 +366,16 @@ def _compare_and_swap_key_strict(
                 pipe.set(key, new_value, ex=int(ex))
                 pipe.execute()
                 return True
-        except redis.WatchError:
+        except redis.WatchError as exc:
+            last_watch_exc = exc
             continue
         except Exception as exc:
             raise QueueUnavailableError(
                 "Background job broker became unavailable while confirming job reservation; please retry."
             ) from exc
-    return False
+    raise QueueUnavailableError(
+        "Background job broker experienced repeated transaction conflicts while confirming job reservation; please retry."
+    ) from last_watch_exc
 
 
 def _compare_and_swap_key(connection, key: str, expected_value: str, new_value: str, ex: int) -> bool:

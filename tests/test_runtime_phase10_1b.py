@@ -1168,6 +1168,131 @@ class TestRqJobLifecycleAndContracts(_BasePhase101BTestCase):
         # Other owner's reservation MUST remain completely untouched
         self.assertEqual(conn.get(dedup_del).decode("utf-8"), other_owner)
 
+    def test_watch_retry_exhaustion_raises_queue_unavailable_and_legacy_returns_false(self):
+        import redis
+        from rq import Queue
+        from services.job_queue import (
+            QueueUnavailableError,
+            RESERVING_PREFIX,
+            _compare_and_delete_key,
+            _compare_and_delete_key_strict,
+            _compare_and_swap_key,
+            _compare_and_swap_key_strict,
+            compute_job_dedup_key,
+        )
+
+        conn = fakeredis.FakeRedis()
+        conn.set("k:watch:cas", "owner-1", ex=60)
+        conn.set("k:watch:del", "owner-1", ex=60)
+        conn.set("k:watch:other", "other-owner-value", ex=60)
+        orig_pipeline = conn.pipeline
+
+        class _AlwaysWatchErrorPipeline:
+            def __init__(self, real_pipe, counter):
+                self._pipe = real_pipe
+                self._counter = counter
+
+            def __enter__(self):
+                self._pipe.__enter__()
+                return self
+
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                return self._pipe.__exit__(exc_type, exc_val, exc_tb)
+
+            def watch(self, *names):
+                return self._pipe.watch(*names)
+
+            def unwatch(self):
+                return self._pipe.unwatch()
+
+            def get(self, name):
+                return self._pipe.get(name)
+
+            def multi(self):
+                return self._pipe.multi()
+
+            def set(self, *args, **kwargs):
+                return self._pipe.set(*args, **kwargs)
+
+            def delete(self, *args, **kwargs):
+                return self._pipe.delete(*args, **kwargs)
+
+            def execute(self):
+                self._counter["attempts"] += 1
+                raise redis.WatchError("Simulated concurrent modification on watched key")
+
+        # 1. _compare_and_swap_key_strict exhausts all 10 WATCH retries -> QueueUnavailableError
+        cas_counter = {"attempts": 0}
+        with patch.object(conn, "pipeline", side_effect=lambda: _AlwaysWatchErrorPipeline(orig_pipeline(), cas_counter)):
+            with self.assertRaises(QueueUnavailableError):
+                _compare_and_swap_key_strict(conn, "k:watch:cas", "owner-1", "promoted-val", ex=60)
+        self.assertEqual(cas_counter["attempts"], 10)
+        self.assertEqual(conn.get("k:watch:cas").decode("utf-8"), "owner-1")
+        self.assertEqual(conn.get("k:watch:other").decode("utf-8"), "other-owner-value")
+
+        # 2. _compare_and_delete_key_strict exhausts all 10 WATCH retries -> QueueUnavailableError
+        del_counter = {"attempts": 0}
+        with patch.object(conn, "pipeline", side_effect=lambda: _AlwaysWatchErrorPipeline(orig_pipeline(), del_counter)):
+            with self.assertRaises(QueueUnavailableError):
+                _compare_and_delete_key_strict(conn, "k:watch:del", "owner-1")
+        self.assertEqual(del_counter["attempts"], 10)
+        self.assertEqual(conn.get("k:watch:del").decode("utf-8"), "owner-1")
+        self.assertEqual(conn.get("k:watch:other").decode("utf-8"), "other-owner-value")
+
+        # 3. Legacy wrappers still convert strict WatchError exhaustion into False (no mutation)
+        legacy_cas_counter = {"attempts": 0}
+        with patch.object(
+            conn, "pipeline", side_effect=lambda: _AlwaysWatchErrorPipeline(orig_pipeline(), legacy_cas_counter)
+        ):
+            self.assertFalse(_compare_and_swap_key(conn, "k:watch:cas", "owner-1", "promoted-val", ex=60))
+        self.assertEqual(legacy_cas_counter["attempts"], 10)
+        self.assertEqual(conn.get("k:watch:cas").decode("utf-8"), "owner-1")
+
+        legacy_del_counter = {"attempts": 0}
+        with patch.object(
+            conn, "pipeline", side_effect=lambda: _AlwaysWatchErrorPipeline(orig_pipeline(), legacy_del_counter)
+        ):
+            self.assertFalse(_compare_and_delete_key(conn, "k:watch:del", "owner-1"))
+        self.assertEqual(legacy_del_counter["attempts"], 10)
+        self.assertEqual(conn.get("k:watch:del").decode("utf-8"), "owner-1")
+
+        # 4. End-to-end API mapping: WATCH exhaustion during active promotion returns HTTP 503 (NOT 409)
+        url_watch = "https://watch-exhaustion-http503.example.com"
+        dedup_watch = compute_job_dedup_key(url=url_watch, scrape_type="website", max_results=20)
+        orig_enqueue = Queue.enqueue
+        armed = {"watch_fail": False}
+        api_counter = {"attempts": 0}
+
+        def persist_then_arm_watch(self_q, *args, **kwargs):
+            orig_enqueue(self_q, *args, **kwargs)
+            armed["watch_fail"] = True
+            raise TimeoutError("Lost response after active enqueue")
+
+        def maybe_watch_conflict_pipeline(*args, **kwargs):
+            real_pipe = orig_pipeline(*args, **kwargs)
+            if armed["watch_fail"]:
+                return _AlwaysWatchErrorPipeline(real_pipe, api_counter)
+            return real_pipe
+
+        with patch("app.validate_and_sanitize_url", side_effect=lambda u: u), \
+             patch("services.job_queue.get_redis_connection", return_value=conn), \
+             patch.object(Queue, "enqueue", persist_then_arm_watch), \
+             patch.object(conn, "pipeline", side_effect=maybe_watch_conflict_pipeline):
+            resp = self.client.post(
+                "/api/jobs",
+                json={"url": url_watch, "scrape_type": "website"},
+                headers=self.auth,
+            )
+
+        self.assertEqual(api_counter["attempts"], 10)
+        self.assertEqual(resp.status_code, 503)
+        body = resp.get_json()
+        self.assertEqual(body["code"], "queue_unavailable")
+        self.assertNotIn("job_id", body)
+        preserved = conn.get(dedup_watch)
+        self.assertIsNotNone(preserved)
+        self.assertTrue(preserved.decode("utf-8").startswith(RESERVING_PREFIX))
+
 
 # =============================================================================
 # 2. CONCURRENCY, BROWSER LAUNCH FLAGS & DETERMINISTIC CLEANUP
