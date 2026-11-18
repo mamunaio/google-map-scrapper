@@ -75,7 +75,10 @@ class _BasePhase101BTestCase(unittest.TestCase):
             "JOB_RESULT_TTL_SECONDS",
             "JOB_FAILURE_TTL_SECONDS",
             "JOB_DEDUP_TTL_SECONDS",
+            "JOB_RESERVATION_TTL_SECONDS",
             "JOB_MAX_RETRIES",
+            "WORKER_HEARTBEAT_MAX_AGE_SECONDS",
+            "WORKER_TTL_SECONDS",
             "RATE_LIMIT_MAX_REQUESTS",
             "RATE_LIMIT_WINDOW_SECONDS",
             "RATE_LIMIT_FAIL_CLOSED",
@@ -454,6 +457,93 @@ class TestRqJobLifecycleAndContracts(_BasePhase101BTestCase):
         )
         self.assertFalse(after_failed["deduplicated"])
         self.assertNotEqual(after_failed["job_id"], ok_after_fail["job_id"])
+
+    def test_delayed_enqueue_beyond_former_15s_lease_preserves_single_job_and_owner_safe_cleanup(self):
+        from rq import Queue
+        from services.job_queue import (
+            RESERVING_PREFIX,
+            _compare_and_delete_key,
+            compute_job_dedup_key,
+        )
+
+        shared_server = fakeredis.FakeServer()
+        conn1 = fakeredis.FakeRedis(server=shared_server)
+        conn2 = fakeredis.FakeRedis(server=shared_server)
+
+        url = "https://www.google.com/maps/search/HVAC+Dallas+Delayed"
+        dedup_key = compute_job_dedup_key(url=url, scrape_type="maps", max_results=20)
+
+        orig_enqueue = Queue.enqueue
+        caller1_in_enqueue = threading.Event()
+        release_caller1 = threading.Event()
+        results = {}
+
+        def delayed_enqueue(self_q, *args, **kwargs):
+            caller1_in_enqueue.set()
+            # Simulates an arbitrarily delayed enqueue (well beyond former 15s lock lease)
+            release_caller1.wait(timeout=5.0)
+            return orig_enqueue(self_q, *args, **kwargs)
+
+        with patch.object(Queue, "enqueue", delayed_enqueue):
+            t1 = threading.Thread(
+                target=lambda: results.__setitem__(
+                    "c1",
+                    enqueue_scrape_job(url=url, scrape_type="maps", max_results=20, conn=conn1),
+                )
+            )
+            t1.start()
+            self.assertTrue(caller1_in_enqueue.wait(timeout=3.0))
+
+            # Verify reservation key exists with TTL far exceeding old 15s lock (and holds reserving:<job_id>)
+            raw_res = conn1.get(dedup_key).decode("utf-8")
+            self.assertTrue(raw_res.startswith(RESERVING_PREFIX))
+            self.assertGreaterEqual(conn1.ttl(dedup_key), 120)
+
+            # Caller 2 arrives while Caller 1 is still stalled in Queue.enqueue()
+            results["c2"] = enqueue_scrape_job(url=url, scrape_type="maps", max_results=20, conn=conn2)
+
+            # Now let Caller 1 finish enqueueing
+            release_caller1.set()
+            t1.join(timeout=3.0)
+
+        # Exactly ONE active job exists in the queue and BOTH callers receive the exact same job ID
+        q = get_job_queue(conn=conn1)
+        self.assertEqual(len(q), 1)
+        self.assertEqual(results["c1"]["job_id"], results["c2"]["job_id"])
+        self.assertFalse(results["c1"]["deduplicated"])
+        self.assertTrue(results["c2"]["deduplicated"])
+        self.assertEqual(q.job_ids, [results["c1"]["job_id"]])
+        # Reservation promoted cleanly to committed job ID
+        self.assertEqual(conn1.get(dedup_key).decode("utf-8"), results["c1"]["job_id"])
+
+        # Expired (missing) RQ job hash on committed dedup key allows clean atomic replacement
+        old_job = Job.fetch(results["c1"]["job_id"], connection=conn1)
+        old_job.delete(remove_from_queue=True)
+        after_expired = enqueue_scrape_job(url=url, scrape_type="maps", max_results=20, conn=conn2)
+        self.assertFalse(after_expired["deduplicated"])
+        self.assertNotEqual(after_expired["job_id"], results["c1"]["job_id"])
+
+        # Owner-safe cleanup: failed enqueue releases ONLY its own reservation and NEVER deletes another caller's
+        other_url = "https://owner-safe.example.com"
+        other_dedup_key = compute_job_dedup_key(url=other_url, scrape_type="website", max_results=20)
+        other_owner_val = f"{RESERVING_PREFIX}other-caller-job-id"
+
+        def fail_after_owner_swap(self_q, *args, **kwargs):
+            # Simulate another caller now owning the key before this caller fails
+            conn1.set(other_dedup_key, other_owner_val, ex=300)
+            raise RuntimeError("Simulated delayed enqueue failure")
+
+        with patch.object(Queue, "enqueue", fail_after_owner_swap):
+            with self.assertRaises(RuntimeError):
+                enqueue_scrape_job(url=other_url, scrape_type="website", max_results=20, conn=conn1)
+
+        # Caller 2's reservation MUST remain intact
+        self.assertEqual(conn1.get(other_dedup_key).decode("utf-8"), other_owner_val)
+        # Wrong owner cannot delete it; actual owner CAN delete it
+        self.assertFalse(_compare_and_delete_key(conn1, other_dedup_key, f"{RESERVING_PREFIX}wrong-id"))
+        self.assertEqual(conn1.get(other_dedup_key).decode("utf-8"), other_owner_val)
+        self.assertTrue(_compare_and_delete_key(conn1, other_dedup_key, other_owner_val))
+        self.assertIsNone(conn1.get(other_dedup_key))
 
 
 # =============================================================================
@@ -891,6 +981,91 @@ class TestHealthReadinessLoggingAndDeploymentConfig(_BasePhase101BTestCase):
         healthy_down, details_down = worker_module.run_worker_healthcheck(conn=broken_redis)
         self.assertFalse(healthy_down)
         self.assertFalse(details_down["redis_ok"])
+
+    def test_worker_heartbeat_freshness_missing_dead_and_exception_fail_closed(self):
+        from datetime import datetime, timedelta, timezone
+        import worker as worker_module
+        from services.job_queue import check_worker_health
+
+        os.environ["LEADHUNTER_ENV"] = "production"
+        os.environ["REDIS_URL"] = "redis://127.0.0.1:6379/0"
+        os.environ["WORKER_HEARTBEAT_MAX_AGE_SECONDS"] = "120"
+        os.environ["WORKER_TTL_SECONDS"] = "120"
+        os.environ.pop("REQUIRE_ACTIVE_WORKER", None)
+
+        # Verify worker_ttl is wired consistently into RQ 3.0 worker construction
+        rq_worker = worker_module.create_worker(conn=self.fake_redis)
+        self.assertEqual(rq_worker.worker_ttl, 120)
+
+        fixed_now = datetime(2026, 11, 18, 12, 0, 0, tzinfo=timezone.utc)
+        fresh_hb = (fixed_now - timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        stale_hb = (fixed_now - timedelta(seconds=125)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+        rq_worker.register_birth()
+        rq_worker.heartbeat()
+        try:
+            # 1. Fresh heartbeat (30s <= 120s) -> healthy & /readyz returns 200
+            self.fake_redis.hset(rq_worker.key, "last_heartbeat", fresh_hb)
+            ok_fresh, det_fresh = worker_module.run_worker_healthcheck(conn=self.fake_redis, now_utc=fixed_now)
+            self.assertTrue(ok_fresh)
+            self.assertEqual(det_fresh["online"], 1)
+
+            # 2. Stale heartbeat (125s > 120s) while Redis key still exists -> UNHEALTHY & /readyz 503
+            self.fake_redis.hset(rq_worker.key, "last_heartbeat", stale_hb)
+            ok_stale, det_stale = worker_module.run_worker_healthcheck(conn=self.fake_redis, now_utc=fixed_now)
+            self.assertFalse(ok_stale)
+            self.assertEqual(det_stale["online"], 0)
+            self.assertIn("stale/unhealthy ignored", det_stale["detail"])
+
+            # Verify /readyz returns 503 with stale heartbeat using real clock (30 min ago)
+            very_stale_hb = (datetime.now(timezone.utc) - timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            self.fake_redis.hset(rq_worker.key, "last_heartbeat", very_stale_hb)
+            with patch("app.check_chromium_available", return_value=(True, "Chromium OK")):
+                r_stale = self.client.get("/readyz")
+                self.assertEqual(r_stale.status_code, 503)
+                self.assertFalse(json.loads(r_stale.data)["checks"]["workers"]["ok"])
+
+            # 3. Missing last_heartbeat field -> UNHEALTHY & /readyz 503
+            self.fake_redis.hdel(rq_worker.key, "last_heartbeat")
+            ok_missing, det_missing = worker_module.run_worker_healthcheck(conn=self.fake_redis, now_utc=fixed_now)
+            self.assertFalse(ok_missing)
+            self.assertEqual(det_missing["online"], 0)
+            with patch("app.check_chromium_available", return_value=(True, "Chromium OK")):
+                self.assertEqual(self.client.get("/readyz").status_code, 503)
+
+            # 4. Dead worker state even with fresh heartbeat -> UNHEALTHY & /readyz 503
+            self.fake_redis.hset(rq_worker.key, "last_heartbeat", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ"))
+            self.fake_redis.hset(rq_worker.key, "state", "dead")
+            ok_dead, det_dead = worker_module.run_worker_healthcheck(conn=self.fake_redis)
+            self.assertFalse(ok_dead)
+            self.assertEqual(det_dead["online"], 0)
+            with patch("app.check_chromium_available", return_value=(True, "Chromium OK")):
+                self.assertEqual(self.client.get("/readyz").status_code, 503)
+        finally:
+            rq_worker.register_death()
+
+        # 5. get_state() raising exception -> UNHEALTHY (fail-closed)
+        bad_state_worker = MagicMock()
+        bad_state_worker.get_state.side_effect = RuntimeError("state read failed")
+        bad_state_worker.last_heartbeat = fixed_now
+        with patch("services.job_queue.Worker.all", return_value=[bad_state_worker]):
+            res_bad_state = check_worker_health(conn=self.fake_redis, now_utc=fixed_now)
+            self.assertFalse(res_bad_state["ok"])
+            self.assertEqual(res_bad_state["online"], 0)
+
+        # 6. last_heartbeat property raising exception -> UNHEALTHY (fail-closed)
+        class BrokenHeartbeatWorker:
+            def get_state(self):
+                return "idle"
+
+            @property
+            def last_heartbeat(self):
+                raise RuntimeError("heartbeat read failed")
+
+        with patch("services.job_queue.Worker.all", return_value=[BrokenHeartbeatWorker()]):
+            res_bad_hb = check_worker_health(conn=self.fake_redis, now_utc=fixed_now)
+            self.assertFalse(res_bad_hb["ok"])
+            self.assertEqual(res_bad_hb["online"], 0)
 
 
 if __name__ == "__main__":
