@@ -3,6 +3,8 @@ services:
   # 1. Production Web API & UI Service (Gunicorn + Flask)
   - type: web
     name: leadhunter-web
+    region: oregon
+    plan: starter
     runtime: docker
     dockerfilePath: ./Dockerfile
     healthCheckPath: /healthz
@@ -69,6 +71,8 @@ services:
   # 2. Isolated Background Worker Service (RQ + Playwright Chromium, same Docker image)
   - type: worker
     name: leadhunter-worker
+    region: oregon
+    plan: standard # Minimum 2 GB RAM for Playwright Chromium
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerCommand: python worker.py
@@ -107,8 +111,12 @@ services:
       - key: GOOGLE_PAGESPEED_API_KEY
         sync: false
 
-  # 3. Managed Redis Broker & Shared Rate-Limit Store
+  # 3. Managed Redis / Render Key Value Broker & Shared Rate-Limit Store
+  # Note: Render accepts `type: redis` as an equivalent alias for `type: keyvalue`
+  # (Valkey/Redis-compatible); retained as `redis` for Blueprint and test compatibility.
   - type: redis
     name: leadhunter-redis
+    region: oregon
+    plan: starter
     ipAllowList: []
     maxmemoryPolicy: noeviction
