@@ -1,6 +1,7 @@
 # Version control & local environments
 .git/
 .gitignore
+.github/
 .venv/
 venv/
 env/
@@ -11,12 +12,16 @@ __pycache__/
 *.pyo
 .pytest_cache/
 
-# Tests & development requirements
+# Tests, development requirements & local patches/logs
 tests/
+scripts/
 requirements-dev.txt
-build.sh
+*.patch
+*.log
+logs/
 
-# Documentation, audit reports & pilot export artifacts
+# Documentation, archived audit reports & pilot export artifacts
+docs/
 *.md
 *.xlsx
 *.csv

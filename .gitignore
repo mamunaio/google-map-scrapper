@@ -1,9 +1,28 @@
+# Python caches & virtual environments
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
 venv/
 .venv/
 env/
+
+# Local environment secrets (never commit; keep .env.example tracked)
 .env
+.env.local
+.env.*.local
+
+# Logs & temporary OS/editor files
+*.log
+logs/
+*.tmp
+*.bak
+.DS_Store
+Thumbs.db
+
+# Generated local export files at repository root
 scraped_leads_*.xlsx
 scraped_data*.csv
+/LeadHunter_*.xlsx
+/LeadHunter_*.csv
+/LeadHunter_*.json
