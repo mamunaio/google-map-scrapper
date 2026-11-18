@@ -1,0 +1,100 @@
+name: Phase 10.1B Infrastructure Verification
+
+on:
+  push:
+    branches:
+      - feature/lead-intelligence-phase-05-08
+  pull_request:
+    branches:
+      - main
+      - feature/lead-intelligence-phase-05-08
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-10-1b-infra-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate-1-live-redis-lua:
+    name: Gate 1 — Live Redis 7 Lua EVAL
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+        # Production-like noeviction policy for RQ broker & rate limiter
+        # Note: GitHub Actions passes command via container entrypoint args or default server;
+        # we verify Redis 7 and configure noeviction explicitly before running the Lua checks.
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install pinned production dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      - name: Configure Redis 7 noeviction policy and wait for readiness
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+        run: |
+          python - <<'PY'
+          import os, time, redis
+          conn = redis.Redis.from_url(os.environ["REDIS_URL"], socket_connect_timeout=3, socket_timeout=3)
+          for attempt in range(20):
+              try:
+                  if conn.ping():
+                      break
+              except Exception:
+                  if attempt == 19:
+                      raise
+                  time.sleep(0.5)
+          conn.config_set("maxmemory-policy", "noeviction")
+          policy = conn.config_get("maxmemory-policy").get("maxmemory-policy")
+          version = conn.info("server").get("redis_version")
+          assert str(version).startswith("7."), f"Expected Redis 7.x, got {version}"
+          assert policy == "noeviction", f"Expected noeviction, got {policy}"
+          print(f"Live Redis service ready: version={version}, maxmemory-policy={policy}")
+          PY
+
+      - name: Run live Redis 7 Lua EVAL verification
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/0
+        run: python scripts/verify_live_redis_lua.py
+
+  gate-2-docker-integration-smoke:
+    name: Gate 2 — Linux Docker Build & Web/Worker/Redis Smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run Docker build and web/worker/Redis integration smoke test
+        env:
+          IMAGE_TAG: leadhunter-studio:ci-smoke
+        run: bash scripts/verify_docker_smoke.sh
+
+      - name: Guaranteed Docker resource cleanup
+        if: always()
+        run: |
+          docker rm -f leadhunter-smoke-web leadhunter-smoke-worker leadhunter-smoke-redis >/dev/null 2>&1 || true
+          docker network rm leadhunter-smoke-net >/dev/null 2>&1 || true
+          docker image rm -f leadhunter-studio:ci-smoke >/dev/null 2>&1 || true
