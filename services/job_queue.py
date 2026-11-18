@@ -263,18 +263,33 @@ def _decode_redis_str(raw) -> str | None:
     return str(raw)
 
 
-def _compare_and_delete_key(connection, key: str, expected_value: str) -> bool:
-    """Atomically deletes `key` ONLY if its current value matches `expected_value`."""
+def _is_lua_unsupported_error(exc: redis.ResponseError) -> bool:
+    """Returns True only when a Redis emulator reports that Lua EVAL is unsupported."""
+    msg = str(exc).lower()
+    return "unknown command" in msg and "eval" in msg
+
+
+def _compare_and_delete_key_strict(connection, key: str, expected_value: str) -> bool:
+    """
+    Atomically deletes `key` ONLY if its current value matches `expected_value`.
+
+    Distinguishes all three outcomes:
+    - True:  Redis completed the atomic delete and ownership matched.
+    - False: Redis completed the atomic check and ownership did NOT match (key untouched).
+    - Raises QueueUnavailableError: Redis failed or was unavailable so outcome is unknown.
+    """
     try:
         deleted = connection.eval(_COMPARE_AND_DELETE_LUA, 1, key, expected_value)
         return bool(int(deleted))
     except redis.ResponseError as exc:
-        if "unknown command" not in str(exc).lower() or "eval" not in str(exc).lower():
-            logger.debug("Error releasing key %s: %s", key, exc)
-            return False
+        if not _is_lua_unsupported_error(exc):
+            raise QueueUnavailableError(
+                "Background job broker returned an error while releasing job reservation; please retry."
+            ) from exc
     except Exception as exc:
-        logger.debug("Error releasing key %s: %s", key, exc)
-        return False
+        raise QueueUnavailableError(
+            "Background job broker became unavailable while releasing job reservation; please retry."
+        ) from exc
 
     # Atomic WATCH/MULTI/EXEC fallback for test emulators without Lua EVAL
     for _ in range(10):
@@ -292,23 +307,44 @@ def _compare_and_delete_key(connection, key: str, expected_value: str) -> bool:
         except redis.WatchError:
             continue
         except Exception as exc:
-            logger.debug("Fallback release warning for key %s: %s", key, exc)
-            return False
+            raise QueueUnavailableError(
+                "Background job broker became unavailable while releasing job reservation; please retry."
+            ) from exc
     return False
 
 
-def _compare_and_swap_key(connection, key: str, expected_value: str, new_value: str, ex: int) -> bool:
-    """Atomically replaces `key` with `new_value` (with TTL `ex`) ONLY if it still equals `expected_value`."""
+def _compare_and_delete_key(connection, key: str, expected_value: str) -> bool:
+    """Atomically deletes `key` ONLY if its current value matches `expected_value`."""
+    try:
+        return _compare_and_delete_key_strict(connection, key, expected_value)
+    except Exception as exc:
+        logger.debug("Error releasing key %s: %s", key, exc)
+        return False
+
+
+def _compare_and_swap_key_strict(
+    connection, key: str, expected_value: str, new_value: str, ex: int
+) -> bool:
+    """
+    Atomically replaces `key` with `new_value` (with TTL `ex`) ONLY if it still equals `expected_value`.
+
+    Distinguishes all three outcomes:
+    - True:  Redis completed the atomic CAS and ownership matched (key updated).
+    - False: Redis completed the atomic CAS and ownership did NOT match (key untouched).
+    - Raises QueueUnavailableError: Redis failed or was unavailable so outcome is unknown.
+    """
     try:
         swapped = connection.eval(_COMPARE_AND_SWAP_LUA, 1, key, expected_value, new_value, str(int(ex)))
         return bool(int(swapped))
     except redis.ResponseError as exc:
-        if "unknown command" not in str(exc).lower() or "eval" not in str(exc).lower():
-            logger.debug("Error updating key %s: %s", key, exc)
-            return False
+        if not _is_lua_unsupported_error(exc):
+            raise QueueUnavailableError(
+                "Background job broker returned an error while confirming job reservation; please retry."
+            ) from exc
     except Exception as exc:
-        logger.debug("Error updating key %s: %s", key, exc)
-        return False
+        raise QueueUnavailableError(
+            "Background job broker became unavailable while confirming job reservation; please retry."
+        ) from exc
 
     # Atomic WATCH/MULTI/EXEC fallback for test emulators without Lua EVAL
     for _ in range(10):
@@ -326,9 +362,19 @@ def _compare_and_swap_key(connection, key: str, expected_value: str, new_value: 
         except redis.WatchError:
             continue
         except Exception as exc:
-            logger.debug("Fallback CAS warning for key %s: %s", key, exc)
-            return False
+            raise QueueUnavailableError(
+                "Background job broker became unavailable while confirming job reservation; please retry."
+            ) from exc
     return False
+
+
+def _compare_and_swap_key(connection, key: str, expected_value: str, new_value: str, ex: int) -> bool:
+    """Atomically replaces `key` with `new_value` (with TTL `ex`) ONLY if it still equals `expected_value`."""
+    try:
+        return _compare_and_swap_key_strict(connection, key, expected_value, new_value, ex)
+    except Exception as exc:
+        logger.debug("Error updating key %s: %s", key, exc)
+        return False
 
 
 def _compare_and_extend_key(connection, key: str, expected_value: str, ex: int) -> bool:
@@ -751,7 +797,14 @@ def enqueue_scrape_job(
                     ) from enqueue_exc
 
                 try:
-                    released = _compare_and_delete_key(connection, dedup_key, reservation_val)
+                    released = _compare_and_delete_key_strict(connection, dedup_key, reservation_val)
+                except QueueUnavailableError:
+                    logger.error(
+                        "Ambiguous enqueue outcome for terminal job_id=%s; Redis unavailable during "
+                        "reservation cleanup. Preserving reservation.",
+                        reserved_job_id,
+                    )
+                    raise
                 except Exception as release_exc:
                     logger.error(
                         "Ambiguous enqueue outcome for terminal job_id=%s; reservation cleanup failed (%s). "
@@ -792,7 +845,13 @@ def enqueue_scrape_job(
         )
 
     try:
-        promoted = _compare_and_swap_key(connection, dedup_key, reservation_val, job.id, ex=dedup_ttl)
+        promoted = _compare_and_swap_key_strict(connection, dedup_key, reservation_val, job.id, ex=dedup_ttl)
+    except QueueUnavailableError:
+        logger.error(
+            "Failed to promote reservation for job_id=%s because Redis is unavailable; preserving reservation.",
+            job.id,
+        )
+        raise
     except Exception as promote_exc:
         logger.error(
             "Failed to promote reservation for job_id=%s due to Redis error (%s); preserving reservation.",

@@ -946,6 +946,228 @@ class TestRqJobLifecycleAndContracts(_BasePhase101BTestCase):
             self.assertEqual(fresh["status"], "queued")
             self.assertEqual(conn.get(dedup_key).decode("utf-8"), fresh["job_id"])
 
+    def test_strict_cas_and_delete_helpers_distinguish_match_mismatch_and_redis_unavailable(self):
+        import redis
+        from services.job_queue import (
+            QueueUnavailableError,
+            _compare_and_delete_key,
+            _compare_and_delete_key_strict,
+            _compare_and_swap_key,
+            _compare_and_swap_key_strict,
+        )
+
+        conn = fakeredis.FakeRedis()
+        conn.set("k:cas", "owner-1", ex=60)
+        conn.set("k:del", "owner-1", ex=60)
+
+        # 1. Genuine mismatch -> False (key untouched)
+        self.assertFalse(_compare_and_swap_key_strict(conn, "k:cas", "wrong-owner", "new-val", ex=60))
+        self.assertEqual(conn.get("k:cas").decode("utf-8"), "owner-1")
+        self.assertFalse(_compare_and_delete_key_strict(conn, "k:del", "wrong-owner"))
+        self.assertEqual(conn.get("k:del").decode("utf-8"), "owner-1")
+
+        # 2. Redis unavailable on Lua EVAL path -> strict raises QueueUnavailableError; legacy returns False
+        with patch.object(conn, "eval", side_effect=redis.exceptions.ConnectionError("Redis connection dropped")):
+            with self.assertRaises(QueueUnavailableError):
+                _compare_and_swap_key_strict(conn, "k:cas", "owner-1", "new-val", ex=60)
+            with self.assertRaises(QueueUnavailableError):
+                _compare_and_delete_key_strict(conn, "k:del", "owner-1")
+            # Legacy helpers preserve backward-compatible False return
+            self.assertFalse(_compare_and_swap_key(conn, "k:cas", "owner-1", "new-val", ex=60))
+            self.assertFalse(_compare_and_delete_key(conn, "k:del", "owner-1"))
+        self.assertEqual(conn.get("k:cas").decode("utf-8"), "owner-1")
+        self.assertEqual(conn.get("k:del").decode("utf-8"), "owner-1")
+
+        # 3. Redis non-EVAL ResponseError -> strict raises QueueUnavailableError
+        with patch.object(conn, "eval", side_effect=redis.exceptions.ResponseError("READONLY replica")):
+            with self.assertRaises(QueueUnavailableError):
+                _compare_and_swap_key_strict(conn, "k:cas", "owner-1", "new-val", ex=60)
+            with self.assertRaises(QueueUnavailableError):
+                _compare_and_delete_key_strict(conn, "k:del", "owner-1")
+
+        # 4. Redis unavailable on WATCH/MULTI/EXEC fallback path -> strict raises QueueUnavailableError
+        with patch.object(conn, "pipeline", side_effect=redis.exceptions.ConnectionError("Pipeline down")):
+            with self.assertRaises(QueueUnavailableError):
+                _compare_and_swap_key_strict(conn, "k:cas", "owner-1", "new-val", ex=60)
+            with self.assertRaises(QueueUnavailableError):
+                _compare_and_delete_key_strict(conn, "k:del", "owner-1")
+        self.assertEqual(conn.get("k:cas").decode("utf-8"), "owner-1")
+        self.assertEqual(conn.get("k:del").decode("utf-8"), "owner-1")
+
+        # 5. Genuine match -> True (atomic update/delete succeeds)
+        self.assertTrue(_compare_and_swap_key_strict(conn, "k:cas", "owner-1", "promoted-val", ex=60))
+        self.assertEqual(conn.get("k:cas").decode("utf-8"), "promoted-val")
+        self.assertTrue(_compare_and_delete_key_strict(conn, "k:del", "owner-1"))
+        self.assertIsNone(conn.get("k:del"))
+
+    def test_redis_connection_failure_during_active_promotion_returns_503_and_preserves_reservation(self):
+        import redis
+        from rq import Queue
+        from services.job_queue import RESERVING_PREFIX, compute_job_dedup_key
+
+        orig_enqueue = Queue.enqueue
+
+        # Verify BOTH real-Redis Lua EVAL failure path and WATCH/MULTI/EXEC pipeline fallback failure path
+        for failure_mode in ("eval_error", "pipeline_error"):
+            conn = fakeredis.FakeRedis()
+            url = f"https://active-promote-redis-down-{failure_mode}.example.com"
+            dedup_key = compute_job_dedup_key(url=url, scrape_type="website", max_results=20)
+            armed = {"fail_cas": False}
+            orig_eval = conn.eval
+            orig_pipeline = conn.pipeline
+
+            def persist_active_then_arm_and_timeout(self_q, *args, _armed=armed, **kwargs):
+                orig_enqueue(self_q, *args, **kwargs)
+                _armed["fail_cas"] = True
+                raise TimeoutError("Lost response after active enqueue")
+
+            def maybe_fail_eval(*args, _armed=armed, _orig=orig_eval, **kwargs):
+                if _armed["fail_cas"]:
+                    raise redis.exceptions.ConnectionError("Redis disconnected during CAS promotion")
+                return _orig(*args, **kwargs)
+
+            def maybe_fail_pipeline(*args, _armed=armed, _orig=orig_pipeline, **kwargs):
+                if _armed["fail_cas"]:
+                    raise redis.exceptions.ConnectionError("Redis pipeline disconnected during CAS promotion")
+                return _orig(*args, **kwargs)
+
+            target_attr = "eval" if failure_mode == "eval_error" else "pipeline"
+            side_effect_fn = maybe_fail_eval if failure_mode == "eval_error" else maybe_fail_pipeline
+
+            with patch("app.validate_and_sanitize_url", side_effect=lambda u: u), \
+                 patch("services.job_queue.get_redis_connection", return_value=conn), \
+                 patch.object(Queue, "enqueue", persist_active_then_arm_and_timeout), \
+                 patch.object(conn, target_attr, side_effect=side_effect_fn):
+                resp = self.client.post(
+                    "/api/jobs",
+                    json={"url": url, "scrape_type": "website"},
+                    headers=self.auth,
+                )
+
+            self.assertEqual(resp.status_code, 503, f"Expected 503 for {failure_mode}")
+            body = resp.get_json()
+            self.assertEqual(body["code"], "queue_unavailable")
+            self.assertNotIn("job_id", body)
+            # Reservation MUST NOT be deleted when Redis fails during promotion
+            preserved = conn.get(dedup_key)
+            self.assertIsNotNone(preserved)
+            self.assertTrue(preserved.decode("utf-8").startswith(RESERVING_PREFIX))
+
+    def test_redis_connection_failure_during_terminal_cleanup_returns_503_and_preserves_reservation(self):
+        import redis
+        from rq import Queue
+        from rq.job import JobStatus
+        from services.job_queue import RESERVING_PREFIX, compute_job_dedup_key
+
+        orig_enqueue = Queue.enqueue
+
+        for failure_mode in ("eval_error", "pipeline_error"):
+            conn = fakeredis.FakeRedis()
+            url = f"https://terminal-cleanup-redis-down-{failure_mode}.example.com"
+            dedup_key = compute_job_dedup_key(url=url, scrape_type="website", max_results=20)
+            armed = {"fail_del": False}
+            orig_eval = conn.eval
+            orig_pipeline = conn.pipeline
+
+            def persist_terminal_then_arm_and_timeout(self_q, *args, _armed=armed, **kwargs):
+                created = orig_enqueue(self_q, *args, **kwargs)
+                created.set_status(JobStatus.FINISHED)
+                _armed["fail_del"] = True
+                raise TimeoutError("Lost response after job finished")
+
+            def maybe_fail_eval(*args, _armed=armed, _orig=orig_eval, **kwargs):
+                if _armed["fail_del"]:
+                    raise redis.exceptions.ConnectionError("Redis disconnected during terminal cleanup")
+                return _orig(*args, **kwargs)
+
+            def maybe_fail_pipeline(*args, _armed=armed, _orig=orig_pipeline, **kwargs):
+                if _armed["fail_del"]:
+                    raise redis.exceptions.ConnectionError("Redis pipeline disconnected during terminal cleanup")
+                return _orig(*args, **kwargs)
+
+            target_attr = "eval" if failure_mode == "eval_error" else "pipeline"
+            side_effect_fn = maybe_fail_eval if failure_mode == "eval_error" else maybe_fail_pipeline
+
+            with patch("app.validate_and_sanitize_url", side_effect=lambda u: u), \
+                 patch("services.job_queue.get_redis_connection", return_value=conn), \
+                 patch.object(Queue, "enqueue", persist_terminal_then_arm_and_timeout), \
+                 patch.object(conn, target_attr, side_effect=side_effect_fn):
+                resp = self.client.post(
+                    "/api/jobs",
+                    json={"url": url, "scrape_type": "website"},
+                    headers=self.auth,
+                )
+
+            self.assertEqual(resp.status_code, 503, f"Expected 503 for {failure_mode}")
+            body = resp.get_json()
+            self.assertEqual(body["code"], "queue_unavailable")
+            self.assertNotIn("job_id", body)
+            # Reservation MUST NOT be deleted when Redis fails during terminal cleanup
+            preserved = conn.get(dedup_key)
+            self.assertIsNotNone(preserved)
+            self.assertTrue(preserved.decode("utf-8").startswith(RESERVING_PREFIX))
+
+    def test_genuine_cas_and_delete_ownership_mismatches_return_409_and_preserve_other_owner(self):
+        from rq import Queue
+        from rq.job import JobStatus
+        from services.job_queue import RESERVING_PREFIX, compute_job_dedup_key
+
+        conn = fakeredis.FakeRedis()
+        orig_enqueue = Queue.enqueue
+        other_owner = f"{RESERVING_PREFIX}other-legitimate-owner"
+
+        # 1. Genuine CAS ownership mismatch during active-job promotion -> HTTP 409 (NOT 503)
+        url_cas = "https://genuine-cas-mismatch-http409.example.com"
+        dedup_cas = compute_job_dedup_key(url=url_cas, scrape_type="website", max_results=20)
+
+        def persist_active_and_swap_owner(self_q, *args, **kwargs):
+            orig_enqueue(self_q, *args, **kwargs)
+            conn.set(dedup_cas, other_owner, ex=300)
+            raise TimeoutError("Lost response after active enqueue while ownership changed")
+
+        with patch("app.validate_and_sanitize_url", side_effect=lambda u: u), \
+             patch("services.job_queue.get_redis_connection", return_value=conn), \
+             patch.object(Queue, "enqueue", persist_active_and_swap_owner):
+            resp_cas = self.client.post(
+                "/api/jobs",
+                json={"url": url_cas, "scrape_type": "website"},
+                headers=self.auth,
+            )
+
+        self.assertEqual(resp_cas.status_code, 409)
+        body_cas = resp_cas.get_json()
+        self.assertEqual(body_cas["code"], "reservation_ownership_lost")
+        self.assertTrue(body_cas["retryable"])
+        self.assertNotIn("job_id", body_cas)
+        self.assertEqual(conn.get(dedup_cas).decode("utf-8"), other_owner)
+
+        # 2. Genuine owner-safe delete mismatch during terminal-job reconciliation -> HTTP 409 (NOT 503)
+        url_del = "https://genuine-delete-mismatch-http409.example.com"
+        dedup_del = compute_job_dedup_key(url=url_del, scrape_type="website", max_results=20)
+
+        def persist_terminal_and_swap_owner(self_q, *args, **kwargs):
+            created = orig_enqueue(self_q, *args, **kwargs)
+            created.set_status(JobStatus.FINISHED)
+            conn.set(dedup_del, other_owner, ex=300)
+            raise TimeoutError("Lost response after terminal job while ownership changed")
+
+        with patch("app.validate_and_sanitize_url", side_effect=lambda u: u), \
+             patch("services.job_queue.get_redis_connection", return_value=conn), \
+             patch.object(Queue, "enqueue", persist_terminal_and_swap_owner):
+            resp_del = self.client.post(
+                "/api/jobs",
+                json={"url": url_del, "scrape_type": "website"},
+                headers=self.auth,
+            )
+
+        self.assertEqual(resp_del.status_code, 409)
+        body_del = resp_del.get_json()
+        self.assertEqual(body_del["code"], "reservation_ownership_lost")
+        self.assertTrue(body_del["retryable"])
+        self.assertNotIn("job_id", body_del)
+        # Other owner's reservation MUST remain completely untouched
+        self.assertEqual(conn.get(dedup_del).decode("utf-8"), other_owner)
+
 
 # =============================================================================
 # 2. CONCURRENCY, BROWSER LAUNCH FLAGS & DETERMINISTIC CLEANUP
