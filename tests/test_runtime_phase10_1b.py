@@ -702,6 +702,250 @@ class TestRqJobLifecycleAndContracts(_BasePhase101BTestCase):
         self.assertTrue(_compare_and_delete_key(conn, dedup_safe, other_owner_val))
         self.assertIsNone(conn.get(dedup_safe))
 
+    def test_ambiguous_enqueue_reconciles_persisted_active_job_and_deduplicates_second_caller(self):
+        from rq import Queue
+        from rq.job import Job, JobStatus
+        from services.job_queue import compute_job_dedup_key
+
+        shared_server = fakeredis.FakeServer()
+        conn1 = fakeredis.FakeRedis(server=shared_server)
+        conn2 = fakeredis.FakeRedis(server=shared_server)
+        orig_enqueue = Queue.enqueue
+
+        # Case 1: Job persisted as `queued`, then client experiences lost response / timeout
+        url_queued = "https://ambiguous-persisted-queued.example.com"
+        dedup_queued = compute_job_dedup_key(url=url_queued, scrape_type="maps", max_results=20)
+        persisted_ids = []
+
+        def persist_then_timeout(self_q, *args, **kwargs):
+            created = orig_enqueue(self_q, *args, **kwargs)
+            persisted_ids.append(created.id)
+            raise TimeoutError("Simulated Redis client read timeout after server write")
+
+        with patch.object(Queue, "enqueue", persist_then_timeout):
+            first = enqueue_scrape_job(url=url_queued, scrape_type="maps", max_results=20, conn=conn1)
+
+        self.assertEqual(len(persisted_ids), 1)
+        self.assertEqual(first["job_id"], persisted_ids[0])
+        self.assertEqual(first["status"], "queued")
+        self.assertFalse(first["deduplicated"])
+        # Reservation must be promoted to the confirmed job_id
+        self.assertEqual(conn1.get(dedup_queued).decode("utf-8"), persisted_ids[0])
+
+        # Second caller submitting the same payload MUST resolve to the same active job (no duplicate)
+        second = enqueue_scrape_job(url=url_queued, scrape_type="maps", max_results=20, conn=conn2)
+        self.assertTrue(second["deduplicated"])
+        self.assertEqual(second["job_id"], persisted_ids[0])
+        self.assertEqual(second["status"], "queued")
+        q = get_job_queue(conn=conn1)
+        self.assertEqual(len(q), 1)
+        self.assertEqual(q.job_ids, [persisted_ids[0]])
+
+        # Case 2: Job persisted and already picked up by worker (`started`) before reconciliation
+        url_started = "https://ambiguous-persisted-started.example.com"
+        dedup_started = compute_job_dedup_key(url=url_started, scrape_type="website", max_results=20)
+        started_ids = []
+
+        def persist_started_then_drop(self_q, *args, **kwargs):
+            created = orig_enqueue(self_q, *args, **kwargs)
+            created.set_status(JobStatus.STARTED)
+            started_ids.append(created.id)
+            raise ConnectionError("Simulated dropped TCP response after enqueue")
+
+        with patch.object(Queue, "enqueue", persist_started_then_drop):
+            reconciled_started = enqueue_scrape_job(
+                url=url_started,
+                scrape_type="website",
+                max_results=20,
+                conn=conn1,
+            )
+
+        self.assertEqual(reconciled_started["job_id"], started_ids[0])
+        self.assertEqual(reconciled_started["status"], "started")
+        self.assertFalse(reconciled_started["deduplicated"])
+        self.assertEqual(conn1.get(dedup_started).decode("utf-8"), started_ids[0])
+        # Second caller deduplicates against the reconciled started job
+        follow_up = enqueue_scrape_job(url=url_started, scrape_type="website", max_results=20, conn=conn2)
+        self.assertTrue(follow_up["deduplicated"])
+        self.assertEqual(follow_up["job_id"], started_ids[0])
+        self.assertEqual(follow_up["status"], "started")
+        self.assertIsNotNone(Job.fetch(started_ids[0], connection=conn1))
+
+    def test_ambiguous_enqueue_absent_job_releases_reservation_and_preserves_error(self):
+        from rq import Queue
+        from services.job_queue import compute_job_dedup_key
+
+        conn = fakeredis.FakeRedis()
+        url = "https://ambiguous-absent.example.com"
+        dedup_key = compute_job_dedup_key(url=url, scrape_type="website", max_results=20)
+
+        def fail_before_write(self_q, *args, **kwargs):
+            raise RuntimeError("Pre-write serialization error before Redis persist")
+
+        with patch.object(Queue, "enqueue", fail_before_write):
+            with self.assertRaisesRegex(RuntimeError, "Pre-write serialization error"):
+                enqueue_scrape_job(url=url, scrape_type="website", max_results=20, conn=conn)
+
+        self.assertIsNone(conn.get(dedup_key))
+        self.assertEqual(len(get_job_queue(conn=conn)), 0)
+
+    def test_ambiguous_enqueue_redis_unavailable_during_reconciliation_preserves_reservation(self):
+        import redis
+        from rq import Queue
+        from rq.job import Job
+        from services.job_queue import (
+            QueueUnavailableError,
+            RESERVING_PREFIX,
+            compute_job_dedup_key,
+        )
+
+        conn = fakeredis.FakeRedis()
+        url = "https://ambiguous-redis-down.example.com"
+        dedup_key = compute_job_dedup_key(url=url, scrape_type="website", max_results=20)
+
+        def fail_enqueue_timeout(self_q, *args, **kwargs):
+            raise redis.exceptions.TimeoutError("Socket timeout during enqueue")
+
+        def fail_fetch_down(*args, **kwargs):
+            raise redis.exceptions.ConnectionError("Redis unreachable during reconciliation")
+
+        with patch.object(Queue, "enqueue", fail_enqueue_timeout), \
+             patch.object(Job, "fetch", side_effect=fail_fetch_down):
+            with self.assertRaises(QueueUnavailableError):
+                enqueue_scrape_job(url=url, scrape_type="website", max_results=20, conn=conn)
+
+        # Reservation MUST be preserved (not deleted!) because job existence could not be confirmed
+        preserved = conn.get(dedup_key)
+        self.assertIsNotNone(preserved)
+        self.assertTrue(preserved.decode("utf-8").startswith(RESERVING_PREFIX))
+
+        # Verify HTTP API maps this to retryable 503 with NO unconfirmed job_id
+        url_api = "https://ambiguous-redis-down-api.example.com"
+        dedup_api = compute_job_dedup_key(url=url_api, scrape_type="website", max_results=20)
+        with patch("app.validate_and_sanitize_url", side_effect=lambda u: u), \
+             patch("services.job_queue.get_redis_connection", return_value=conn), \
+             patch.object(Queue, "enqueue", fail_enqueue_timeout), \
+             patch.object(Job, "fetch", side_effect=fail_fetch_down):
+            resp = self.client.post(
+                "/api/jobs",
+                json={"url": url_api, "scrape_type": "website"},
+                headers=self.auth,
+            )
+            self.assertEqual(resp.status_code, 503)
+            body = resp.get_json()
+            self.assertEqual(body["code"], "queue_unavailable")
+            self.assertNotIn("job_id", body)
+        self.assertIsNotNone(conn.get(dedup_api))
+        self.assertTrue(conn.get(dedup_api).decode("utf-8").startswith(RESERVING_PREFIX))
+
+        # Also verify Redis failure during status inspection after Job.fetch preserves reservation
+        url_status_down = "https://ambiguous-status-down.example.com"
+        dedup_status = compute_job_dedup_key(url=url_status_down, scrape_type="website", max_results=20)
+        orig_enqueue = Queue.enqueue
+
+        def persist_then_timeout(self_q, *args, **kwargs):
+            orig_enqueue(self_q, *args, **kwargs)
+            raise redis.exceptions.TimeoutError("Socket timeout after write")
+
+        with patch.object(Queue, "enqueue", persist_then_timeout), \
+             patch("services.job_queue._normalize_job_status", side_effect=redis.exceptions.ConnectionError("Status read failed")):
+            with self.assertRaises(QueueUnavailableError):
+                enqueue_scrape_job(url=url_status_down, scrape_type="website", max_results=20, conn=conn)
+        self.assertIsNotNone(conn.get(dedup_status))
+        self.assertTrue(conn.get(dedup_status).decode("utf-8").startswith(RESERVING_PREFIX))
+
+    def test_ambiguous_enqueue_never_overwrites_or_deletes_another_owners_reservation(self):
+        from rq import Queue
+        from rq.job import JobStatus
+        from services.job_queue import (
+            JobReservationOwnershipError,
+            RESERVING_PREFIX,
+            compute_job_dedup_key,
+        )
+
+        conn = fakeredis.FakeRedis()
+        orig_enqueue = Queue.enqueue
+        other_owner = f"{RESERVING_PREFIX}other-owner-job-id"
+
+        # Case 1: Persisted active job, but another caller replaced dedup_key before reconciliation
+        url_active = "https://ambiguous-hijack-active.example.com"
+        dedup_active = compute_job_dedup_key(url=url_active, scrape_type="website", max_results=20)
+
+        def persist_active_hijack_and_raise(self_q, *args, **kwargs):
+            orig_enqueue(self_q, *args, **kwargs)
+            conn.set(dedup_active, other_owner, ex=300)
+            raise TimeoutError("Lost response after active enqueue")
+
+        with patch.object(Queue, "enqueue", persist_active_hijack_and_raise):
+            with self.assertRaises(JobReservationOwnershipError):
+                enqueue_scrape_job(url=url_active, scrape_type="website", max_results=20, conn=conn)
+        self.assertEqual(conn.get(dedup_active).decode("utf-8"), other_owner)
+
+        # Case 2: Absent job, another caller replaced dedup_key before cleanup
+        url_absent = "https://ambiguous-hijack-absent.example.com"
+        dedup_absent = compute_job_dedup_key(url=url_absent, scrape_type="website", max_results=20)
+
+        def absent_hijack_and_raise(self_q, *args, **kwargs):
+            conn.set(dedup_absent, other_owner, ex=300)
+            raise RuntimeError("Enqueue failed before persist")
+
+        with patch.object(Queue, "enqueue", absent_hijack_and_raise):
+            with self.assertRaises(RuntimeError):
+                enqueue_scrape_job(url=url_absent, scrape_type="website", max_results=20, conn=conn)
+        self.assertEqual(conn.get(dedup_absent).decode("utf-8"), other_owner)
+
+        # Case 3: Persisted terminal job, another caller replaced dedup_key before reconciliation
+        url_term = "https://ambiguous-hijack-terminal.example.com"
+        dedup_term = compute_job_dedup_key(url=url_term, scrape_type="website", max_results=20)
+
+        def persist_terminal_hijack_and_raise(self_q, *args, **kwargs):
+            created = orig_enqueue(self_q, *args, **kwargs)
+            created.set_status(JobStatus.FINISHED)
+            conn.set(dedup_term, other_owner, ex=300)
+            raise TimeoutError("Lost response after job already finished")
+
+        with patch.object(Queue, "enqueue", persist_terminal_hijack_and_raise):
+            with self.assertRaises(JobReservationOwnershipError):
+                enqueue_scrape_job(url=url_term, scrape_type="website", max_results=20, conn=conn)
+        self.assertEqual(conn.get(dedup_term).decode("utf-8"), other_owner)
+
+    def test_ambiguous_enqueue_reconciles_terminal_job_without_reporting_active_or_duplicating(self):
+        from rq import Queue
+        from rq.job import JobStatus
+        from services.job_queue import compute_job_dedup_key
+
+        conn = fakeredis.FakeRedis()
+        orig_enqueue = Queue.enqueue
+
+        for terminal_status, label in [
+            (JobStatus.FINISHED, "finished"),
+            (JobStatus.FAILED, "failed"),
+        ]:
+            url = f"https://ambiguous-terminal-{label}.example.com"
+            dedup_key = compute_job_dedup_key(url=url, scrape_type="website", max_results=20)
+            created_ids = []
+
+            def persist_terminal_then_timeout(self_q, *args, _st=terminal_status, _ids=created_ids, **kwargs):
+                created = orig_enqueue(self_q, *args, **kwargs)
+                created.set_status(_st)
+                _ids.append(created.id)
+                raise TimeoutError(f"Lost response after job transitioned to {_st}")
+
+            with patch.object(Queue, "enqueue", persist_terminal_then_timeout):
+                with self.assertRaisesRegex(TimeoutError, "Lost response"):
+                    enqueue_scrape_job(url=url, scrape_type="website", max_results=20, conn=conn)
+
+            # Own reservation MUST be cleanly released (not stuck on a terminal job)
+            self.assertIsNone(conn.get(dedup_key))
+            self.assertEqual(len(created_ids), 1)
+
+            # Subsequent fresh submission succeeds cleanly with a new job ID
+            fresh = enqueue_scrape_job(url=url, scrape_type="website", max_results=20, conn=conn)
+            self.assertFalse(fresh["deduplicated"])
+            self.assertNotEqual(fresh["job_id"], created_ids[0])
+            self.assertEqual(fresh["status"], "queued")
+            self.assertEqual(conn.get(dedup_key).decode("utf-8"), fresh["job_id"])
+
 
 # =============================================================================
 # 2. CONCURRENCY, BROWSER LAUNCH FLAGS & DETERMINISTIC CLEANUP

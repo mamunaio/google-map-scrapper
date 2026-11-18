@@ -635,6 +635,8 @@ def enqueue_scrape_job(
         )
 
     queue = get_job_queue(conn=connection)
+    job = None
+    reconciled_status = "queued"
     with _ReservationLeaseRenewer(
         connection,
         dedup_key,
@@ -674,10 +676,111 @@ def enqueue_scrape_job(
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
-        except Exception:
-            # Owner-safe cleanup: release `dedup_key` ONLY if it still holds our reservation token
-            _compare_and_delete_key(connection, dedup_key, reservation_val)
-            raise
+        except Exception as enqueue_exc:
+            # Ambiguous enqueue outcome: Redis may have persisted the job before a client timeout
+            # or dropped response. Reconcile `reserved_job_id` before deciding whether to promote
+            # or release the reservation.
+            reconciled_job = None
+            job_absent = False
+            try:
+                reconciled_job = Job.fetch(reserved_job_id, connection=connection)
+            except NoSuchJobError:
+                job_absent = True
+            except Exception as reconcile_exc:
+                # Redis unavailable during reconciliation: NEVER assume absence, NEVER delete reservation,
+                # and NEVER return an unconfirmed Job ID.
+                logger.error(
+                    "Ambiguous enqueue outcome for job_id=%s; reconciliation failed (%s). "
+                    "Preserving reservation for safe expiry/reconciliation.",
+                    reserved_job_id,
+                    reconcile_exc.__class__.__name__,
+                )
+                raise QueueUnavailableError(
+                    "Background job broker became unavailable during enqueue reconciliation; please retry."
+                ) from reconcile_exc
+
+            if job_absent:
+                # Confirmed absent in Redis: release ONLY our own reservation and re-raise original enqueue error
+                try:
+                    _compare_and_delete_key(connection, dedup_key, reservation_val)
+                except Exception as cleanup_exc:
+                    logger.warning(
+                        "Failed to release reservation for absent job_id=%s (%s); leaving to TTL expiry.",
+                        reserved_job_id,
+                        cleanup_exc.__class__.__name__,
+                    )
+                raise
+
+            # Job exists in Redis: inspect its actual status safely
+            try:
+                actual_status, _ = _normalize_job_status(reconciled_job)
+            except Exception as status_exc:
+                logger.error(
+                    "Ambiguous enqueue outcome for job_id=%s; status inspection failed (%s). "
+                    "Preserving reservation.",
+                    reserved_job_id,
+                    status_exc.__class__.__name__,
+                )
+                raise QueueUnavailableError(
+                    "Background job broker became unavailable during enqueue reconciliation; please retry."
+                ) from status_exc
+
+            if actual_status in ACTIVE_JOB_STATUSES:
+                logger.warning(
+                    "Reconciled active RQ job_id=%s (status=%s) after ambiguous enqueue exception (%s).",
+                    reserved_job_id,
+                    actual_status,
+                    enqueue_exc.__class__.__name__,
+                )
+                job = reconciled_job
+                reconciled_status = actual_status
+            else:
+                # Job exists but has already reached a terminal state (finished/failed/timed_out/canceled).
+                # Do NOT report it as an active deduplicated job and do NOT create a duplicate.
+                # Atomically verify ownership and release ONLY our reservation; if ownership was lost,
+                # raise JobReservationOwnershipError without touching another caller's key.
+                if renewer.ownership_lost:
+                    logger.error(
+                        "Reconciled terminal job_id=%s (status=%s) after ambiguous enqueue, "
+                        "and reservation ownership was lost.",
+                        reserved_job_id,
+                        actual_status,
+                    )
+                    raise JobReservationOwnershipError(
+                        "Reservation ownership was lost while reconciling a terminal job."
+                    ) from enqueue_exc
+
+                try:
+                    released = _compare_and_delete_key(connection, dedup_key, reservation_val)
+                except Exception as release_exc:
+                    logger.error(
+                        "Ambiguous enqueue outcome for terminal job_id=%s; reservation cleanup failed (%s). "
+                        "Preserving reservation.",
+                        reserved_job_id,
+                        release_exc.__class__.__name__,
+                    )
+                    raise QueueUnavailableError(
+                        "Background job broker became unavailable during enqueue reconciliation; please retry."
+                    ) from release_exc
+
+                if not released:
+                    logger.error(
+                        "Reconciled terminal job_id=%s (status=%s) after ambiguous enqueue, "
+                        "and reservation ownership was lost before cleanup.",
+                        reserved_job_id,
+                        actual_status,
+                    )
+                    raise JobReservationOwnershipError(
+                        "Reservation ownership was lost while reconciling a terminal job."
+                    ) from enqueue_exc
+
+                logger.warning(
+                    "Reconciled terminal job_id=%s (status=%s) after ambiguous enqueue; "
+                    "released own reservation and surfacing enqueue error.",
+                    reserved_job_id,
+                    actual_status,
+                )
+                raise
 
     # Verify ownership was NOT lost during prolonged enqueue and atomically promote
     # `"reserving:<job_id>"` -> `"<job_id>"` with `dedup_ttl`.
@@ -688,17 +791,34 @@ def enqueue_scrape_job(
             "Reservation ownership was lost before job commit could be confirmed."
         )
 
-    promoted = _compare_and_swap_key(connection, dedup_key, reservation_val, job.id, ex=dedup_ttl)
+    try:
+        promoted = _compare_and_swap_key(connection, dedup_key, reservation_val, job.id, ex=dedup_ttl)
+    except Exception as promote_exc:
+        logger.error(
+            "Failed to promote reservation for job_id=%s due to Redis error (%s); preserving reservation.",
+            job.id,
+            promote_exc.__class__.__name__,
+        )
+        raise QueueUnavailableError(
+            "Background job broker became unavailable while confirming job reservation; please retry."
+        ) from promote_exc
+
     if not promoted:
         logger.error("Failed to promote reservation for job_id=%s: ownership lost before commit", job.id)
         raise JobReservationOwnershipError(
             "Reservation ownership was lost before job commit could be confirmed."
         )
 
-    logger.info("Enqueued background job_id=%s type=%s max_results=%d", job.id, scrape_type, max_results)
+    logger.info(
+        "Enqueued background job_id=%s type=%s max_results=%d status=%s",
+        job.id,
+        scrape_type,
+        max_results,
+        reconciled_status,
+    )
     return {
         "job_id": job.id,
-        "status": "queued",
+        "status": reconciled_status,
         "deduplicated": False,
         "workers_online": workers_online,
     }
