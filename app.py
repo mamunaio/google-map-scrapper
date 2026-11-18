@@ -10,9 +10,12 @@ import hmac
 import time
 import uuid
 import random
+import hashlib
 import logging
+import secrets
 from functools import wraps
-from flask import Flask, render_template, request, jsonify, send_file, g
+from urllib.parse import urlparse
+from flask import Flask, render_template, request, jsonify, send_file, g, make_response
 from werkzeug.middleware.proxy_fix import ProxyFix
 from whitenoise import WhiteNoise
 
@@ -36,9 +39,14 @@ from services.runtime_config import (
     get_bool_env,
     get_configured_api_key,
     get_int_env,
+    get_local_bind_host,
     get_redis_url,
+    get_trusted_auth_proxy_header_name,
     get_trusted_proxy_hops,
+    get_ui_session_ttl_seconds,
     is_production_env,
+    is_ui_auto_session_enabled,
+    load_local_dotenv,
     redact_email_for_log,
     redact_url_for_log,
     request_id_var,
@@ -50,6 +58,7 @@ from services.website_crawler import crawl_and_audit_website
 from services.export_service import generate_styled_excel, generate_lead_tracker_csv
 from services.maps_scraper import scrape_google_maps, clean_external_website_url, ensure_english_maps_url
 
+load_local_dotenv()
 configure_logging()
 logger = logging.getLogger("leadhunter.app")
 
@@ -108,6 +117,137 @@ SAFE_ID_PATTERN = re.compile(r'^[A-Za-z0-9_.:-]{1,128}$')
 
 rate_limiter = SharedSlidingWindowRateLimiter()
 
+UI_SESSION_COOKIE_NAME = "lh_ui_session"
+UI_CSRF_HEADER_NAME = "X-CSRF-Token"
+_HEX_32_RE = re.compile(r'^[0-9a-f]{32}$')
+_HEX_64_RE = re.compile(r'^[0-9a-f]{64}$')
+
+
+def _sign_ui_token(secret_key: str, purpose: str, payload: str) -> str:
+    """Derives a domain-separated HMAC-SHA256 hex digest without ever exposing `secret_key`."""
+    msg = f"leadhunter:ui-{purpose}:v1:{payload}".encode("utf-8")
+    return hmac.new(secret_key.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+
+
+def _create_ui_session_tokens(secret_key: str, now: int | None = None) -> tuple[str, str]:
+    """Creates a signed HttpOnly session cookie value and a separate paired CSRF token."""
+    nonce_hex = secrets.token_hex(16)
+    issued_at = int(time.time()) if now is None else int(now)
+    payload = f"{nonce_hex}.{issued_at}"
+    session_sig = _sign_ui_token(secret_key, "session", payload)
+    csrf_token = _sign_ui_token(secret_key, "csrf", payload)
+    return f"{payload}.{session_sig}", csrf_token
+
+
+def _verify_ui_session_and_csrf(
+    cookie_val: str,
+    csrf_val: str,
+    secret_key: str,
+    *,
+    now: int | None = None,
+) -> bool:
+    """Verifies signed UI session cookie integrity, expiry, and paired CSRF token in constant time."""
+    if not cookie_val or not csrf_val or not secret_key:
+        return False
+    parts = cookie_val.split(".")
+    if len(parts) != 3:
+        return False
+    nonce_hex, issued_at_str, sig_hex = parts
+    if not _HEX_32_RE.match(nonce_hex) or not _HEX_64_RE.match(sig_hex):
+        return False
+    try:
+        issued_at = int(issued_at_str)
+    except ValueError:
+        return False
+
+    current_ts = int(time.time()) if now is None else int(now)
+    ttl = get_ui_session_ttl_seconds()
+    if issued_at > current_ts + 60 or (current_ts - issued_at) > ttl:
+        return False
+
+    payload = f"{nonce_hex}.{issued_at_str}"
+    expected_sig = _sign_ui_token(secret_key, "session", payload)
+    expected_csrf = _sign_ui_token(secret_key, "csrf", payload)
+    sig_ok = hmac.compare_digest(sig_hex, expected_sig)
+    csrf_ok = hmac.compare_digest(csrf_val, expected_csrf)
+    return sig_ok and csrf_ok
+
+
+def _normalize_origin(raw_url: str, *, strict_origin_only: bool = False) -> tuple[str, str, int] | None:
+    """
+    Normalizes an HTTP(S) origin into `(scheme, hostname_lower, effective_port)`.
+    Rejects credentials/userinfo; when `strict_origin_only=True` (for `Origin` headers),
+    also rejects paths, query strings, and fragments.
+    """
+    if not raw_url or any(ch.isspace() for ch in raw_url):
+        return None
+    try:
+        parsed = urlparse(raw_url)
+    except ValueError:
+        return None
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https") or not parsed.hostname:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    if strict_origin_only and (parsed.path not in ("", "/") or parsed.query or parsed.fragment):
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return (scheme, parsed.hostname.lower(), port)
+
+
+def _is_same_origin_ui_request() -> bool:
+    """
+    Enforces strict same-origin verification for cookie+CSRF UI API requests:
+    - Every present header (`Sec-Fetch-Site`, `Origin`, `Referer`) must be well-formed and
+      prove exact same-origin match (`Sec-Fetch-Site` MUST be `"same-origin"`, NOT `"none"`).
+    - Requests missing all relevant same-origin evidence are rejected.
+    - State-changing methods (`POST`, `PUT`, `PATCH`, `DELETE`) require explicit verified
+      `Origin` or `Referer` matching this server's origin.
+    """
+    expected_origin = _normalize_origin(f"{request.scheme}://{request.host}", strict_origin_only=True)
+    if expected_origin is None:
+        return False
+
+    has_sec_fetch = "Sec-Fetch-Site" in request.headers
+    has_origin = "Origin" in request.headers
+    has_referer = "Referer" in request.headers
+
+    sec_fetch_verified = False
+    if has_sec_fetch:
+        sec_fetch_site = (request.headers.get("Sec-Fetch-Site") or "").strip().lower()
+        # Only `same-origin` is valid for UI JavaScript fetch() API calls; reject `none`,
+        # `cross-site`, `same-site`, empty, or unknown values.
+        if sec_fetch_site != "same-origin":
+            return False
+        sec_fetch_verified = True
+
+    origin_verified = False
+    if has_origin:
+        origin_hdr = (request.headers.get("Origin") or "").strip()
+        if not origin_hdr or origin_hdr.lower() == "null":
+            return False
+        if _normalize_origin(origin_hdr, strict_origin_only=True) != expected_origin:
+            return False
+        origin_verified = True
+
+    referer_verified = False
+    if has_referer:
+        referer_hdr = (request.headers.get("Referer") or "").strip()
+        if not referer_hdr or _normalize_origin(referer_hdr, strict_origin_only=False) != expected_origin:
+            return False
+        referer_verified = True
+
+    # Require positive same-origin evidence (reject when all relevant headers are absent)
+    if request.method.upper() in ("POST", "PUT", "PATCH", "DELETE"):
+        return origin_verified or referer_verified
+    return origin_verified or referer_verified or sec_fetch_verified
+
 
 def _extract_provided_api_key() -> str:
     """Extracts API key from `X-API-Key` or `Authorization: Bearer <key>` headers."""
@@ -122,12 +262,15 @@ def _extract_provided_api_key() -> str:
 
 def require_api_auth_and_rate_limit(fn):
     """
-    Enforces fail-closed API key authentication and per-client rate limiting on API endpoints.
-    Uses explicit headers (`X-API-Key` / `Authorization: Bearer`), avoiding ambient cookie CSRF.
+    Enforces fail-closed dual-mode authentication and per-client rate limiting on API endpoints:
+    1. Programmatic clients: explicit `X-API-Key` or `Authorization: Bearer <key>` header.
+    2. Built-in Web UI (only when `UI_AUTO_SESSION` is enabled for this request): signed
+       `HttpOnly; SameSite=Strict` session cookie paired with a matching `X-CSRF-Token` header
+       and strict same-origin validation.
     """
     @wraps(fn)
     def wrapper(*args, **kwargs):
-        # 1. Fail-closed authentication check
+        # 1. Fail-closed server secret check (required for BOTH modes)
         expected_key = get_configured_api_key()
         if not expected_key:
             logger.error("API access blocked: LEADHUNTER_API_KEY is not configured.")
@@ -137,7 +280,23 @@ def require_api_auth_and_rate_limit(fn):
             }), 503
 
         provided_key = _extract_provided_api_key()
-        if not provided_key or not hmac.compare_digest(provided_key, expected_key):
+        authenticated = False
+
+        if provided_key:
+            # Explicit API key header was sent: validate strictly without cookie fallback
+            authenticated = hmac.compare_digest(provided_key, expected_key)
+        elif is_ui_auto_session_enabled(
+            remote_addr=request.remote_addr,
+            host_header=request.host,
+            proxy_secret_header=request.headers.get(get_trusted_auth_proxy_header_name()),
+        ):
+            # Built-in UI automatic session: require same-origin + signed HttpOnly cookie + CSRF header
+            cookie_val = (request.cookies.get(UI_SESSION_COOKIE_NAME) or "").strip()
+            csrf_val = (request.headers.get(UI_CSRF_HEADER_NAME) or "").strip()
+            if cookie_val and csrf_val and _is_same_origin_ui_request():
+                authenticated = _verify_ui_session_and_csrf(cookie_val, csrf_val, expected_key)
+
+        if not authenticated:
             return jsonify({
                 "success": False,
                 "error": "Unauthorized: valid API key required."
@@ -262,7 +421,37 @@ def get_random_delay():
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    ui_auto_session = is_ui_auto_session_enabled(
+        remote_addr=request.remote_addr,
+        host_header=request.host,
+        proxy_secret_header=request.headers.get(get_trusted_auth_proxy_header_name()),
+    )
+    expected_key = get_configured_api_key()
+    ui_csrf_token = ""
+    session_cookie_val = None
+
+    if ui_auto_session and expected_key:
+        session_cookie_val, ui_csrf_token = _create_ui_session_tokens(expected_key)
+
+    resp = make_response(
+        render_template(
+            'index.html',
+            ui_auto_session=ui_auto_session,
+            ui_csrf_token=ui_csrf_token,
+        )
+    )
+    if session_cookie_val:
+        resp.set_cookie(
+            UI_SESSION_COOKIE_NAME,
+            session_cookie_val,
+            max_age=get_ui_session_ttl_seconds(),
+            httponly=True,
+            samesite="Strict",
+            secure=(request.is_secure or is_production_env()),
+            path="/",
+        )
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.route('/healthz', methods=['GET'])
@@ -768,5 +957,6 @@ def export_csv_api():
 
 
 if __name__ == '__main__':
+    host = get_local_bind_host()
     port = get_int_env('PORT', 5000, min_value=1, max_value=65535)
-    app.run(debug=should_enable_debug(), port=port)
+    app.run(host=host, debug=should_enable_debug(), port=port)

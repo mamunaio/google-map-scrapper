@@ -1815,6 +1815,41 @@ class TestHealthReadinessLoggingAndDeploymentConfig(_BasePhase101BTestCase):
             self.assertFalse(res_bad_hb["ok"])
             self.assertEqual(res_bad_hb["online"], 0)
 
+    def test_load_local_dotenv_respects_precedence_and_skips_production(self):
+        import tempfile
+        from pathlib import Path
+        from services.runtime_config import PROJECT_ROOT, load_local_dotenv
+
+        self.assertTrue((PROJECT_ROOT / "app.py").is_file())
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file = Path(tmpdir) / ".env"
+            env_file.write_text(
+                "# Comment line\n"
+                "LEADHUNTER_TEST_DOTENV_KEY='quoted-secret-val'\n"
+                "export LEADHUNTER_TEST_DOTENV_PORT=5055 # inline comment\n"
+                "LEADHUNTER_TEST_DOTENV_EXISTING=from-file\n",
+                encoding="utf-8",
+            )
+            os.environ.pop("LEADHUNTER_TEST_DOTENV_KEY", None)
+            os.environ.pop("LEADHUNTER_TEST_DOTENV_PORT", None)
+            os.environ["LEADHUNTER_TEST_DOTENV_EXISTING"] = "from-env"
+            try:
+                loaded = load_local_dotenv(env_path=env_file)
+                self.assertTrue(loaded)
+                self.assertEqual(os.environ.get("LEADHUNTER_TEST_DOTENV_KEY"), "quoted-secret-val")
+                self.assertEqual(os.environ.get("LEADHUNTER_TEST_DOTENV_PORT"), "5055")
+                # Explicit env var MUST NOT be overridden when override=False
+                self.assertEqual(os.environ.get("LEADHUNTER_TEST_DOTENV_EXISTING"), "from-env")
+
+                # Automatic loading (env_path=None) skips in production mode
+                os.environ["LEADHUNTER_ENV"] = "production"
+                self.assertFalse(load_local_dotenv())
+            finally:
+                os.environ.pop("LEADHUNTER_TEST_DOTENV_KEY", None)
+                os.environ.pop("LEADHUNTER_TEST_DOTENV_PORT", None)
+                os.environ.pop("LEADHUNTER_TEST_DOTENV_EXISTING", None)
+                os.environ.pop("LEADHUNTER_ENV", None)
+
 
 if __name__ == "__main__":
     unittest.main()

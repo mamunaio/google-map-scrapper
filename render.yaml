@@ -17,6 +17,13 @@ services:
         value: json
       - key: TRUSTED_PROXY_HOPS
         value: "1"
+      # UI auto-session is explicitly disabled on public Render deployments.
+      # Enabling trusted-proxy UI sessions requires BOTH network-level origin isolation
+      # (blocking direct *.onrender.com / container access outside the authenticating proxy)
+      # AND an authenticating reverse proxy that strips client-supplied headers and injects
+      # a distinct TRUSTED_AUTH_PROXY_SECRET in X-Trusted-Auth-Proxy-Secret.
+      - key: UI_AUTO_SESSION
+        value: "false"
       - key: WEB_CONCURRENCY
         value: "2"
       - key: GUNICORN_THREADS

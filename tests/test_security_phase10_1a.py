@@ -397,6 +397,7 @@ class TestCrit03AuthRateLimitAndValidation(unittest.TestCase):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+        rate_limiter.set_redis_client(None)
         rate_limiter.reset()
 
     def test_anonymous_request_rejected_on_all_protected_endpoints(self):
@@ -894,6 +895,647 @@ class TestHigh02SslAndSmtpSocketHardening(unittest.TestCase):
         mock_wrap.assert_called_once_with(mock_raw_sock, server_hostname="secure.example.com")
         self.assertEqual(res["status"], "Valid")
         self.assertEqual(res["issuer"], "DigiCert Inc")
+
+
+# =============================================================================
+# 5. DUAL-MODE AUTHENTICATION (LOCAL SIGNED UI SESSION + CSRF & API KEY)
+# =============================================================================
+
+
+class TestDualModeUiSessionAuth(unittest.TestCase):
+    def setUp(self):
+        self._env_keys = (
+            "LEADHUNTER_API_KEY",
+            "LEADHUNTER_ENV",
+            "FLASK_ENV",
+            "RENDER",
+            "HOST",
+            "FLASK_RUN_HOST",
+            "CONTAINER",
+            "TRUSTED_PROXY_HOPS",
+            "UI_AUTO_SESSION",
+            "UI_AUTO_SESSION_BEHIND_TRUSTED_AUTH_PROXY",
+            "TRUSTED_AUTH_PROXY_SECRET",
+            "TRUSTED_AUTH_PROXY_HEADER",
+            "UI_SESSION_TTL_SECONDS",
+            "RATE_LIMIT_MAX_REQUESTS",
+            "RATE_LIMIT_WINDOW_SECONDS",
+        )
+        self._env_backup = {k: os.environ.get(k) for k in self._env_keys}
+        self.secret_key = "super-secret-dual-mode-auth-key-987654"
+        os.environ["LEADHUNTER_API_KEY"] = self.secret_key
+        for k in (
+            "LEADHUNTER_ENV",
+            "FLASK_ENV",
+            "RENDER",
+            "HOST",
+            "FLASK_RUN_HOST",
+            "CONTAINER",
+            "TRUSTED_PROXY_HOPS",
+            "UI_AUTO_SESSION",
+            "UI_AUTO_SESSION_BEHIND_TRUSTED_AUTH_PROXY",
+            "TRUSTED_AUTH_PROXY_SECRET",
+            "TRUSTED_AUTH_PROXY_HEADER",
+            "UI_SESSION_TTL_SECONDS",
+        ):
+            os.environ.pop(k, None)
+        os.environ["RATE_LIMIT_MAX_REQUESTS"] = "30"
+        os.environ["RATE_LIMIT_WINDOW_SECONDS"] = "60"
+        rate_limiter.reset()
+        self.client = app.test_client()
+
+    def tearDown(self):
+        for k, v in self._env_backup.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        rate_limiter.set_redis_client(None)
+        rate_limiter.reset()
+
+    def _extract_csrf(self, html: str) -> str:
+        match = re.search(r'<meta name="csrf-token" content="([0-9a-f]{64})">', html)
+        return match.group(1) if match else ""
+
+    def _same_origin_post_headers(self, csrf_token: str) -> dict:
+        return {
+            "X-CSRF-Token": csrf_token,
+            "Origin": "http://localhost",
+            "Referer": "http://localhost/",
+            "Sec-Fetch-Site": "same-origin",
+        }
+
+    def test_local_ui_auto_session_authenticates_without_manual_key_and_never_exposes_secret(self):
+        from app import UI_SESSION_COOKIE_NAME
+
+        resp = self.client.get("/")
+        self.assertEqual(resp.status_code, 200)
+        html = resp.data.decode("utf-8")
+
+        # Local loopback UI removes manual API key input and never exposes LEADHUNTER_API_KEY anywhere
+        self.assertNotIn('id="apiKeyInput"', html)
+        self.assertNotIn(self.secret_key, html)
+        set_cookie_hdrs = resp.headers.getlist("Set-Cookie")
+        self.assertTrue(any(h.startswith(f"{UI_SESSION_COOKIE_NAME}=") for h in set_cookie_hdrs))
+        cookie_hdr = [h for h in set_cookie_hdrs if h.startswith(f"{UI_SESSION_COOKIE_NAME}=")][0]
+        self.assertIn("HttpOnly", cookie_hdr)
+        self.assertIn("SameSite=Strict", cookie_hdr)
+        self.assertNotIn(self.secret_key, cookie_hdr)
+        self.assertEqual(resp.headers.get("Cache-Control"), "no-store")
+
+        csrf_token = self._extract_csrf(html)
+        self.assertEqual(len(csrf_token), 64)
+
+        # Authenticated UI POST works via HttpOnly session cookie + X-CSRF-Token + same-origin headers
+        export_resp = self.client.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Local HVAC Co"}]},
+            headers=self._same_origin_post_headers(csrf_token),
+        )
+        self.assertEqual(export_resp.status_code, 200)
+
+        # Authenticated UI GET works with Sec-Fetch-Site: same-origin + cookie + CSRF (404/503, NOT 401)
+        import fakeredis
+        with patch("services.job_queue.get_redis_connection", return_value=fakeredis.FakeRedis()):
+            get_resp = self.client.get(
+                "/api/jobs/nonexistent-local-ui-job",
+                headers={"X-CSRF-Token": csrf_token, "Sec-Fetch-Site": "same-origin"},
+            )
+            self.assertEqual(get_resp.status_code, 404)
+
+        # Explicit invalid X-API-Key header MUST still fail closed with 401 even with valid UI session
+        bad_key_resp = self.client.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Local HVAC Co"}]},
+            headers={**self._same_origin_post_headers(csrf_token), "X-API-Key": "wrong-explicit-key"},
+        )
+        self.assertEqual(bad_key_resp.status_code, 401)
+
+    def test_non_loopback_dev_configurations_do_not_silently_enable_auto_session(self):
+        from app import UI_SESSION_COOKIE_NAME, _create_ui_session_tokens
+        from services.runtime_config import is_loopback_only_local_deployment, is_ui_auto_session_enabled
+
+        # 1. Non-loopback bind host / container / proxy configurations must disable default auto-session
+        non_loopback_env_cases = [
+            {"HOST": "0.0.0.0"},
+            {"HOST": "::"},
+            {"HOST": "192.168.1.50"},
+            {"FLASK_RUN_HOST": "0.0.0.0"},
+            {"CONTAINER": "true"},
+            {"TRUSTED_PROXY_HOPS": "1"},
+        ]
+        for env_overrides in non_loopback_env_cases:
+            for k in ("HOST", "FLASK_RUN_HOST", "CONTAINER", "TRUSTED_PROXY_HOPS", "UI_AUTO_SESSION"):
+                os.environ.pop(k, None)
+            os.environ.update(env_overrides)
+            with self.subTest(env=env_overrides):
+                self.assertFalse(is_loopback_only_local_deployment())
+                self.assertFalse(is_ui_auto_session_enabled(remote_addr="127.0.0.1", host_header="127.0.0.1:5000"))
+
+                c = app.test_client()
+                r_home = c.get("/")
+                html = r_home.data.decode("utf-8")
+                self.assertIn('id="apiKeyInput"', html)
+                self.assertEqual(self._extract_csrf(html), "")
+                self.assertFalse(
+                    any(h.startswith(f"{UI_SESSION_COOKIE_NAME}=") for h in r_home.headers.getlist("Set-Cookie"))
+                )
+
+                cookie_val, csrf_val = _create_ui_session_tokens(self.secret_key)
+                c.set_cookie(UI_SESSION_COOKIE_NAME, cookie_val)
+                r_api = c.post(
+                    "/api/export-csv",
+                    json={"leads": [{"Business Name": "Test"}]},
+                    headers=self._same_origin_post_headers(csrf_val),
+                )
+                self.assertEqual(r_api.status_code, 401)
+
+        # Reset env to default local dev and test LAN peer IP / LAN Host header rejection
+        for k in ("HOST", "FLASK_RUN_HOST", "CONTAINER", "TRUSTED_PROXY_HOPS", "UI_AUTO_SESSION"):
+            os.environ.pop(k, None)
+
+        # 2. Non-loopback client peer IP (e.g. LAN visitor hitting `flask run --host=0.0.0.0`)
+        c_lan_ip = app.test_client()
+        r_lan_home = c_lan_ip.get("/", environ_base={"REMOTE_ADDR": "192.168.1.42"})
+        self.assertIn('id="apiKeyInput"', r_lan_home.data.decode("utf-8"))
+        self.assertEqual(self._extract_csrf(r_lan_home.data.decode("utf-8")), "")
+        self.assertFalse(
+            any(h.startswith(f"{UI_SESSION_COOKIE_NAME}=") for h in r_lan_home.headers.getlist("Set-Cookie"))
+        )
+        cookie_val, csrf_val = _create_ui_session_tokens(self.secret_key)
+        c_lan_ip.set_cookie(UI_SESSION_COOKIE_NAME, cookie_val)
+        r_lan_post = c_lan_ip.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Test"}]},
+            headers=self._same_origin_post_headers(csrf_val),
+            environ_base={"REMOTE_ADDR": "192.168.1.42"},
+        )
+        self.assertEqual(r_lan_post.status_code, 401)
+
+        # 3. Non-loopback Host header (e.g. LAN hostname or IP)
+        c_lan_host = app.test_client()
+        r_host_home = c_lan_host.get("/", headers={"Host": "192.168.1.10:5000"})
+        self.assertIn('id="apiKeyInput"', r_host_home.data.decode("utf-8"))
+        self.assertEqual(self._extract_csrf(r_host_home.data.decode("utf-8")), "")
+        self.assertFalse(
+            any(h.startswith(f"{UI_SESSION_COOKIE_NAME}=") for h in r_host_home.headers.getlist("Set-Cookie"))
+        )
+
+    def test_explicit_ui_auto_session_cannot_bypass_network_restrictions_and_requires_trusted_proxy_opt_in(self):
+        from app import UI_SESSION_COOKIE_NAME, _create_ui_session_tokens
+
+        # 1. Explicit UI_AUTO_SESSION=false on loopback disables auto-session
+        os.environ["UI_AUTO_SESSION"] = "false"
+        c_off = app.test_client()
+        r_off = c_off.get("/")
+        self.assertIn('id="apiKeyInput"', r_off.data.decode("utf-8"))
+        self.assertEqual(self._extract_csrf(r_off.data.decode("utf-8")), "")
+        self.assertFalse(
+            any(h.startswith(f"{UI_SESSION_COOKIE_NAME}=") for h in r_off.headers.getlist("Set-Cookie"))
+        )
+
+        # 2. Explicit UI_AUTO_SESSION=true MUST NOT bypass wildcard, LAN, public, container,
+        #    or incomplete proxy configurations (env flags alone NEVER prove proxy authentication)
+        proxy_secret = "distinct-upstream-auth-proxy-secret-xyz789"
+        rejected_explicit_cases = [
+            {"HOST": "0.0.0.0", "UI_AUTO_SESSION": "true"},
+            {"HOST": "::", "UI_AUTO_SESSION": "true"},
+            {"HOST": "192.168.1.50", "UI_AUTO_SESSION": "true"},
+            {"HOST": "203.0.113.10", "UI_AUTO_SESSION": "true"},
+            {"CONTAINER": "true", "UI_AUTO_SESSION": "true"},
+            # TRUSTED_PROXY_HOPS alone is NOT proof of an authenticated proxy
+            {"HOST": "0.0.0.0", "UI_AUTO_SESSION": "true", "TRUSTED_PROXY_HOPS": "1"},
+            # Trusted-proxy opt-in without TRUSTED_PROXY_HOPS > 0 is rejected
+            {"HOST": "0.0.0.0", "UI_AUTO_SESSION": "true", "UI_AUTO_SESSION_BEHIND_TRUSTED_AUTH_PROXY": "true"},
+            # Trusted-proxy flags WITHOUT TRUSTED_AUTH_PROXY_SECRET are rejected
+            {
+                "HOST": "0.0.0.0",
+                "UI_AUTO_SESSION": "true",
+                "TRUSTED_PROXY_HOPS": "1",
+                "UI_AUTO_SESSION_BEHIND_TRUSTED_AUTH_PROXY": "true",
+            },
+            # Reusing LEADHUNTER_API_KEY as TRUSTED_AUTH_PROXY_SECRET is rejected
+            {
+                "HOST": "0.0.0.0",
+                "UI_AUTO_SESSION": "true",
+                "TRUSTED_PROXY_HOPS": "1",
+                "UI_AUTO_SESSION_BEHIND_TRUSTED_AUTH_PROXY": "true",
+                "TRUSTED_AUTH_PROXY_SECRET": self.secret_key,
+            },
+            # Trusted-proxy flags without explicit UI_AUTO_SESSION=true remain disabled by default
+            {
+                "HOST": "0.0.0.0",
+                "TRUSTED_PROXY_HOPS": "1",
+                "UI_AUTO_SESSION_BEHIND_TRUSTED_AUTH_PROXY": "true",
+                "TRUSTED_AUTH_PROXY_SECRET": proxy_secret,
+            },
+        ]
+        for env_overrides in rejected_explicit_cases:
+            for k in (
+                "HOST",
+                "FLASK_RUN_HOST",
+                "CONTAINER",
+                "TRUSTED_PROXY_HOPS",
+                "UI_AUTO_SESSION",
+                "UI_AUTO_SESSION_BEHIND_TRUSTED_AUTH_PROXY",
+                "TRUSTED_AUTH_PROXY_SECRET",
+                "TRUSTED_AUTH_PROXY_HEADER",
+            ):
+                os.environ.pop(k, None)
+            os.environ.update(env_overrides)
+            with self.subTest(rejected_env=env_overrides):
+                c = app.test_client()
+                r_home = c.get("/", headers={"X-Trusted-Auth-Proxy-Secret": env_overrides.get("TRUSTED_AUTH_PROXY_SECRET", proxy_secret)})
+                html = r_home.data.decode("utf-8")
+                self.assertIn('id="apiKeyInput"', html)
+                self.assertEqual(self._extract_csrf(html), "")
+                self.assertFalse(
+                    any(h.startswith(f"{UI_SESSION_COOKIE_NAME}=") for h in r_home.headers.getlist("Set-Cookie"))
+                )
+                cookie_val, csrf_val = _create_ui_session_tokens(self.secret_key)
+                c.set_cookie(UI_SESSION_COOKIE_NAME, cookie_val)
+                r_post = c.post(
+                    "/api/export-csv",
+                    json={"leads": [{"Business Name": "Unsafe Non-Loopback"}]},
+                    headers={
+                        **self._same_origin_post_headers(csrf_val),
+                        "X-Trusted-Auth-Proxy-Secret": env_overrides.get("TRUSTED_AUTH_PROXY_SECRET", proxy_secret),
+                    },
+                )
+                self.assertEqual(r_post.status_code, 401)
+
+        # 3. Direct unauthenticated backend access vs authenticated proxy access
+        os.environ["HOST"] = "0.0.0.0"
+        os.environ["UI_AUTO_SESSION"] = "true"
+        os.environ["UI_AUTO_SESSION_BEHIND_TRUSTED_AUTH_PROXY"] = "true"
+        os.environ["TRUSTED_PROXY_HOPS"] = "1"
+        os.environ["TRUSTED_AUTH_PROXY_SECRET"] = proxy_secret
+
+        # 3a. Direct backend GET / (missing or wrong proxy secret, even with spoofed X-Forwarded-For: 127.0.0.1) -> REJECTED
+        for direct_hdrs in [
+            {},
+            {"X-Forwarded-For": "127.0.0.1", "Host": "localhost"},
+            {"X-Trusted-Auth-Proxy-Secret": "wrong-proxy-secret"},
+        ]:
+            with self.subTest(direct_get_headers=direct_hdrs):
+                c_direct = app.test_client()
+                r_direct_home = c_direct.get("/", headers=direct_hdrs)
+                self.assertIn('id="apiKeyInput"', r_direct_home.data.decode("utf-8"))
+                self.assertEqual(self._extract_csrf(r_direct_home.data.decode("utf-8")), "")
+                self.assertFalse(
+                    any(h.startswith(f"{UI_SESSION_COOKIE_NAME}=") for h in r_direct_home.headers.getlist("Set-Cookie"))
+                )
+
+        # 3b. Authenticated proxy GET / -> issues session cookie + CSRF token
+        c_proxy = app.test_client()
+        r_proxy_home = c_proxy.get("/", headers={"X-Trusted-Auth-Proxy-Secret": proxy_secret})
+        csrf = self._extract_csrf(r_proxy_home.data.decode("utf-8"))
+        self.assertEqual(len(csrf), 64)
+        self.assertNotIn('id="apiKeyInput"', r_proxy_home.data.decode("utf-8"))
+
+        # 3c. Direct backend POST /api/export-csv bypassing proxy (even with valid cookie + CSRF + same-origin) -> 401
+        r_direct_post_missing = c_proxy.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Direct Bypass Attempt"}]},
+            headers=self._same_origin_post_headers(csrf),
+        )
+        self.assertEqual(r_direct_post_missing.status_code, 401)
+
+        r_direct_post_wrong = c_proxy.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Direct Bypass Attempt"}]},
+            headers={**self._same_origin_post_headers(csrf), "X-Trusted-Auth-Proxy-Secret": "wrong-secret"},
+        )
+        self.assertEqual(r_direct_post_wrong.status_code, 401)
+
+        # 3d. Authenticated proxy POST /api/export-csv -> 200
+        r_ok = c_proxy.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Trusted Proxy UI"}]},
+            headers={**self._same_origin_post_headers(csrf), "X-Trusted-Auth-Proxy-Secret": proxy_secret},
+        )
+        self.assertEqual(r_ok.status_code, 200)
+
+        # 3e. Missing same-origin evidence still rejected even through authenticated proxy
+        r_no_origin = c_proxy.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Trusted Proxy UI"}]},
+            headers={"X-CSRF-Token": csrf, "X-Trusted-Auth-Proxy-Secret": proxy_secret},
+        )
+        self.assertEqual(r_no_origin.status_code, 401)
+
+        # 3f. Custom TRUSTED_AUTH_PROXY_HEADER respected and default header rejected
+        os.environ["TRUSTED_AUTH_PROXY_HEADER"] = "X-Internal-Proxy-Proof"
+        r_wrong_hdr_name = c_proxy.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Trusted Proxy UI"}]},
+            headers={**self._same_origin_post_headers(csrf), "X-Trusted-Auth-Proxy-Secret": proxy_secret},
+        )
+        self.assertEqual(r_wrong_hdr_name.status_code, 401)
+        r_custom_hdr_ok = c_proxy.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Trusted Proxy UI"}]},
+            headers={**self._same_origin_post_headers(csrf), "X-Internal-Proxy-Proof": proxy_secret},
+        )
+        self.assertEqual(r_custom_hdr_ok.status_code, 200)
+
+    def test_anonymous_and_programmatic_api_key_clients_preserve_contract(self):
+        # Anonymous client without cookie/CSRF/API key receives 401
+        anon_resp = self.client.post("/api/export-csv", json={"leads": [{"Business Name": "Test"}]})
+        self.assertEqual(anon_resp.status_code, 401)
+
+        # Programmatic X-API-Key and Bearer clients still work without cookie, CSRF, or Origin headers
+        r_key = self.client.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Test"}]},
+            headers={"X-API-Key": self.secret_key},
+        )
+        self.assertEqual(r_key.status_code, 200)
+
+        r_bearer = self.client.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Test"}]},
+            headers={"Authorization": f"Bearer {self.secret_key}"},
+        )
+        self.assertEqual(r_bearer.status_code, 200)
+
+    def test_missing_or_invalid_csrf_token_rejected(self):
+        resp = self.client.get("/")
+        csrf_token = self._extract_csrf(resp.data.decode("utf-8"))
+        self.assertTrue(csrf_token)
+
+        # Cookie + same-origin present, CSRF header missing -> 401
+        r_missing = self.client.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Test"}]},
+            headers={"Origin": "http://localhost", "Sec-Fetch-Site": "same-origin"},
+        )
+        self.assertEqual(r_missing.status_code, 401)
+
+        # Cookie + same-origin present, wrong CSRF token -> 401
+        r_wrong = self.client.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Test"}]},
+            headers=self._same_origin_post_headers("0" * 64),
+        )
+        self.assertEqual(r_wrong.status_code, 401)
+
+        # Cookie + same-origin present, single-bit flipped CSRF token -> 401
+        flipped = ("1" if csrf_token[0] == "0" else "0") + csrf_token[1:]
+        r_flipped = self.client.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Test"}]},
+            headers=self._same_origin_post_headers(flipped),
+        )
+        self.assertEqual(r_flipped.status_code, 401)
+
+    def test_missing_malformed_and_cross_origin_evidence_rejected_even_with_valid_session_and_csrf(self):
+        resp = self.client.get("/")
+        csrf_token = self._extract_csrf(resp.data.decode("utf-8"))
+
+        # 1. Missing ALL origin evidence (no Origin, no Referer, no Sec-Fetch-Site) rejected on POST & GET
+        r_post_no_evidence = self.client.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Test"}]},
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(r_post_no_evidence.status_code, 401)
+
+        r_get_no_evidence = self.client.get(
+            "/api/jobs/nonexistent-id",
+            headers={"X-CSRF-Token": csrf_token},
+        )
+        self.assertEqual(r_get_no_evidence.status_code, 401)
+
+        # 2. Every malformed, null, mismatched, Sec-Fetch-Site: none, or cross-origin case rejected on POST
+        rejected_post_cases = [
+            # Sec-Fetch-Site: none rejected (both alone and alongside valid Origin/Referer)
+            {"X-CSRF-Token": csrf_token, "Sec-Fetch-Site": "none"},
+            {
+                "X-CSRF-Token": csrf_token,
+                "Origin": "http://localhost",
+                "Referer": "http://localhost/",
+                "Sec-Fetch-Site": "none",
+            },
+            # Sec-Fetch-Site: same-origin alone without Origin or Referer rejected on state-changing POST
+            {"X-CSRF-Token": csrf_token, "Sec-Fetch-Site": "same-origin"},
+            # Other invalid Sec-Fetch-Site values
+            {"X-CSRF-Token": csrf_token, "Origin": "http://localhost", "Sec-Fetch-Site": "cross-site"},
+            {"X-CSRF-Token": csrf_token, "Origin": "http://localhost", "Sec-Fetch-Site": "same-site"},
+            {"X-CSRF-Token": csrf_token, "Origin": "http://localhost", "Sec-Fetch-Site": ""},
+            {"X-CSRF-Token": csrf_token, "Origin": "http://localhost", "Sec-Fetch-Site": "malformed"},
+            # Cross-origin, null, empty, and malformed Origin headers
+            {"X-CSRF-Token": csrf_token, "Origin": "https://evil.example"},
+            {"X-CSRF-Token": csrf_token, "Origin": "null"},
+            {"X-CSRF-Token": csrf_token, "Origin": ""},
+            {"X-CSRF-Token": csrf_token, "Origin": "not-a-url"},
+            {"X-CSRF-Token": csrf_token, "Origin": "http://localhost:9999"},
+            {"X-CSRF-Token": csrf_token, "Origin": "https://localhost"},
+            {"X-CSRF-Token": csrf_token, "Origin": "http://user@localhost"},
+            {"X-CSRF-Token": csrf_token, "Origin": "http://localhost/unexpected-path"},
+            {"X-CSRF-Token": csrf_token, "Origin": "http://localhost?foo=bar"},
+            # Cross-origin, empty, and malformed Referer headers
+            {"X-CSRF-Token": csrf_token, "Referer": "https://evil.example/attack.html"},
+            {"X-CSRF-Token": csrf_token, "Referer": ""},
+            {"X-CSRF-Token": csrf_token, "Referer": "not-a-url"},
+            {"X-CSRF-Token": csrf_token, "Referer": "javascript:alert(1)"},
+            {"X-CSRF-Token": csrf_token, "Referer": "http://user@localhost/"},
+            # Conflicting Origin + Referer pair
+            {"X-CSRF-Token": csrf_token, "Origin": "http://localhost", "Referer": "https://evil.example/"},
+        ]
+        for hdrs in rejected_post_cases:
+            with self.subTest(headers=hdrs):
+                r = self.client.post(
+                    "/api/export-csv",
+                    json={"leads": [{"Business Name": "Test"}]},
+                    headers=hdrs,
+                )
+                self.assertEqual(r.status_code, 401)
+
+        # 3. Sec-Fetch-Site: none also rejected on GET
+        r_get_none = self.client.get(
+            "/api/jobs/nonexistent-id",
+            headers={"X-CSRF-Token": csrf_token, "Sec-Fetch-Site": "none"},
+        )
+        self.assertEqual(r_get_none.status_code, 401)
+
+    def test_tampered_expired_and_missing_session_cookies_rejected(self):
+        import time as _time
+        from app import UI_SESSION_COOKIE_NAME, _create_ui_session_tokens
+
+        # 1. Missing cookie with valid-looking CSRF + same-origin headers -> 401
+        _, orphan_csrf = _create_ui_session_tokens(self.secret_key)
+        r_missing_cookie = self.client.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Test"}]},
+            headers=self._same_origin_post_headers(orphan_csrf),
+        )
+        self.assertEqual(r_missing_cookie.status_code, 401)
+
+        # 2. Tampered cookie signature / payload -> 401
+        valid_cookie, valid_csrf = _create_ui_session_tokens(self.secret_key)
+        nonce, ts, sig = valid_cookie.split(".")
+        tampered_cookies = [
+            f"{nonce}.{ts}.{'0' * 64}",
+            f"{'f' * 32}.{ts}.{sig}",
+            f"{nonce}.{int(ts) + 1}.{sig}",
+            "not-a-valid-cookie",
+        ]
+        for bad_cookie in tampered_cookies:
+            with self.subTest(bad_cookie=bad_cookie):
+                c = app.test_client()
+                c.set_cookie(UI_SESSION_COOKIE_NAME, bad_cookie)
+                r = c.post(
+                    "/api/export-csv",
+                    json={"leads": [{"Business Name": "Test"}]},
+                    headers=self._same_origin_post_headers(valid_csrf),
+                )
+                self.assertEqual(r.status_code, 401)
+
+        # 3. Expired session cookie -> 401
+        os.environ["UI_SESSION_TTL_SECONDS"] = "60"
+        expired_cookie, expired_csrf = _create_ui_session_tokens(
+            self.secret_key, now=int(_time.time()) - 120
+        )
+        c_exp = app.test_client()
+        c_exp.set_cookie(UI_SESSION_COOKIE_NAME, expired_cookie)
+        r_exp = c_exp.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Test"}]},
+            headers=self._same_origin_post_headers(expired_csrf),
+        )
+        self.assertEqual(r_exp.status_code, 401)
+
+        # 4. Future-skewed session cookie -> 401
+        future_cookie, future_csrf = _create_ui_session_tokens(
+            self.secret_key, now=int(_time.time()) + 300
+        )
+        c_fut = app.test_client()
+        c_fut.set_cookie(UI_SESSION_COOKIE_NAME, future_cookie)
+        r_fut = c_fut.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Test"}]},
+            headers=self._same_origin_post_headers(future_csrf),
+        )
+        self.assertEqual(r_fut.status_code, 401)
+
+    def test_production_defaults_disable_ui_auto_session_and_enforce_secure_cookie_when_opted_in(self):
+        import fakeredis
+        from app import UI_SESSION_COOKIE_NAME, _create_ui_session_tokens
+        from services.runtime_config import is_ui_auto_session_enabled
+
+        rate_limiter.set_redis_client(fakeredis.FakeRedis())
+        for env_k, env_v in [("LEADHUNTER_ENV", "production"), ("FLASK_ENV", "production"), ("RENDER", "true")]:
+            for k in ("LEADHUNTER_ENV", "FLASK_ENV", "RENDER", "UI_AUTO_SESSION"):
+                os.environ.pop(k, None)
+            os.environ[env_k] = env_v
+
+            with self.subTest(prod_env=f"{env_k}={env_v}"):
+                self.assertFalse(is_ui_auto_session_enabled())
+                c = app.test_client()
+                r_index = c.get("/")
+                html = r_index.data.decode("utf-8")
+                self.assertEqual(r_index.status_code, 200)
+                self.assertIn('id="apiKeyInput"', html)
+                self.assertEqual(self._extract_csrf(html), "")
+                self.assertFalse(
+                    any(h.startswith(f"{UI_SESSION_COOKIE_NAME}=") for h in r_index.headers.getlist("Set-Cookie"))
+                )
+
+                # Even a validly signed cookie+CSRF+same-origin MUST be rejected in production default mode
+                cookie_val, csrf_val = _create_ui_session_tokens(self.secret_key)
+                c.set_cookie(UI_SESSION_COOKIE_NAME, cookie_val)
+                r_cookie = c.post(
+                    "/api/export-csv",
+                    json={"leads": [{"Business Name": "Test"}]},
+                    headers=self._same_origin_post_headers(csrf_val),
+                )
+                self.assertEqual(r_cookie.status_code, 401)
+
+                # Programmatic X-API-Key still succeeds in production
+                r_api = c.post(
+                    "/api/export-csv",
+                    json={"leads": [{"Business Name": "Test"}]},
+                    headers={"X-API-Key": self.secret_key},
+                )
+                self.assertEqual(r_api.status_code, 200)
+
+        # Production with UI_AUTO_SESSION=true alone (or + TRUSTED_PROXY_HOPS alone) MUST stay rejected
+        os.environ["LEADHUNTER_ENV"] = "production"
+        os.environ["UI_AUTO_SESSION"] = "true"
+        os.environ.pop("UI_AUTO_SESSION_BEHIND_TRUSTED_AUTH_PROXY", None)
+        os.environ.pop("TRUSTED_PROXY_HOPS", None)
+        r_prod_unsafe = app.test_client().get("/")
+        self.assertEqual(self._extract_csrf(r_prod_unsafe.data.decode("utf-8")), "")
+        self.assertFalse(
+            any(h.startswith(f"{UI_SESSION_COOKIE_NAME}=") for h in r_prod_unsafe.headers.getlist("Set-Cookie"))
+        )
+
+        os.environ["TRUSTED_PROXY_HOPS"] = "1"
+        r_prod_hops_only = app.test_client().get("/")
+        self.assertEqual(self._extract_csrf(r_prod_hops_only.data.decode("utf-8")), "")
+        self.assertFalse(
+            any(h.startswith(f"{UI_SESSION_COOKIE_NAME}=") for h in r_prod_hops_only.headers.getlist("Set-Cookie"))
+        )
+
+        # Explicit trusted-auth-proxy opt-in + TRUSTED_PROXY_HOPS > 0 + UI_AUTO_SESSION=true +
+        # distinct TRUSTED_AUTH_PROXY_SECRET verified per-request in production sets Secure + HttpOnly + SameSite=Strict
+        prod_proxy_secret = "prod-authenticating-proxy-secret-abc123"
+        os.environ["UI_AUTO_SESSION_BEHIND_TRUSTED_AUTH_PROXY"] = "true"
+        os.environ["TRUSTED_AUTH_PROXY_SECRET"] = prod_proxy_secret
+
+        # Direct request without proxy secret header MUST still be rejected in production
+        r_prod_direct = app.test_client().get("/")
+        self.assertEqual(self._extract_csrf(r_prod_direct.data.decode("utf-8")), "")
+        self.assertFalse(
+            any(h.startswith(f"{UI_SESSION_COOKIE_NAME}=") for h in r_prod_direct.headers.getlist("Set-Cookie"))
+        )
+
+        # Request with valid proxy secret header succeeds and enforces Secure + HttpOnly + SameSite=Strict
+        c_opt = app.test_client()
+        r_opt = c_opt.get("/", headers={"X-Trusted-Auth-Proxy-Secret": prod_proxy_secret})
+        cookie_hdr = [
+            h for h in r_opt.headers.getlist("Set-Cookie") if h.startswith(f"{UI_SESSION_COOKIE_NAME}=")
+        ][0]
+        self.assertIn("HttpOnly", cookie_hdr)
+        self.assertIn("SameSite=Strict", cookie_hdr)
+        self.assertIn("Secure", cookie_hdr)
+
+    def test_missing_api_key_still_fails_closed_with_503_and_rate_limit_applies_to_ui_session(self):
+        from app import UI_SESSION_COOKIE_NAME
+
+        # Missing LEADHUNTER_API_KEY -> GET / issues no cookie/CSRF, API fails closed with 503
+        os.environ.pop("LEADHUNTER_API_KEY", None)
+        c_no_key = app.test_client()
+        r_home = c_no_key.get("/")
+        self.assertEqual(self._extract_csrf(r_home.data.decode("utf-8")), "")
+        self.assertFalse(
+            any(h.startswith(f"{UI_SESSION_COOKIE_NAME}=") for h in r_home.headers.getlist("Set-Cookie"))
+        )
+        r_503 = c_no_key.post("/api/jobs", json={"url": "https://example.com", "type": "website"})
+        self.assertEqual(r_503.status_code, 503)
+
+        # Rate limiting still applies to UI-session-authenticated requests
+        os.environ["LEADHUNTER_API_KEY"] = self.secret_key
+        os.environ["RATE_LIMIT_MAX_REQUESTS"] = "2"
+        rate_limiter.reset()
+        c_rl = app.test_client()
+        csrf = self._extract_csrf(c_rl.get("/").data.decode("utf-8"))
+        for _ in range(2):
+            self.assertEqual(
+                c_rl.post(
+                    "/api/export-csv",
+                    json={"leads": [{"Business Name": "RL Test"}]},
+                    headers=self._same_origin_post_headers(csrf),
+                ).status_code,
+                200,
+            )
+        r_429 = c_rl.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "RL Test"}]},
+            headers=self._same_origin_post_headers(csrf),
+        )
+        self.assertEqual(r_429.status_code, 429)
 
 
 if __name__ == "__main__":

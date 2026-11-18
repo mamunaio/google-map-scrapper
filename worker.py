@@ -19,7 +19,7 @@ from services.job_queue import (
     get_worker_heartbeat_max_age_seconds,
     get_worker_ttl_seconds,
 )
-from services.runtime_config import configure_logging, validate_startup_config
+from services.runtime_config import configure_logging, load_local_dotenv, validate_startup_config
 
 
 def create_worker(conn=None, worker_ttl: int | None = None):
@@ -48,6 +48,7 @@ def run_worker_healthcheck(conn=None, now_utc=None) -> tuple[bool, dict]:
 
 
 def main(argv=None):
+    load_local_dotenv()
     parser = argparse.ArgumentParser(description="LeadHunter RQ Background Worker")
     parser.add_argument(
         "--healthcheck",

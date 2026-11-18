@@ -4,6 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% if ui_csrf_token %}<meta name="csrf-token" content="{{ ui_csrf_token }}">{% endif %}
     <title>LeadHunter Studio | Lead Intelligence & Business Opportunity Detection Platform</title>
     <!-- Tailwind CSS -->
     <script src="{{ url_for('static', filename='tailwind.js') }}"></script>
@@ -94,12 +95,14 @@
 
             <!-- Server Status, API Auth & Indicator Pills -->
             <div class="flex flex-wrap items-center gap-2.5 text-xs">
+                {% if not ui_auto_session %}
                 <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-50 border border-slate-200/90 shadow-sm">
                     <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                     </svg>
-                    <input type="password" id="apiKeyInput" autocomplete="off" placeholder="API Key" aria-label="API Key" class="bg-transparent text-xs font-mono text-slate-700 placeholder:text-slate-400 focus:outline-none w-28 sm:w-36" />
+                    <input type="password" id="apiKeyInput" autocomplete="off" placeholder="Access Key" aria-label="Access Key" class="bg-transparent text-xs font-mono text-slate-700 placeholder:text-slate-400 focus:outline-none w-28 sm:w-36" />
                 </div>
+                {% endif %}
                 <div class="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-800 shadow-sm font-semibold">
                     <span class="w-2 h-2 rounded-full bg-emerald-500 pulse-beacon"></span>
                     <span>Audit & SMTP Engine Ready</span>
@@ -546,10 +549,17 @@
 
         function getApiHeaders() {
             const headers = { 'Content-Type': 'application/json' };
+            const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+            const csrfToken = csrfMeta ? (csrfMeta.getAttribute('content') || '').trim() : '';
+            if (csrfToken) {
+                headers['X-CSRF-Token'] = csrfToken;
+            }
             const inputEl = document.getElementById('apiKeyInput');
-            const apiKey = (inputEl ? inputEl.value : '') || sessionStorage.getItem('leadhunter_api_key') || '';
-            if (apiKey.trim()) {
-                headers['X-API-Key'] = apiKey.trim();
+            if (inputEl) {
+                const apiKey = inputEl.value || sessionStorage.getItem('leadhunter_api_key') || '';
+                if (apiKey.trim()) {
+                    headers['X-API-Key'] = apiKey.trim();
+                }
             }
             return headers;
         }
@@ -564,6 +574,8 @@
                     if (val) sessionStorage.setItem('leadhunter_api_key', val);
                     else sessionStorage.removeItem('leadhunter_api_key');
                 });
+            } else {
+                sessionStorage.removeItem('leadhunter_api_key');
             }
         });
 
@@ -807,6 +819,7 @@
         async function runAsyncScrapeJob(payload) {
             const submitResp = await fetch('/api/jobs', {
                 method: 'POST',
+                credentials: 'same-origin',
                 headers: getApiHeaders(),
                 body: JSON.stringify(payload)
             });
@@ -817,6 +830,7 @@
                 log(`[i] Background queue not configured locally; running direct website audit...`);
                 const syncResp = await fetch('/api/scrape', {
                     method: 'POST',
+                    credentials: 'same-origin',
                     headers: getApiHeaders(),
                     body: JSON.stringify(payload)
                 });
@@ -844,6 +858,7 @@
                 await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
                 const statusResp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
                     method: 'GET',
+                    credentials: 'same-origin',
                     headers: getApiHeaders()
                 });
                 const statusData = await safeParseJsonResponse(statusResp);
@@ -862,6 +877,7 @@
                 if (statusData.status === 'finished' || statusData.status === 'failed' || statusData.status === 'timed_out' || statusData.status === 'canceled') {
                     const resultResp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/result`, {
                         method: 'GET',
+                        credentials: 'same-origin',
                         headers: getApiHeaders()
                     });
                     return await safeParseJsonResponse(resultResp);
@@ -1559,6 +1575,7 @@
             try {
                 const res = await fetch('/api/export-csv', {
                     method: 'POST',
+                    credentials: 'same-origin',
                     headers: getApiHeaders(),
                     body: JSON.stringify({ leads: leads })
                 });
@@ -1607,6 +1624,7 @@
             try {
                 const res = await fetch('/api/export-excel', {
                     method: 'POST',
+                    credentials: 'same-origin',
                     headers: getApiHeaders(),
                     body: JSON.stringify({ leads: leads, format_type: 'standard_3_sheet' })
                 });
