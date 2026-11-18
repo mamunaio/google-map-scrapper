@@ -23,6 +23,7 @@ from services.export_service import (
     normalize_priority,
     normalize_email_status,
     clean_contact_person,
+    resolve_lead_summary_fields,
     generate_standard_intelligence_workbook,
     generate_lead_tracker_csv,
     LEAD_TRACKER_COLUMNS,
@@ -259,8 +260,13 @@ def test_case_10_priority_synchronization():
     wb_bytes = generate_standard_intelligence_workbook([lead])
     wb = openpyxl.load_workbook(io.BytesIO(wb_bytes.getvalue()))
     ws_leads = wb["Lead Tracker"]
-    row_val = ws_leads.cell(row=2, column=13).value  # Priority column
-    assert row_val == "Medium"
+    assert ws_leads.max_column == 8
+    assert ws_leads.cell(row=2, column=1).value == "Texas AirZone"
+    # Summary priority remains synchronized and preserved in underlying lead data
+    resolved_priority, resolved_score, _main_opp, _notes = resolve_lead_summary_fields(lead, lead["Website"])
+    assert resolved_priority == "Medium"
+    assert resolved_score == 65
+    assert lead["Priority"] == "Medium"
 
 
 # -----------------------------------------------------------------------------
@@ -395,13 +401,22 @@ def test_case_13_json_and_excel_consistency():
     wb = openpyxl.load_workbook(io.BytesIO(wb_bytes.getvalue()))
     ws_leads = wb["Lead Tracker"]
 
-    # Compare values
+    # Compare values across the exact 8 Lead Tracker columns
     assert len(parsed_leads) == ws_leads.max_row - 1
+    assert ws_leads.max_column == 8
     assert ws_leads.cell(row=2, column=1).value == parsed_leads[0]["Business Name"]
-    assert ws_leads.cell(row=2, column=8).value == parsed_leads[0]["Rating"]
-    assert ws_leads.cell(row=2, column=9).value == parsed_leads[0]["Reviews"]
-    assert ws_leads.cell(row=2, column=13).value == parsed_leads[0]["Priority"]
-    assert ws_leads.cell(row=2, column=14).value == parsed_leads[0]["Lead Score"]
+    assert ws_leads.cell(row=2, column=2).value == parsed_leads[0]["Contact Person"]
+    assert ws_leads.cell(row=2, column=3).value == parsed_leads[0]["Email"]
+    assert ws_leads.cell(row=2, column=4).value == parsed_leads[0]["Email Status"]
+    assert ws_leads.cell(row=2, column=5).value == parsed_leads[0]["Phone"]
+    assert ws_leads.cell(row=2, column=6).value == parsed_leads[0]["Website"]
+    assert ws_leads.cell(row=2, column=7).value == parsed_leads[0]["City"]
+    assert ws_leads.cell(row=2, column=8).value == parsed_leads[0]["State"]
+    # Non-displayed underlying fields remain intact in JSON lead records
+    assert parsed_leads[0]["Rating"] == 4.9
+    assert parsed_leads[0]["Reviews"] == 120
+    assert parsed_leads[0]["Priority"] == "High"
+    assert parsed_leads[0]["Lead Score"] == 82
 
 
 # -----------------------------------------------------------------------------
@@ -441,9 +456,19 @@ def test_case_14_exact_export_schema_validation():
     sheet_names = wb.sheetnames
     assert sheet_names == ["Lead Tracker", "Website Audit", "Business Opportunities"]
 
-    # Sheet 01: 16 columns
+    # Sheet 01: 8 columns
     s1_cols = [cell.value for cell in wb["Lead Tracker"][1]]
-    assert len(s1_cols) == 16
+    assert len(s1_cols) == 8
+    assert s1_cols == [
+        "Business Name",
+        "Contact Person",
+        "Email",
+        "Email Status",
+        "Phone",
+        "Website",
+        "City",
+        "State",
+    ]
     assert s1_cols == LEAD_TRACKER_COLUMNS
 
     # Sheet 02: 15 columns
@@ -456,10 +481,11 @@ def test_case_14_exact_export_schema_validation():
     assert len(s3_cols) == 7
     assert s3_cols == BUSINESS_OPPORTUNITIES_COLUMNS
 
-    # CSV validation: 16 columns
+    # CSV validation: 8 columns
     csv_str = generate_lead_tracker_csv([lead])
-    first_line = csv_str.strip().split("\n")[0].split(",")
-    assert len(first_line) == 16
+    first_line = csv_str.strip().splitlines()[0].split(",")
+    assert len(first_line) == 8
+    assert first_line == LEAD_TRACKER_COLUMNS
 
 
 # -----------------------------------------------------------------------------
@@ -633,13 +659,15 @@ def test_case_17_main_opportunity_matches_business_opportunities_sheet():
     ws_leads = wb["Lead Tracker"]
     ws_opps = wb["Business Opportunities"]
 
-    sheet1_main_opp = ws_leads.cell(row=2, column=15).value  # Main Opportunity column
+    assert ws_leads.max_column == 8
+    _prio, _score, resolved_main_opp, _notes = resolve_lead_summary_fields(lead, lead["Website"])
     sheet3_findings = [
         ws_opps.cell(row=r, column=3).value
         for r in range(2, ws_opps.max_row + 1)
         if ws_opps.cell(row=r, column=1).value == "Texas AirZone LLC"
     ]
-    assert sheet1_main_opp in sheet3_findings
+    assert resolved_main_opp in sheet3_findings
+    assert lead["Main Opportunity"] in sheet3_findings
 
 
 # -----------------------------------------------------------------------------
@@ -715,28 +743,34 @@ def test_case_18_blank_fields_fallback_and_mx_only_lead_cozy_pattern():
     ws2 = wb["Website Audit"]
     ws3 = wb["Business Opportunities"]
 
-    priority = ws1.cell(row=2, column=13).value
-    score = ws1.cell(row=2, column=14).value
-    main_opp = ws1.cell(row=2, column=15).value
-    notes = ws1.cell(row=2, column=16).value
+    priority, score, main_opp, notes = resolve_lead_summary_fields(
+        lead_missing_top_fields, lead_missing_top_fields["Website"]
+    )
 
     assert priority in ["High", "Medium", "Low"]
     assert isinstance(score, int) and score > 0
     assert main_opp == "On-Page Metadata Gaps"  # Confirmed Detected finding from Sheet 03
     assert notes != ""
 
-    # Confirm Sheet 01 Main Opportunity exists in Sheet 03
+    # Confirm resolved Main Opportunity exists in Sheet 03
     s3_findings = [ws3.cell(row=r, column=3).value for r in range(2, ws3.max_row + 1)]
     assert main_opp in s3_findings
+
+    # Confirm Sheet 01 exports exact 8 columns with accurate MX Only email status (col 4)
+    assert ws1.max_column == 8
+    assert ws1.cell(row=2, column=3).value == "info@cozydair.com"
+    assert ws1.cell(row=2, column=4).value == "MX Only"
 
     # Confirm Sheet 02 canonical, H1, and mobile statuses align with findings (no contradiction)
     assert ws2.cell(row=2, column=6).value == "Confirmed issue"  # Canonical Status
     assert ws2.cell(row=2, column=8).value == "Confirmed issue"  # H1 Status
     assert ws2.cell(row=2, column=10).value == "Confirmed issue"  # Mobile / Viewport Status
 
-    # CSV export must resolve identical non-blank Priority, Score, and Main Opportunity
+    # CSV export must emit exact 8 Lead Tracker columns with MX Only preserved
     csv_str = generate_lead_tracker_csv([lead_missing_top_fields])
-    assert f",{priority},{score},{main_opp}," in csv_str
+    csv_lines = csv_str.strip().splitlines()
+    assert csv_lines[0].split(",") == LEAD_TRACKER_COLUMNS
+    assert ",info@cozydair.com,MX Only," in csv_lines[1]
 
 
 # -----------------------------------------------------------------------------
@@ -790,10 +824,15 @@ def test_case_19_reachable_site_zero_opportunities_fallback():
     ws1 = wb["Lead Tracker"]
     ws3 = wb["Business Opportunities"]
 
-    assert ws1.cell(row=2, column=13).value == opps["priority"]
-    assert ws1.cell(row=2, column=13).value in ["High", "Medium", "Low"]
-    assert ws1.cell(row=2, column=14).value == opps["lead_score"]
-    assert ws1.cell(row=2, column=15).value == "No opportunity detected"
+    resolved_priority, resolved_score, resolved_main_opp, _resolved_notes = resolve_lead_summary_fields(
+        lead, lead["Website"]
+    )
+    assert resolved_priority == opps["priority"]
+    assert resolved_priority in ["High", "Medium", "Low"]
+    assert resolved_score == opps["lead_score"]
+    assert resolved_main_opp == "No opportunity detected"
+    assert ws1.max_column == 8
+    assert ws1.cell(row=2, column=4).value == "Verified"
     # Zero phantom rows in Sheet 03
     assert ws3.max_row == 1
 
@@ -835,10 +874,11 @@ def test_case_20_reachable_site_stale_main_opportunity_aligned_to_sheet_03():
     ws1 = wb["Lead Tracker"]
     ws3 = wb["Business Opportunities"]
 
-    s1_main_opp = ws1.cell(row=2, column=15).value
+    assert ws1.max_column == 8
+    _prio, _score, resolved_main_opp, _notes = resolve_lead_summary_fields(lead, lead["Website"])
     s3_findings = [ws3.cell(row=r, column=3).value for r in range(2, ws3.max_row + 1)]
-    assert s1_main_opp == "No Public Web Inquiry or Quote Form Detected"
-    assert s1_main_opp in s3_findings
+    assert resolved_main_opp == "No Public Web Inquiry or Quote Form Detected"
+    assert resolved_main_opp in s3_findings
 
 
 # -----------------------------------------------------------------------------

@@ -17,7 +17,7 @@ from rq import Queue, Retry, Worker
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
-from services.job_tasks import execute_scrape_job
+from services.job_tasks import execute_email_verification_batch_job, execute_scrape_job
 from services.runtime_config import get_bool_env, get_int_env, get_redis_url
 
 logger = logging.getLogger("leadhunter.queue")
@@ -893,6 +893,237 @@ def enqueue_scrape_job(
     }
 
 
+def compute_email_verification_dedup_key(items: list[dict], provider_name: str = "") -> str:
+    """Computes a deterministic Redis dedup key for an active email-verification batch."""
+    canonical_pairs = [
+        f"{item.get('row_index')}:{str(item.get('email') or '').strip().lower()}"
+        for item in (items or [])
+    ]
+    raw = f"email_verify|{(provider_name or '').strip().lower()}|" + "|".join(canonical_pairs)
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+    return f"leadhunter:dedup:email_verify:{digest}"
+
+
+def enqueue_email_verification_job(
+    *,
+    items: list[dict],
+    provider_name: str | None = None,
+    conn=None,
+    require_worker: bool | None = None,
+    reservation_wait_seconds: float | None = None,
+    reservation_ttl_seconds: int | None = None,
+    lease_renew_interval_seconds: float | None = None,
+) -> dict:
+    """
+    Submits a batch email verification job to RQ with Redis reachability checks,
+    active-worker enforcement, atomic reservation & deduplication, bounded retries,
+    timeouts, and retention TTLs (reusing the same safety guarantees as `enqueue_scrape_job`).
+    """
+    connection = conn if conn is not None else get_redis_connection()
+    try:
+        connection.ping()
+    except Exception as exc:
+        raise QueueUnavailableError("Background job broker (Redis) is currently unavailable.") from exc
+
+    enforce_worker = require_worker if require_worker is not None else get_bool_env("REQUIRE_ACTIVE_WORKER", False)
+    workers_online = count_active_workers(conn=connection)
+    if enforce_worker and workers_online < 1:
+        raise WorkerUnavailableError("No active background workers are currently available to process jobs.")
+
+    normalized_provider = (provider_name or "").strip().lower() or None
+    dedup_key = compute_email_verification_dedup_key(items, normalized_provider or "")
+
+    job_timeout = get_int_env("JOB_TIMEOUT_SECONDS", 900, min_value=30, max_value=3600)
+    result_ttl = get_int_env("JOB_RESULT_TTL_SECONDS", 3600, min_value=60, max_value=86400)
+    failure_ttl = get_int_env("JOB_FAILURE_TTL_SECONDS", 3600, min_value=60, max_value=86400)
+    max_retries = get_int_env("JOB_MAX_RETRIES", 2, min_value=0, max_value=5)
+    dedup_ttl = get_int_env("JOB_DEDUP_TTL_SECONDS", job_timeout, min_value=60, max_value=3600)
+    reservation_ttl = (
+        max(1, int(reservation_ttl_seconds))
+        if reservation_ttl_seconds is not None
+        else get_int_env("JOB_RESERVATION_TTL_SECONDS", 60, min_value=10, max_value=3600)
+    )
+    wait_timeout = (
+        max(0.01, float(reservation_wait_seconds))
+        if reservation_wait_seconds is not None
+        else get_int_env("JOB_RESERVATION_WAIT_MS", 1500, min_value=10, max_value=10000) / 1000.0
+    )
+
+    retry_policy = Retry(max=max_retries, interval=[10, 30][:max_retries] or 10) if max_retries > 0 else None
+
+    reserved_job_id = str(uuid.uuid4())
+    reservation_val = f"{RESERVING_PREFIX}{reserved_job_id}"
+
+    acquired_reservation = False
+    wait_deadline = time.monotonic() + wait_timeout
+    for _attempt in range(30):
+        if connection.set(dedup_key, reservation_val, nx=True, ex=reservation_ttl):
+            acquired_reservation = True
+            break
+
+        existing_raw = _decode_redis_str(connection.get(dedup_key))
+        if not existing_raw:
+            continue
+
+        if existing_raw.startswith(RESERVING_PREFIX):
+            promoted_value = None
+            released = False
+            while time.monotonic() < wait_deadline:
+                latest_raw = _decode_redis_str(connection.get(dedup_key))
+                if not latest_raw:
+                    released = True
+                    break
+                if not latest_raw.startswith(RESERVING_PREFIX):
+                    promoted_value = latest_raw
+                    break
+                time.sleep(0.015)
+
+            if released:
+                continue
+
+            if promoted_value is None:
+                final_raw = _decode_redis_str(connection.get(dedup_key))
+                if not final_raw:
+                    continue
+                if not final_raw.startswith(RESERVING_PREFIX):
+                    promoted_value = final_raw
+                else:
+                    raise JobReservationConflictError(
+                        "An identical email verification job submission is currently in progress; please retry shortly."
+                    )
+
+            existing_raw = promoted_value
+
+        existing_id = existing_raw
+        try:
+            existing_job = Job.fetch(existing_id, connection=connection)
+            existing_status, _ = _normalize_job_status(existing_job)
+            if existing_status in ACTIVE_JOB_STATUSES:
+                return {
+                    "job_id": existing_job.id,
+                    "status": existing_status,
+                    "deduplicated": True,
+                    "workers_online": workers_online,
+                }
+        except NoSuchJobError:
+            pass
+
+        if _compare_and_swap_key(connection, dedup_key, existing_id, reservation_val, ex=reservation_ttl):
+            acquired_reservation = True
+            break
+
+    if not acquired_reservation:
+        raise JobReservationConflictError(
+            "An identical email verification job submission is currently in progress; please retry shortly."
+        )
+
+    queue = get_job_queue(conn=connection)
+    job = None
+    reconciled_status = "queued"
+    total_items = len(items)
+    with _ReservationLeaseRenewer(
+        connection,
+        dedup_key,
+        reservation_val,
+        ttl_seconds=reservation_ttl,
+        renew_interval=lease_renew_interval_seconds,
+    ) as renewer:
+        if _decode_redis_str(connection.get(dedup_key)) != reservation_val:
+            raise JobReservationOwnershipError(
+                "Reservation ownership was lost before job submission; please retry."
+            )
+
+        try:
+            job = queue.enqueue(
+                execute_email_verification_batch_job,
+                kwargs={
+                    "items": items,
+                    "provider_name": normalized_provider,
+                },
+                job_id=reserved_job_id,
+                description=f"LeadHunter batch email verification ({total_items} item(s))",
+                job_timeout=job_timeout,
+                result_ttl=result_ttl,
+                failure_ttl=failure_ttl,
+                retry=retry_policy,
+                meta={
+                    "stage": "queued",
+                    "job_type": "email_verification",
+                    "progress_pct": 0,
+                    "processed_leads": 0,
+                    "total_leads": total_items,
+                    "processed_count": 0,
+                    "remaining_count": total_items,
+                    "total_count": total_items,
+                    "counts": {"Valid": 0, "Risky": 0, "Invalid": 0, "Unknown": 0},
+                    "message": f"Queued email verification for {total_items} record(s)",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception as enqueue_exc:
+            job_absent = False
+            reconciled_job = None
+            try:
+                reconciled_job = Job.fetch(reserved_job_id, connection=connection)
+            except NoSuchJobError:
+                job_absent = True
+            except Exception as reconcile_exc:
+                raise QueueUnavailableError(
+                    "Background job broker became unavailable during enqueue reconciliation; please retry."
+                ) from reconcile_exc
+
+            if job_absent:
+                try:
+                    _compare_and_delete_key(connection, dedup_key, reservation_val)
+                except Exception:
+                    pass
+                raise
+
+            actual_status, _ = _normalize_job_status(reconciled_job)
+            if actual_status in ACTIVE_JOB_STATUSES:
+                job = reconciled_job
+                reconciled_status = actual_status
+            else:
+                if renewer.ownership_lost:
+                    raise JobReservationOwnershipError(
+                        "Reservation ownership was lost while reconciling a terminal job."
+                    ) from enqueue_exc
+                released = _compare_and_delete_key_strict(connection, dedup_key, reservation_val)
+                if not released:
+                    raise JobReservationOwnershipError(
+                        "Reservation ownership was lost while reconciling a terminal job."
+                    ) from enqueue_exc
+                raise
+
+    if renewer.ownership_lost:
+        raise JobReservationOwnershipError("Reservation ownership was lost before job commit could be confirmed.")
+
+    try:
+        promoted = _compare_and_swap_key_strict(connection, dedup_key, reservation_val, job.id, ex=dedup_ttl)
+    except QueueUnavailableError:
+        raise
+    except Exception as promote_exc:
+        raise QueueUnavailableError(
+            "Background job broker became unavailable while confirming job reservation; please retry."
+        ) from promote_exc
+
+    if not promoted:
+        raise JobReservationOwnershipError("Reservation ownership was lost before job commit could be confirmed.")
+
+    logger.info(
+        "Enqueued email verification batch job_id=%s total_items=%d status=%s",
+        job.id,
+        total_items,
+        reconciled_status,
+    )
+    return {
+        "job_id": job.id,
+        "status": reconciled_status,
+        "deduplicated": False,
+        "workers_online": workers_online,
+    }
+
+
 def get_job_status_payload(job_id: str, conn=None) -> dict:
     """Fetches normalized status & progress metadata for a job."""
     connection = conn if conn is not None else get_redis_connection()
@@ -916,6 +1147,17 @@ def get_job_status_payload(job_id: str, conn=None) -> dict:
         "message": meta.get("message", ""),
         "updated_at": meta.get("updated_at"),
     }
+    if meta.get("job_type") == "email_verification":
+        total_cnt = int(meta.get("total_count", progress["total_leads"]))
+        processed_cnt = int(meta.get("processed_count", progress["processed_leads"]))
+        remaining_cnt = int(meta.get("remaining_count", max(0, total_cnt - processed_cnt)))
+        progress["job_type"] = "email_verification"
+        progress["processed_count"] = processed_cnt
+        progress["remaining_count"] = remaining_cnt
+        progress["total_count"] = total_cnt
+        progress["counts"] = dict(
+            meta.get("counts") or {"Valid": 0, "Risky": 0, "Invalid": 0, "Unknown": 0}
+        )
 
     return {
         "success": True,

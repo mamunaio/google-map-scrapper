@@ -7,6 +7,7 @@ RQ worker process, completely decoupled from Flask HTTP request threads.
 import logging
 from datetime import datetime, timezone
 
+from services.email_verifier import verify_email_batch
 from services.maps_scraper import (
     clean_external_website_url,
     ensure_english_maps_url,
@@ -19,23 +20,31 @@ from services.website_crawler import crawl_and_audit_website
 logger = logging.getLogger("leadhunter.worker")
 
 
-def _update_job_progress(stage: str, progress_pct: int, processed: int = 0, total: int = 0, message: str = ""):
+def _update_job_progress(
+    stage: str,
+    progress_pct: int,
+    processed: int = 0,
+    total: int = 0,
+    message: str = "",
+    extra_meta: dict | None = None,
+):
     """Updates live progress metadata on the active RQ job when executing inside a worker."""
     try:
         from rq import get_current_job
 
         job = get_current_job()
         if job is not None:
-            job.meta.update(
-                {
-                    "stage": stage,
-                    "progress_pct": max(0, min(100, int(progress_pct))),
-                    "processed_leads": int(processed),
-                    "total_leads": int(total),
-                    "message": message,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
-            )
+            payload = {
+                "stage": stage,
+                "progress_pct": max(0, min(100, int(progress_pct))),
+                "processed_leads": int(processed),
+                "total_leads": int(total),
+                "message": message,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if extra_meta:
+                payload.update(extra_meta)
+            job.meta.update(payload)
             job.save_meta()
     except Exception:
         pass
@@ -295,5 +304,107 @@ def execute_scrape_job(
             }
 
         raise ValueError(f"Unsupported scrape_type: {scrape_type}")
+    finally:
+        job_id_var.reset(token)
+
+
+def execute_email_verification_batch_job(
+    items: list[dict],
+    provider_name: str | None = None,
+) -> dict:
+    """
+    Isolated RQ background task for batch email verification.
+    - Deduplicates normalized emails within the batch so identical addresses are checked once.
+    - Never logs raw email addresses (PII-safe).
+    - Publishes live `processed_count`, `remaining_count`, `total_count`, and per-status `counts`
+      (`Valid`, `Risky`, `Invalid`, `Unknown`) to `job.meta`.
+    """
+    current_jid = "-"
+    try:
+        from rq import get_current_job
+
+        cur = get_current_job()
+        if cur is not None:
+            current_jid = cur.id
+    except Exception:
+        pass
+
+    token = job_id_var.set(current_jid)
+    try:
+        total = len(items or [])
+        logger.info("Email verification batch job started: total_items=%d", total)
+        initial_counts = {"Valid": 0, "Risky": 0, "Invalid": 0, "Unknown": 0}
+        _update_job_progress(
+            "verifying_emails",
+            0 if total > 0 else 100,
+            0,
+            total,
+            f"Starting verification for {total} email(s)",
+            extra_meta={
+                "job_type": "email_verification",
+                "processed_count": 0,
+                "remaining_count": total,
+                "total_count": total,
+                "counts": initial_counts,
+            },
+        )
+
+        def on_progress(processed: int, total_items: int, counts: dict[str, int]):
+            remaining = max(0, total_items - processed)
+            pct = int(round((processed / max(1, total_items)) * 100))
+            _update_job_progress(
+                "verifying_emails",
+                min(99, pct) if remaining > 0 else 100,
+                processed,
+                total_items,
+                f"Verified {processed} of {total_items} email(s) ({remaining} remaining)",
+                extra_meta={
+                    "job_type": "email_verification",
+                    "processed_count": processed,
+                    "remaining_count": remaining,
+                    "total_count": total_items,
+                    "counts": dict(counts),
+                },
+            )
+
+        summary = verify_email_batch(
+            items or [],
+            provider_name=provider_name,
+            progress_callback=on_progress,
+        )
+
+        _update_job_progress(
+            "completed",
+            100,
+            summary["processed"],
+            summary["total"],
+            f"Verified {summary['processed']} of {summary['total']} email(s)",
+            extra_meta={
+                "job_type": "email_verification",
+                "processed_count": summary["processed"],
+                "remaining_count": 0,
+                "total_count": summary["total"],
+                "counts": dict(summary["counts"]),
+            },
+        )
+        logger.info(
+            "Email verification batch job completed: total=%d unique=%d counts=%s",
+            summary["total"],
+            summary["unique_checked"],
+            summary["counts"],
+        )
+        return {
+            "success": True,
+            "http_status": 200,
+            "job_type": "email_verification",
+            "total": summary["total"],
+            "processed": summary["processed"],
+            "remaining": 0,
+            "unique_checked": summary["unique_checked"],
+            "duplicates_suppressed": summary["duplicates_suppressed"],
+            "counts": summary["counts"],
+            "provider": summary["provider"],
+            "results": summary["results"],
+        }
     finally:
         job_id_var.reset(token)

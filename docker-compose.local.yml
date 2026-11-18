@@ -1,0 +1,100 @@
+# LeadHunter Studio — Local Docker Staging Stack
+# Runs isolated Redis 7 + Gunicorn Web + RQ Playwright Worker on a dedicated internal network.
+# Leaves any existing standalone host containers (e.g. `leadhunter-redis7` on 127.0.0.1:6379) untouched.
+
+services:
+  redis:
+    image: redis:7.4.12-alpine
+    container_name: leadhunter-local-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - "60"
+      - "1"
+      - --maxmemory-policy
+      - noeviction
+    volumes:
+      - leadhunter_local_redis_data:/data
+    networks:
+      - leadhunter_local_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  web:
+    image: leadhunter-studio:local
+    container_name: leadhunter-local-web
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["gunicorn", "-c", "gunicorn.conf.py", "app:app"]
+    env_file:
+      - .env.local
+    environment:
+      SERVICE_ROLE: web
+      REDIS_URL: redis://redis:6379/0
+      PORT: "5000"
+    ports:
+      - "127.0.0.1:5000:5000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - leadhunter_local_net
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import sys, urllib.request; r = urllib.request.urlopen('http://127.0.0.1:5000/healthz', timeout=3); sys.exit(0 if r.status == 200 else 1)",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  worker:
+    image: leadhunter-studio:local
+    container_name: leadhunter-local-worker
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    shm_size: 256m
+    command: ["python", "worker.py"]
+    env_file:
+      - .env.local
+    environment:
+      SERVICE_ROLE: worker
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - leadhunter_local_net
+    healthcheck:
+      test: ["CMD", "python", "worker.py", "--healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  leadhunter_local_redis_data:
+    name: leadhunter_local_redis_data
+
+networks:
+  leadhunter_local_net:
+    name: leadhunter_local_net
+    driver: bridge

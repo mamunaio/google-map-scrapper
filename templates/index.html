@@ -96,11 +96,23 @@
             <!-- Server Status, API Auth & Indicator Pills -->
             <div class="flex flex-wrap items-center gap-2.5 text-xs">
                 {% if not ui_auto_session %}
-                <div class="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-50 border border-slate-200/90 shadow-sm">
-                    <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                    </svg>
-                    <input type="password" id="apiKeyInput" autocomplete="off" placeholder="Access Key" aria-label="Access Key" class="bg-transparent text-xs font-mono text-slate-700 placeholder:text-slate-400 focus:outline-none w-28 sm:w-36" />
+                <div id="uiAuthControl" class="flex items-center">
+                    <div id="uiAuthLocked" class="{% if ui_authenticated %}hidden {% endif %}flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-50/90 border border-amber-300/90 shadow-sm">
+                        <svg class="w-3.5 h-3.5 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                        </svg>
+                        <input type="password" id="apiKeyInput" autocomplete="off" placeholder="Access Key" aria-label="Access Key" class="bg-transparent text-xs font-mono text-slate-800 placeholder:text-slate-400 focus:outline-none w-28 sm:w-36" />
+                        <button type="button" id="btnUnlockSession" onclick="unlockUiSession()" class="px-2.5 py-0.5 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] transition-colors">
+                            Unlock
+                        </button>
+                    </div>
+                    <div id="uiAuthUnlocked" class="{% if not ui_authenticated %}hidden {% endif %}flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200/90 text-emerald-800 shadow-sm font-semibold">
+                        <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                        <span>Session Active</span>
+                        <button type="button" id="btnLockSession" onclick="lockUiSession()" class="ml-1 px-2 py-0.5 rounded-full bg-white hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200 text-[11px] font-bold transition-colors">
+                            Lock
+                        </button>
+                    </div>
                 </div>
                 {% endif %}
                 <div class="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-800 shadow-sm font-semibold">
@@ -311,7 +323,7 @@
                             <span class="text-xs font-bold text-white">Download 3-Sheet Intelligence Workbook (.xlsx)</span>
                             <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-white/20 text-white">.xlsx</span>
                         </div>
-                        <p class="text-[11px] text-indigo-100">Sheet 01 (16 Lead Tracker fields), Sheet 02 (Website Audit), and Sheet 03 (Opportunities).</p>
+                        <p class="text-[11px] text-indigo-100">Sheet 01 (8 Lead Tracker fields), Sheet 02 (Website Audit, 15 fields), and Sheet 03 (Opportunities, 7 fields).</p>
                     </button>
 
                     <!-- Format A: Lead Tracker CSV -->
@@ -320,7 +332,7 @@
                             <span class="text-xs font-bold text-slate-900">Export Lead Tracker (.csv)</span>
                             <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-600">.csv</span>
                         </div>
-                        <p class="text-[11px] text-slate-500">16 essential fields: contacts, normalized ratings, verification status, priority score, and notes.</p>
+                        <p class="text-[11px] text-slate-500">8 essential Lead Tracker fields: Business Name, Contact Person, Email, Email Status, Phone, Website, City, and State.</p>
                     </button>
                 </div>
             </div>
@@ -334,19 +346,72 @@
                         <span>Extracted Lead & Opportunity Records</span>
                         <span class="text-xs px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 font-mono font-bold" id="tableRowCount">0 records</span>
                     </h3>
-                    <p class="text-xs font-medium text-slate-500 mt-0.5">Select individual leads to export specific subsets. Click "Audit ⚡" for full diagnostics.</p>
+                    <p class="text-xs font-medium text-slate-500 mt-0.5">Select individual leads to export specific subsets. Click a business name for full audit diagnostics.</p>
                 </div>
                 
-                <!-- Table Search & Filter Toolbar -->
-                <div class="flex items-center gap-3">
+                <!-- Table Search, Verification Action & Filter Toolbar -->
+                <div class="flex flex-wrap items-center gap-2.5">
+                    <button type="button" id="btnVerifyEmails" onclick="startBatchEmailVerification()" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <span>Verify Emails</span>
+                        <span id="verifyEmailsCountBadge" class="px-1.5 py-0.5 rounded-full text-[10px] font-mono bg-white/20 text-white">0</span>
+                    </button>
+                    <select id="verificationStatusFilter" onchange="filterTableRows()" aria-label="Filter by verification status" class="bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white transition-all">
+                        <option value="all">All Statuses</option>
+                        <option value="valid">Valid</option>
+                        <option value="risky">Risky</option>
+                        <option value="invalid">Invalid</option>
+                        <option value="unknown">Unknown</option>
+                        <option value="unverified">Unverified</option>
+                        <option value="verified">Verified (SMTP)</option>
+                        <option value="mx_only">MX Only</option>
+                        <option value="not_found">Not Found</option>
+                    </select>
                     <div class="relative">
-                        <input type="text" id="tableSearchInput" onkeyup="filterTableRows()" placeholder="Search leads or gaps..." class="bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white w-48 sm:w-64 transition-all">
+                        <input type="text" id="tableSearchInput" onkeyup="filterTableRows()" placeholder="Search leads or gaps..." class="bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white w-48 sm:w-56 transition-all">
                         <svg class="w-3.5 h-3.5 text-slate-400 absolute right-3 top-3 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                     </div>
                     <button onclick="copyTableToClipboard()" class="px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 border border-slate-200 text-xs font-bold text-slate-700 flex items-center gap-1.5 transition-colors shadow-sm">
                         <svg class="w-3.5 h-3.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>
                         Copy Table (CSV)
                     </button>
+                </div>
+            </div>
+
+            <!-- Batch Email Verification Progress & Outcome Summary -->
+            <div id="emailVerifyPanel" class="hidden rounded-2xl border border-slate-200 bg-slate-50/90 p-4 space-y-3">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                        <div class="text-xs font-extrabold text-slate-900" id="emailVerifyStatusText">Verifying Unverified Emails...</div>
+                        <div class="text-[11px] font-medium text-slate-500" id="emailVerifySubText">Checking syntax, DNS, MX, disposable domains, and catch-all signals (no emails are ever sent).</div>
+                    </div>
+                    <div class="flex items-center gap-2 text-xs font-mono font-bold">
+                        <span class="text-slate-600" id="emailVerifyPct">0%</span>
+                        <span class="px-2.5 py-0.5 rounded-full bg-white border border-slate-200 text-slate-700">
+                            Processed: <span id="emailVerifyProcessed">0</span> | Remaining: <span id="emailVerifyRemaining">0</span>
+                        </span>
+                    </div>
+                </div>
+                <div class="w-full bg-slate-200/80 rounded-full h-2.5 overflow-hidden">
+                    <div id="emailVerifyProgressBar" class="bg-gradient-to-r from-emerald-500 via-teal-500 to-indigo-500 h-full rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+                    <div class="p-2 rounded-xl bg-emerald-50 border border-emerald-200/80">
+                        <span class="text-[10px] font-bold uppercase text-emerald-700 block">Valid</span>
+                        <span class="text-base font-extrabold font-mono text-emerald-800" id="emailVerifyCountValid">0</span>
+                    </div>
+                    <div class="p-2 rounded-xl bg-amber-50 border border-amber-200/80">
+                        <span class="text-[10px] font-bold uppercase text-amber-700 block">Risky</span>
+                        <span class="text-base font-extrabold font-mono text-amber-800" id="emailVerifyCountRisky">0</span>
+                    </div>
+                    <div class="p-2 rounded-xl bg-rose-50 border border-rose-200/80">
+                        <span class="text-[10px] font-bold uppercase text-rose-700 block">Invalid</span>
+                        <span class="text-base font-extrabold font-mono text-rose-800" id="emailVerifyCountInvalid">0</span>
+                    </div>
+                    <div class="p-2 rounded-xl bg-slate-100 border border-slate-300/80">
+                        <span class="text-[10px] font-bold uppercase text-slate-600 block">Unknown</span>
+                        <span class="text-base font-extrabold font-mono text-slate-700" id="emailVerifyCountUnknown">0</span>
+                    </div>
                 </div>
             </div>
 
@@ -359,14 +424,13 @@
                                 <input type="checkbox" id="selectAllCheckbox" onchange="toggleSelectAll(event)" class="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer">
                             </th>
                             <th class="px-4 py-3.5">Business Name</th>
+                            <th class="px-4 py-3.5 text-purple-700">Contact Person</th>
+                            <th class="px-4 py-3.5 text-emerald-700">Email</th>
+                            <th class="px-4 py-3.5">Email Status</th>
+                            <th class="px-4 py-3.5">Phone</th>
                             <th class="px-4 py-3.5">Website</th>
-                            <th class="px-4 py-3.5 text-purple-700">Decision Maker</th>
-                            <th class="px-4 py-3.5 text-emerald-700">Contact Email</th>
-                            <th class="px-4 py-3.5">Verification</th>
-                            <th class="px-4 py-3.5 text-amber-700">Research Priority</th>
-                            <th class="px-4 py-3.5">Main Gap</th>
-                            <th class="px-4 py-3.5 text-center">Audit</th>
-                            <th class="px-4 py-3.5">Socials</th>
+                            <th class="px-4 py-3.5">City</th>
+                            <th class="px-4 py-3.5">State</th>
                         </tr>
                     </thead>
                     <tbody id="resultsTableBody" class="divide-y divide-slate-100 font-medium">
@@ -469,12 +533,25 @@
         let selectedIndices = new Set();
         
         // Detected column names
-        let detectedEmailCol = 'Contact Email';
+        let detectedEmailCol = 'Email';
         let detectedWebsiteCol = 'Website';
+        let detectedPhoneCol = 'Phone';
+        let detectedCityCol = 'City';
+        let detectedStateCol = 'State';
         let detectedFbCol = 'Facebook';
         let detectedLiCol = 'LinkedIn';
-        let detectedDmCol = 'Decision Maker';
-        let detectedVerCol = 'Email Verification';
+        let detectedDmCol = 'Contact Person';
+        let detectedVerCol = 'Email Status';
+        const LEAD_TRACKER_EXPORT_COLUMNS = [
+            "Business Name",
+            "Contact Person",
+            "Email",
+            "Email Status",
+            "Phone",
+            "Website",
+            "City",
+            "State"
+        ];
 
         // Tab Switching
         function switchTab(tab) {
@@ -547,35 +624,150 @@
             return svg;
         }
 
-        function getApiHeaders() {
-            const headers = { 'Content-Type': 'application/json' };
-            const csrfMeta = document.querySelector('meta[name="csrf-token"]');
-            const csrfToken = csrfMeta ? (csrfMeta.getAttribute('content') || '').trim() : '';
-            if (csrfToken) {
-                headers['X-CSRF-Token'] = csrfToken;
-            }
+        // In-memory UI session authentication state (NEVER persist API keys in browser storage)
+        const UI_AUTO_SESSION_ENABLED = {{ 'true' if ui_auto_session else 'false' }};
+        let uiCsrfToken = '';
+        let uiSessionActive = false;
+        let lastRunStats = {
+            active: false,
+            totalTargets: 0,
+            processed: 0,
+            succeeded: 0,
+            failed: 0,
+            abortedAuth: false
+        };
+
+        function clearLegacyStoredApiKeys() {
+            try { sessionStorage.removeItem('leadhunter_api_key'); } catch (_e) {}
+            try { localStorage.removeItem('leadhunter_api_key'); } catch (_e) {}
+        }
+
+        function syncUiAuthBanner() {
+            const lockedEl = document.getElementById('uiAuthLocked');
+            const unlockedEl = document.getElementById('uiAuthUnlocked');
+            if (!lockedEl || !unlockedEl) return;
+            lockedEl.classList.toggle('hidden', uiSessionActive);
+            unlockedEl.classList.toggle('hidden', !uiSessionActive);
+        }
+
+        function handleAuthFailureState() {
+            uiCsrfToken = '';
+            uiSessionActive = false;
+            syncUiAuthBanner();
             const inputEl = document.getElementById('apiKeyInput');
             if (inputEl) {
-                const apiKey = inputEl.value || sessionStorage.getItem('leadhunter_api_key') || '';
-                if (apiKey.trim()) {
-                    headers['X-API-Key'] = apiKey.trim();
-                }
+                inputEl.focus();
+            }
+        }
+
+        function getApiHeaders() {
+            const headers = { 'Content-Type': 'application/json' };
+            if (uiCsrfToken) {
+                headers['X-CSRF-Token'] = uiCsrfToken;
             }
             return headers;
         }
 
+        async function unlockUiSession(explicitKey = null) {
+            const inputEl = document.getElementById('apiKeyInput');
+            const rawKey = explicitKey !== null ? String(explicitKey) : (inputEl ? inputEl.value : '');
+            const candidateKey = rawKey.trim();
+            if (!candidateKey) {
+                showToast('Enter your Access Key to unlock this session.', '🔒');
+                if (inputEl) inputEl.focus();
+                return { ok: false, status: 401, error: 'Access Key is required.' };
+            }
+
+            const unlockBtn = document.getElementById('btnUnlockSession');
+            if (unlockBtn) unlockBtn.disabled = true;
+
+            try {
+                const resp = await fetch('/api/ui-session', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': candidateKey
+                    },
+                    body: JSON.stringify({})
+                });
+                const data = await safeParseJsonResponse(resp);
+                if (resp.ok && data.success && data.csrf_token) {
+                    uiCsrfToken = String(data.csrf_token).trim();
+                    uiSessionActive = true;
+                    if (inputEl) inputEl.value = '';
+                    clearLegacyStoredApiKeys();
+                    syncUiAuthBanner();
+                    showToast('Session unlocked', '🔓');
+                    return { ok: true, status: resp.status };
+                }
+
+                handleAuthFailureState();
+                const errMsg = data.error || `Authentication failed (HTTP ${resp.status})`;
+                showToast(errMsg, '🔒');
+                return { ok: false, status: resp.status, error: errMsg };
+            } catch (e) {
+                handleAuthFailureState();
+                const errMsg = `Authentication request failed: ${e.message}`;
+                showToast(errMsg, '❌');
+                return { ok: false, status: 0, error: errMsg };
+            } finally {
+                if (unlockBtn) unlockBtn.disabled = false;
+            }
+        }
+
+        async function lockUiSession() {
+            const headers = getApiHeaders();
+            try {
+                await fetch('/api/ui-session', {
+                    method: 'DELETE',
+                    credentials: 'same-origin',
+                    headers
+                });
+            } catch (_e) {
+                // Always clear client-side in-memory session state even if network call fails
+            }
+            const inputEl = document.getElementById('apiKeyInput');
+            if (inputEl) inputEl.value = '';
+            clearLegacyStoredApiKeys();
+            uiCsrfToken = '';
+            uiSessionActive = false;
+            syncUiAuthBanner();
+            showToast('Session locked', '🔒');
+        }
+
+        async function ensureUiAuthenticated() {
+            if (uiSessionActive && uiCsrfToken) {
+                return { ok: true };
+            }
+            const inputEl = document.getElementById('apiKeyInput');
+            if (inputEl && inputEl.value.trim()) {
+                return await unlockUiSession();
+            }
+            handleAuthFailureState();
+            const msg = 'Authentication required: enter your Access Key and unlock the session before starting.';
+            showToast(msg, '🔒');
+            return { ok: false, status: 401, error: msg };
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
+            clearLegacyStoredApiKeys();
+            const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+            const initialCsrf = csrfMeta ? (csrfMeta.getAttribute('content') || '').trim() : '';
+            if (initialCsrf) {
+                uiCsrfToken = initialCsrf;
+                uiSessionActive = true;
+            }
+            syncUiAuthBanner();
+
             const apiKeyInput = document.getElementById('apiKeyInput');
             if (apiKeyInput) {
-                const savedKey = sessionStorage.getItem('leadhunter_api_key');
-                if (savedKey) apiKeyInput.value = savedKey;
-                apiKeyInput.addEventListener('input', () => {
-                    const val = apiKeyInput.value.trim();
-                    if (val) sessionStorage.setItem('leadhunter_api_key', val);
-                    else sessionStorage.removeItem('leadhunter_api_key');
+                apiKeyInput.addEventListener('keydown', (ev) => {
+                    if (ev.key === 'Enter') {
+                        ev.preventDefault();
+                        unlockUiSession();
+                    }
                 });
-            } else {
-                sessionStorage.removeItem('leadhunter_api_key');
             }
         });
 
@@ -655,6 +847,14 @@
                 document.getElementById('logBox').replaceChildren();
                 finalData = [];
                 selectedIndices.clear();
+                lastRunStats = {
+                    active: false,
+                    totalTargets: 0,
+                    processed: 0,
+                    succeeded: 0,
+                    failed: 0,
+                    abortedAuth: false
+                };
             }
         }
 
@@ -665,6 +865,15 @@
 
             const urls = text.split('\n').map(u => u.trim()).filter(u => u);
             if (urls.length === 0) return alert("Please enter at least 1 URL.");
+
+            const authCheck = await ensureUiAuthenticated();
+            if (!authCheck.ok) {
+                showProgress(true);
+                document.getElementById('statusText').textContent = 'Authentication Required';
+                document.getElementById('statusSubText').textContent = authCheck.error;
+                log(`[!] Failed: ${authCheck.error}`);
+                return;
+            }
 
             let processedUrls = urls;
             if (urls.length > 100) {
@@ -702,6 +911,15 @@
             const fileInput = document.getElementById('fileInput');
             if (!fileInput.files.length) return alert("Please select a CSV or Excel file first.");
 
+            const authCheck = await ensureUiAuthenticated();
+            if (!authCheck.ok) {
+                showProgress(true);
+                document.getElementById('statusText').textContent = 'Authentication Required';
+                document.getElementById('statusSubText').textContent = authCheck.error;
+                log(`[!] Failed: ${authCheck.error}`);
+                return;
+            }
+
             const file = fileInput.files[0];
             uploadedFileName = file.name;
             showProgress(true);
@@ -737,17 +955,25 @@
 
             const keys = Object.keys(data[0]);
             detectedWebsiteCol = keys.find(k => /website|site|web\s*url|domain/i.test(k)) || keys.find(k => k.toLowerCase().includes('website'));
-            detectedEmailCol = keys.find(k => /contact.*email|email|e-mail/i.test(k)) || keys.find(k => k.toLowerCase().includes('email')) || 'Contact Email';
-            detectedDmCol = keys.find(k => /decision\s*maker|owner|ceo|contact\s*person/i.test(k)) || 'Decision Maker';
-            detectedVerCol = keys.find(k => /email.*verification|verification/i.test(k)) || 'Email Verification';
+            detectedEmailCol = keys.find(k => /^email$/i.test(k) || /^contact.*email$/i.test(k))
+                || keys.find(k => /email|e-mail/i.test(k) && !/status|verification/i.test(k))
+                || 'Email';
+            detectedDmCol = keys.find(k => /contact\s*person|decision\s*maker|owner|ceo/i.test(k)) || 'Contact Person';
+            detectedVerCol = keys.find(k => /email\s*status|email.*verification|verification/i.test(k)) || 'Email Status';
+            detectedPhoneCol = keys.find(k => /^phone$/i.test(k) || /phone/i.test(k)) || 'Phone';
+            detectedCityCol = keys.find(k => /^city$/i.test(k)) || keys.find(k => /city/i.test(k)) || 'City';
+            detectedStateCol = keys.find(k => /^state$/i.test(k)) || keys.find(k => /state/i.test(k)) || 'State';
             detectedFbCol = keys.find(k => /^facebook$/i.test(k)) || keys.find(k => /facebook/i.test(k)) || 'Facebook';
             detectedLiCol = keys.find(k => /^linkedin$/i.test(k)) || keys.find(k => /linkedin/i.test(k)) || 'LinkedIn';
 
-            // Ensure columns exist on all rows for uniform CSV export
+            // Ensure columns exist on all rows while preserving all original fields
             data.forEach(row => {
                 if (row[detectedDmCol] === undefined) row[detectedDmCol] = '';
                 if (row[detectedEmailCol] === undefined) row[detectedEmailCol] = '';
                 if (row[detectedVerCol] === undefined) row[detectedVerCol] = '';
+                if (row[detectedPhoneCol] === undefined) row[detectedPhoneCol] = '';
+                if (row[detectedCityCol] === undefined) row[detectedCityCol] = '';
+                if (row[detectedStateCol] === undefined) row[detectedStateCol] = '';
                 if (row[detectedFbCol] === undefined) row[detectedFbCol] = '';
                 if (row[detectedLiCol] === undefined) row[detectedLiCol] = '';
                 if (!row.intelligence) row.intelligence = null;
@@ -816,13 +1042,102 @@
             };
         }
 
+        function isAuthFailureResponse(status, data) {
+            if (status === 401) return true;
+            if (status === 503) {
+                const code = data && typeof data === 'object' ? data.code : '';
+                return code !== 'queue_unavailable' && code !== 'worker_unavailable';
+            }
+            return false;
+        }
+
+        function classifyQueueCompletion({ total, processed, succeeded, failed, abortedAuth }) {
+            if (abortedAuth) {
+                return {
+                    statusText: `Stopped — Authentication Required (${succeeded} / ${total} URLs audited)`,
+                    statusSubText: `Processed ${processed} of ${total} URLs before an authentication failure (${succeeded} audited, ${failed} failed). Unlock your session and retry.`,
+                    toastMsg: `Stopped: authentication required (${succeeded}/${total} audited)`,
+                    toastIcon: '🔒',
+                    logMsg: `[!] Audit stopped due to authentication failure. Processed ${processed}/${total} URLs (${succeeded} audited, ${failed} failed).`,
+                    allowExport: succeeded > 0
+                };
+            }
+            if (succeeded === 0 && failed > 0) {
+                return {
+                    statusText: `Audit Failed (0 / ${total} URLs audited)`,
+                    statusSubText: `Processed ${processed} of ${total} URLs — all ${failed} audit request(s) failed. Review the activity log for details.`,
+                    toastMsg: `Audit failed — 0 of ${total} URLs succeeded.`,
+                    toastIcon: '❌',
+                    logMsg: `[!] Audit finished with 0 successful audits (${failed}/${total} failed).`,
+                    allowExport: false
+                };
+            }
+            if (failed > 0 && succeeded > 0) {
+                return {
+                    statusText: `Completed with Failures (${succeeded} / ${total} URLs audited, ${failed} failed)`,
+                    statusSubText: `Processed ${processed} of ${total} URLs: ${succeeded} succeeded, ${failed} failed.`,
+                    toastMsg: `Completed with ${failed} failure(s): ${succeeded}/${total} audited.`,
+                    toastIcon: '⚠️',
+                    logMsg: `[!] Audit completed with partial failures: ${succeeded} audited, ${failed} failed out of ${total} URLs.`,
+                    allowExport: true
+                };
+            }
+            return {
+                statusText: `Audit & Verification Complete! (${succeeded} / ${total} URLs audited)`,
+                statusSubText: `All ${succeeded} target URL(s) were successfully audited and verified.`,
+                toastMsg: `Intelligence extraction complete! (${succeeded}/${total} audited)`,
+                toastIcon: '🚀',
+                logMsg: `🎉 Audit & verification completed cleanly (${succeeded}/${total} URLs audited).`,
+                allowExport: true
+            };
+        }
+
+        const POLL_BACKOFF_SCHEDULE_MS = [2000, 2500, 3000, 4000, 5000];
+        const MAX_RATE_LIMIT_RETRIES = 3;
+
+        function getPollDelayMs(attempt) {
+            const idx = Math.max(0, Math.min(Number(attempt) || 0, POLL_BACKOFF_SCHEDULE_MS.length - 1));
+            return POLL_BACKOFF_SCHEDULE_MS[idx];
+        }
+
+        function parseRetryAfterMs(response, defaultSec = 2, maxSec = 60) {
+            const raw = response && response.headers && typeof response.headers.get === 'function'
+                ? response.headers.get('Retry-After')
+                : null;
+            let seconds = defaultSec;
+            if (raw !== null && raw !== undefined && String(raw).trim() !== '') {
+                const parsed = Number.parseInt(String(raw).trim(), 10);
+                if (Number.isFinite(parsed) && parsed > 0) {
+                    seconds = parsed;
+                }
+            }
+            const clamped = Math.max(1, Math.min(seconds, maxSec));
+            return clamped * 1000;
+        }
+
+        async function fetchWithRateLimitRetry(url, optsBuilder, label) {
+            for (let retry = 0; retry <= MAX_RATE_LIMIT_RETRIES; retry++) {
+                const resp = await fetch(url, optsBuilder());
+                if (resp.status !== 429 || retry === MAX_RATE_LIMIT_RETRIES) {
+                    return resp;
+                }
+                const waitMs = parseRetryAfterMs(resp, 2, 60);
+                log(`[i] Rate limited during ${label}; waiting ${Math.ceil(waitMs / 1000)}s (Retry-After) before retry ${retry + 1}/${MAX_RATE_LIMIT_RETRIES}...`);
+                await new Promise(resolve => setTimeout(resolve, waitMs));
+            }
+        }
+
         async function runAsyncScrapeJob(payload) {
-            const submitResp = await fetch('/api/jobs', {
-                method: 'POST',
-                credentials: 'same-origin',
-                headers: getApiHeaders(),
-                body: JSON.stringify(payload)
-            });
+            const submitResp = await fetchWithRateLimitRetry(
+                '/api/jobs',
+                () => ({
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: getApiHeaders(),
+                    body: JSON.stringify(payload)
+                }),
+                'job submission'
+            );
             const submitData = await safeParseJsonResponse(submitResp);
 
             // Local single-website convenience fallback ONLY if Redis queue is not configured locally
@@ -834,12 +1149,23 @@
                     headers: getApiHeaders(),
                     body: JSON.stringify(payload)
                 });
-                return await safeParseJsonResponse(syncResp);
+                const syncData = await safeParseJsonResponse(syncResp);
+                if (!syncResp.ok) {
+                    return {
+                        success: false,
+                        status: syncResp.status,
+                        authError: isAuthFailureResponse(syncResp.status, syncData),
+                        error: syncData.error || `Website audit failed (HTTP ${syncResp.status})`
+                    };
+                }
+                return syncData;
             }
 
             if (!submitResp.ok || !submitData.success || !submitData.job_id) {
                 return {
                     success: false,
+                    status: submitResp.status,
+                    authError: isAuthFailureResponse(submitResp.status, submitData),
                     error: submitData.error || `Failed to enqueue background job (HTTP ${submitResp.status})`
                 };
             }
@@ -852,19 +1178,24 @@
                 log(`[i] Queued background job ${jobId}`);
             }
 
-            const pollIntervalMs = 2000;
-            const maxPolls = 500; // ~16 minutes upper poll guard
+            const maxPolls = 300; // bounded upper poll guard (~24 min with 5s backoff cap)
             for (let attempt = 0; attempt < maxPolls; attempt++) {
-                await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
-                const statusResp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {
-                    method: 'GET',
-                    credentials: 'same-origin',
-                    headers: getApiHeaders()
-                });
+                await new Promise(resolve => setTimeout(resolve, getPollDelayMs(attempt)));
+                const statusResp = await fetchWithRateLimitRetry(
+                    `/api/jobs/${encodeURIComponent(jobId)}`,
+                    () => ({
+                        method: 'GET',
+                        credentials: 'same-origin',
+                        headers: getApiHeaders()
+                    }),
+                    `status poll (${jobId})`
+                );
                 const statusData = await safeParseJsonResponse(statusResp);
                 if (!statusResp.ok || !statusData.success) {
                     return {
                         success: false,
+                        status: statusResp.status,
+                        authError: isAuthFailureResponse(statusResp.status, statusData),
                         error: statusData.error || `Job status check failed (HTTP ${statusResp.status})`
                     };
                 }
@@ -875,28 +1206,62 @@
                 }
 
                 if (statusData.status === 'finished' || statusData.status === 'failed' || statusData.status === 'timed_out' || statusData.status === 'canceled') {
-                    const resultResp = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/result`, {
-                        method: 'GET',
-                        credentials: 'same-origin',
-                        headers: getApiHeaders()
-                    });
-                    return await safeParseJsonResponse(resultResp);
+                    const resultResp = await fetchWithRateLimitRetry(
+                        `/api/jobs/${encodeURIComponent(jobId)}/result`,
+                        () => ({
+                            method: 'GET',
+                            credentials: 'same-origin',
+                            headers: getApiHeaders()
+                        }),
+                        `result fetch (${jobId})`
+                    );
+                    const resultData = await safeParseJsonResponse(resultResp);
+                    if (!resultResp.ok) {
+                        return {
+                            success: false,
+                            status: resultResp.status,
+                            authError: isAuthFailureResponse(resultResp.status, resultData),
+                            error: resultData.error || `Job result fetch failed (HTTP ${resultResp.status})`
+                        };
+                    }
+                    return resultData;
                 }
             }
 
             return {
                 success: false,
+                status: 504,
+                authError: false,
                 error: `Timed out waiting for background job ${jobId} to finish.`
             };
         }
 
         // Core Processing Queue (uses asynchronous /api/jobs workflow)
         async function processQueue() {
-            let completed = 0;
+            let processed = 0;
             let successCount = 0;
             let failCount = 0;
+            let abortedAuth = false;
             const total = targetQueue.length;
-            document.getElementById('progressCount').textContent = `0 / ${total} URLs (0 Leads)`;
+
+            lastRunStats = {
+                active: true,
+                totalTargets: total,
+                processed: 0,
+                succeeded: 0,
+                failed: 0,
+                abortedAuth: false
+            };
+
+            if (inputType === 'file') {
+                targetQueue.forEach(item => {
+                    if (uploadedData[item.rowIndex]) {
+                        uploadedData[item.rowIndex]._auditStatus = 'pending';
+                    }
+                });
+            }
+
+            document.getElementById('progressCount').textContent = `0 / ${total} URLs processed (0 audited, 0 failed)`;
 
             for (let i = 0; i < total; i++) {
                 const item = targetQueue[i];
@@ -904,7 +1269,7 @@
                 if (scrapeMode === 'maps') {
                     document.getElementById('statusText').textContent = 'Scanning Google Maps & Extracting Leads...';
                     document.getElementById('statusSubText').textContent = 'Running in background worker: extracting listings, verifying contacts & auditing websites.';
-                    document.getElementById('progressCount').textContent = `Processing query ${i + 1}/${total}...`;
+                    document.getElementById('progressCount').textContent = `Processing query ${i + 1} / ${total} (${successCount} audited, ${failCount} failed)`;
                     log(`[${i + 1}/${total}] Submitting Google Maps job: ${url}`);
                 } else {
                     document.getElementById('statusText').textContent = 'Auditing Websites...';
@@ -924,8 +1289,8 @@
                         decision_maker: item.decision_maker || ''
                     });
 
-                    const incomingLeads = (res.leads && Array.isArray(res.leads)) 
-                        ? res.leads 
+                    const incomingLeads = (res.leads && Array.isArray(res.leads))
+                        ? res.leads
                         : (res.data ? [res.data] : []);
 
                     const validLeads = incomingLeads.filter(l => l && (l["Business Name"] || l["Website"]));
@@ -935,6 +1300,7 @@
 
                         if (inputType === 'manual') {
                             validLeads.forEach(lead => {
+                                lead._auditStatus = 'succeeded';
                                 finalData.push(lead);
                                 const intel = lead.intelligence || {};
                                 const oppsCount = (intel.opportunities && intel.opportunities.detected_opportunities) ? intel.opportunities.detected_opportunities.length : 0;
@@ -947,6 +1313,7 @@
                             const row = uploadedData[item.rowIndex];
                             const intel = lead.intelligence || {};
                             row.intelligence = intel;
+                            row._auditStatus = 'succeeded';
 
                             if (lead["Business Name"] && (!row["Business Name"] || row["Business Name"] === '-')) {
                                 row["Business Name"] = lead["Business Name"];
@@ -976,34 +1343,62 @@
                         }
                     } else {
                         failCount++;
+                        if (inputType === 'file' && uploadedData[item.rowIndex]) {
+                            uploadedData[item.rowIndex]._auditStatus = 'failed';
+                        }
                         const errMsg = res.error || (incomingLeads.length === 0 ? 'No business listings found' : 'Extraction failed');
                         log(`[!] Failed: ${errMsg}`);
+                        if (res.authError) {
+                            abortedAuth = true;
+                            handleAuthFailureState();
+                            log(`[!] Authentication error (HTTP ${res.status || 401}) — halting remaining ${total - (processed + 1)} target(s). Unlock your session and retry.`);
+                        }
                     }
                 } catch (e) {
                     failCount++;
+                    if (inputType === 'file' && uploadedData[item.rowIndex]) {
+                        uploadedData[item.rowIndex]._auditStatus = 'failed';
+                    }
                     log(`[!] Network error: ${e.message}`);
                 }
 
-                completed++;
-                const pct = Math.round((completed / total) * 100);
-                const totalLeads = inputType === 'manual' ? finalData.length : uploadedData.length;
-                document.getElementById('progressCount').textContent = `${completed} / ${total} URLs (${totalLeads} Leads)`;
+                processed++;
+                lastRunStats.processed = processed;
+                lastRunStats.succeeded = successCount;
+                lastRunStats.failed = failCount;
+                lastRunStats.abortedAuth = abortedAuth;
+
+                const pct = Math.round((processed / total) * 100);
+                document.getElementById('progressCount').textContent = `${processed} / ${total} URLs processed (${successCount} audited, ${failCount} failed)`;
                 document.getElementById('progressPercentage').textContent = `${pct}%`;
                 document.getElementById('progressBar').style.width = `${pct}%`;
 
-                document.getElementById('statWebsitesScanned').textContent = completed;
-                document.getElementById('statSuccessfulAudits').textContent = successCount;
-                document.getElementById('statFailedAudits').textContent = failCount;
-
                 updateDashboardStats();
+
+                if (abortedAuth) {
+                    break;
+                }
             }
 
-            log(`🎉 Intelligence and enrichment completed!`);
-            document.getElementById('statusText').textContent = 'Audit & Verification Complete!';
-            document.getElementById('statusSubText').textContent = 'Your enriched leads and opportunity gaps are ready.';
-            document.getElementById('downloadSection').classList.remove('hidden');
-            renderTable();
-            showToast("Intelligence extraction complete!", "🚀");
+            const outcome = classifyQueueCompletion({
+                total,
+                processed,
+                succeeded: successCount,
+                failed: failCount,
+                abortedAuth
+            });
+            log(outcome.logMsg);
+            document.getElementById('statusText').textContent = outcome.statusText;
+            document.getElementById('statusSubText').textContent = outcome.statusSubText;
+            if (outcome.allowExport) {
+                document.getElementById('downloadSection').classList.remove('hidden');
+            } else {
+                document.getElementById('downloadSection').classList.add('hidden');
+            }
+            if (inputType === 'file' || finalData.length > 0) {
+                renderTable();
+            }
+            showToast(outcome.toastMsg, outcome.toastIcon);
         }
 
         // Live Stats Update
@@ -1028,7 +1423,10 @@
                 uniqueBiz.add(uniqueKey);
 
                 const hasWeb = web && web !== '-' && web.startsWith('http');
-                if (hasWeb && r.intelligence) {
+                if (r._auditStatus === 'failed') {
+                    websitesScanned++;
+                    failedAudits++;
+                } else if (hasWeb && r.intelligence) {
                     websitesScanned++;
                     const isFailed = r.intelligence?.technical?.status === 'Scan Failed' || r.intelligence?.seo?.status === 'Scan Failed';
                     if (isFailed) failedAudits++; else successfulAudits++;
@@ -1037,10 +1435,10 @@
                 const dm = r["Contact Person"] || r["Decision Maker"] || r[detectedDmCol];
                 if (dm && dm.trim() !== '' && dm !== '-') dms++;
 
-                // Strict email verification status check - ONLY 'Verified' (not MX Only or Unverified)
+                // Strict email verification status check - ONLY 'Verified' or 'Valid' (never Risky/MX Only/Unknown/Unverified)
                 const em = r["Email"] || r["Contact Email"] || r[detectedEmailCol];
-                const ver = String(r["Email Status"] || r["Email Verification"] || r[detectedVerCol] || '').toLowerCase();
-                if (em && em.includes('@') && (ver === 'verified' || ver.includes('smtp verified') || ver.includes('smtp valid'))) {
+                const ver = String(r["Email Status"] || r["Email Verification"] || r[detectedVerCol] || '').trim().toLowerCase();
+                if (em && em.includes('@') && (ver === 'valid' || ver === 'verified' || ver.includes('smtp verified') || ver.includes('smtp valid'))) {
                     verified++;
                 }
 
@@ -1057,6 +1455,12 @@
                 }
             });
 
+            if (lastRunStats.active) {
+                websitesScanned = lastRunStats.processed;
+                successfulAudits = lastRunStats.succeeded;
+                failedAudits = lastRunStats.failed;
+            }
+
             document.getElementById('statTotalRecords').textContent = uniqueBiz.size;
             document.getElementById('statWebsitesScanned').textContent = websitesScanned;
             document.getElementById('statSuccessfulAudits').textContent = successfulAudits;
@@ -1064,6 +1468,281 @@
             document.getElementById('statVerifiedEmails').textContent = verified;
             document.getElementById('statOpportunities').textContent = totalOpps;
             document.getElementById('statHighPriority').textContent = highPri;
+        }
+
+        let emailVerificationRunning = false;
+
+        function getActiveLeadsArray() {
+            return inputType === 'file' ? uploadedData : finalData;
+        }
+
+        function getRowEmailValue(row) {
+            return String(row["Email"] || row["Contact Email"] || row[detectedEmailCol] || '').trim();
+        }
+
+        function isEmptyEmailPlaceholder(val) {
+            const low = String(val || '').trim().toLowerCase();
+            return !low || low === '-' || low === 'n/a' || low === 'none';
+        }
+
+        function getNormalizedRowEmailStatus(row) {
+            const em = getRowEmailValue(row);
+            if (isEmptyEmailPlaceholder(em)) return 'not_found';
+            const raw = String(row["Email Status"] || row["Email Verification"] || row[detectedVerCol] || '').trim();
+            const low = raw.toLowerCase();
+            if (!low || low === 'unverified') return 'unverified';
+            if (low.includes('catch-all') || low.includes('mx')) return 'mx_only';
+            if (low === 'valid') return 'valid';
+            if (low === 'risky') return 'risky';
+            if (low === 'unknown') return 'unknown';
+            if (low.includes('invalid')) return 'invalid';
+            if (low === 'verified' || low.includes('smtp verified') || low.includes('smtp valid')) return 'verified';
+            if (low.includes('not found')) return 'not_found';
+            return 'unverified';
+        }
+
+        function collectUnverifiedEmailItems() {
+            const rows = getActiveLeadsArray();
+            const items = [];
+            rows.forEach((row, idx) => {
+                const em = getRowEmailValue(row);
+                if (!isEmptyEmailPlaceholder(em) && getNormalizedRowEmailStatus(row) === 'unverified') {
+                    items.push({ row_index: idx, email: em });
+                }
+            });
+            return items;
+        }
+
+        function updateVerifyEmailsButtonState() {
+            const btn = document.getElementById('btnVerifyEmails');
+            const badge = document.getElementById('verifyEmailsCountBadge');
+            if (!btn || !badge) return;
+            const unverifiedCount = collectUnverifiedEmailItems().length;
+            badge.textContent = String(unverifiedCount);
+            btn.disabled = emailVerificationRunning || unverifiedCount === 0;
+        }
+
+        function updateEmailVerifyProgressUI({ processed, remaining, total, counts, statusText, subText }) {
+            const panel = document.getElementById('emailVerifyPanel');
+            if (panel) panel.classList.remove('hidden');
+            const safeTotal = Math.max(0, Number(total) || 0);
+            const safeProcessed = Math.max(0, Number(processed) || 0);
+            const safeRemaining = Math.max(0, remaining !== undefined ? Number(remaining) : (safeTotal - safeProcessed));
+            const pct = safeTotal > 0 ? Math.min(100, Math.round((safeProcessed / safeTotal) * 100)) : 100;
+
+            if (statusText !== undefined) document.getElementById('emailVerifyStatusText').textContent = statusText;
+            if (subText !== undefined) document.getElementById('emailVerifySubText').textContent = subText;
+            document.getElementById('emailVerifyPct').textContent = `${pct}%`;
+            document.getElementById('emailVerifyProcessed').textContent = String(safeProcessed);
+            document.getElementById('emailVerifyRemaining').textContent = String(safeRemaining);
+            document.getElementById('emailVerifyProgressBar').style.width = `${pct}%`;
+
+            const c = counts || {};
+            document.getElementById('emailVerifyCountValid').textContent = String(c.Valid || 0);
+            document.getElementById('emailVerifyCountRisky').textContent = String(c.Risky || 0);
+            document.getElementById('emailVerifyCountInvalid').textContent = String(c.Invalid || 0);
+            document.getElementById('emailVerifyCountUnknown').textContent = String(c.Unknown || 0);
+        }
+
+        async function startBatchEmailVerification() {
+            if (emailVerificationRunning) return;
+
+            const items = collectUnverifiedEmailItems();
+            if (items.length === 0) {
+                showToast('No records with Email Status = Unverified to verify.', 'ℹ️');
+                updateVerifyEmailsButtonState();
+                return;
+            }
+
+            const authCheck = await ensureUiAuthenticated();
+            if (!authCheck.ok) {
+                return;
+            }
+
+            emailVerificationRunning = true;
+            updateVerifyEmailsButtonState();
+
+            const total = items.length;
+            const zeroCounts = { Valid: 0, Risky: 0, Invalid: 0, Unknown: 0 };
+            updateEmailVerifyProgressUI({
+                processed: 0,
+                remaining: total,
+                total,
+                counts: zeroCounts,
+                statusText: `Verifying ${total} Unverified Email(s)...`,
+                subText: 'Submitting batch verification job to background worker (no emails are ever sent).'
+            });
+
+            try {
+                const submitResp = await fetchWithRateLimitRetry(
+                    '/api/jobs/verify-emails',
+                    () => ({
+                        method: 'POST',
+                        credentials: 'same-origin',
+                        headers: getApiHeaders(),
+                        body: JSON.stringify({ items })
+                    }),
+                    'email verification submission'
+                );
+                const submitData = await safeParseJsonResponse(submitResp);
+
+                if (!submitResp.ok || !submitData.success || !submitData.job_id) {
+                    if (isAuthFailureResponse(submitResp.status, submitData)) {
+                        handleAuthFailureState();
+                    }
+                    const errMsg = submitData.error || `Failed to start email verification (HTTP ${submitResp.status})`;
+                    updateEmailVerifyProgressUI({
+                        processed: 0,
+                        remaining: total,
+                        total,
+                        counts: zeroCounts,
+                        statusText: 'Email Verification Failed',
+                        subText: errMsg
+                    });
+                    showToast(errMsg, '❌');
+                    return;
+                }
+
+                const jobId = submitData.job_id;
+                log(`[i] Queued batch email verification job ${jobId} for ${total} unverified record(s)`);
+
+                const maxPolls = 300;
+                let finalResult = null;
+                for (let attempt = 0; attempt < maxPolls; attempt++) {
+                    await new Promise(resolve => setTimeout(resolve, getPollDelayMs(attempt)));
+                    const statusResp = await fetchWithRateLimitRetry(
+                        `/api/jobs/${encodeURIComponent(jobId)}`,
+                        () => ({
+                            method: 'GET',
+                            credentials: 'same-origin',
+                            headers: getApiHeaders()
+                        }),
+                        `email verification status (${jobId})`
+                    );
+                    const statusData = await safeParseJsonResponse(statusResp);
+                    if (!statusResp.ok || !statusData.success) {
+                        if (isAuthFailureResponse(statusResp.status, statusData)) {
+                            handleAuthFailureState();
+                        }
+                        const errMsg = statusData.error || `Verification status check failed (HTTP ${statusResp.status})`;
+                        updateEmailVerifyProgressUI({
+                            processed: 0,
+                            remaining: total,
+                            total,
+                            counts: zeroCounts,
+                            statusText: 'Email Verification Interrupted',
+                            subText: errMsg
+                        });
+                        showToast(errMsg, '❌');
+                        return;
+                    }
+
+                    const prog = statusData.progress || {};
+                    updateEmailVerifyProgressUI({
+                        processed: prog.processed_count !== undefined ? prog.processed_count : (prog.processed_leads || 0),
+                        remaining: prog.remaining_count !== undefined ? prog.remaining_count : Math.max(0, total - (prog.processed_leads || 0)),
+                        total: prog.total_count !== undefined ? prog.total_count : total,
+                        counts: prog.counts || zeroCounts,
+                        statusText: `Verifying Unverified Emails (${statusData.status})...`,
+                        subText: prog.message || 'Running DNS, MX, disposable, and catch-all checks...'
+                    });
+
+                    if (statusData.status === 'finished' || statusData.status === 'failed' || statusData.status === 'timed_out' || statusData.status === 'canceled') {
+                        const resultResp = await fetchWithRateLimitRetry(
+                            `/api/jobs/${encodeURIComponent(jobId)}/result`,
+                            () => ({
+                                method: 'GET',
+                                credentials: 'same-origin',
+                                headers: getApiHeaders()
+                            }),
+                            `email verification result (${jobId})`
+                        );
+                        finalResult = await safeParseJsonResponse(resultResp);
+                        if (!resultResp.ok || !finalResult.success) {
+                            if (isAuthFailureResponse(resultResp.status, finalResult)) {
+                                handleAuthFailureState();
+                            }
+                            const errMsg = (finalResult && finalResult.error) || `Verification failed (HTTP ${resultResp.status})`;
+                            updateEmailVerifyProgressUI({
+                                processed: prog.processed_count || 0,
+                                remaining: prog.remaining_count !== undefined ? prog.remaining_count : total,
+                                total,
+                                counts: prog.counts || zeroCounts,
+                                statusText: 'Email Verification Failed',
+                                subText: errMsg
+                            });
+                            showToast(errMsg, '❌');
+                            return;
+                        }
+                        break;
+                    }
+                }
+
+                if (!finalResult) {
+                    updateEmailVerifyProgressUI({
+                        processed: 0,
+                        remaining: total,
+                        total,
+                        counts: zeroCounts,
+                        statusText: 'Email Verification Timed Out',
+                        subText: `Timed out waiting for verification job ${jobId}.`
+                    });
+                    showToast('Email verification timed out.', '❌');
+                    return;
+                }
+
+                const rows = getActiveLeadsArray();
+                const verifiedEntries = Array.isArray(finalResult.results) ? finalResult.results : [];
+                verifiedEntries.forEach(entry => {
+                    const idx = entry.row_index;
+                    if (typeof idx !== 'number' || !rows[idx]) return;
+                    const row = rows[idx];
+                    row["Email Status"] = entry.status;
+                    row["Email Verification"] = entry.status;
+                    if (detectedVerCol) {
+                        row[detectedVerCol] = entry.status;
+                    }
+                    row.email_verification_details = {
+                        status: entry.status,
+                        method: entry.method || '',
+                        verified_at: entry.verified_at || '',
+                        details: entry.details || '',
+                        provider: entry.provider || '',
+                        checks: entry.checks || {}
+                    };
+                });
+
+                const finalCounts = finalResult.counts || zeroCounts;
+                const dupMsg = finalResult.duplicates_suppressed > 0
+                    ? ` (${finalResult.duplicates_suppressed} duplicate(s) suppressed)`
+                    : '';
+                updateEmailVerifyProgressUI({
+                    processed: finalResult.processed !== undefined ? finalResult.processed : verifiedEntries.length,
+                    remaining: 0,
+                    total: finalResult.total !== undefined ? finalResult.total : total,
+                    counts: finalCounts,
+                    statusText: 'Email Verification Complete',
+                    subText: `Verified ${verifiedEntries.length} unverified record(s)${dupMsg} — Valid: ${finalCounts.Valid || 0}, Risky: ${finalCounts.Risky || 0}, Invalid: ${finalCounts.Invalid || 0}, Unknown: ${finalCounts.Unknown || 0}.`
+                });
+                log(`[✓] Email verification complete: Valid=${finalCounts.Valid || 0}, Risky=${finalCounts.Risky || 0}, Invalid=${finalCounts.Invalid || 0}, Unknown=${finalCounts.Unknown || 0}`);
+
+                updateDashboardStats();
+                renderTable();
+                showToast(`Email verification complete (${finalCounts.Valid || 0} Valid, ${finalCounts.Risky || 0} Risky, ${finalCounts.Invalid || 0} Invalid, ${finalCounts.Unknown || 0} Unknown)`, '✅');
+            } catch (e) {
+                updateEmailVerifyProgressUI({
+                    processed: 0,
+                    remaining: total,
+                    total,
+                    counts: zeroCounts,
+                    statusText: 'Email Verification Error',
+                    subText: e.message || 'Network error while verifying emails.'
+                });
+                showToast(`Email verification error: ${e.message}`, '❌');
+            } finally {
+                emailVerificationRunning = false;
+                updateVerifyEmailsButtonState();
+            }
         }
 
         // Render Results Table (safe DOM construction — zero innerHTML or inline handlers)
@@ -1077,19 +1756,19 @@
             data.forEach((row, idx) => {
                 const tr = document.createElement('tr');
                 tr.className = 'hover:bg-indigo-50/40 transition-colors border-b border-slate-100 table-row-item';
+                tr.dataset.verifyStatus = getNormalizedRowEmailStatus(row);
 
                 const isChecked = selectedIndices.has(idx);
                 const bizName = String(row["Business Name"] || row["Name"] || Object.values(row)[0] || '-');
-                const web = String(row["Website"] || row[detectedWebsiteCol] || '-');
-                const dm = String(row["Decision Maker"] || row["Contact Person"] || row[detectedDmCol] || '');
-                const em = String(row["Contact Email"] || row["Email"] || row[detectedEmailCol] || '');
-                const ver = String(row["Email Status"] || row["Email Verification"] || row[detectedVerCol] || 'Unverified');
-                const fb = String(row["Facebook"] || row[detectedFbCol] || '');
-                const li = String(row["LinkedIn"] || row[detectedLiCol] || '');
-                const intel = row.intelligence || {};
-                const opps = intel.opportunities || {};
+                const dm = String(row["Contact Person"] || row["Decision Maker"] || row[detectedDmCol] || '').trim();
+                const em = getRowEmailValue(row);
+                const ver = String(row["Email Status"] || row["Email Verification"] || row[detectedVerCol] || (isEmptyEmailPlaceholder(em) ? 'Not Found' : 'Unverified'));
+                const phone = String(row["Phone"] || row["Phone Number"] || row[detectedPhoneCol] || '').trim();
+                const web = String(row["Website"] || row[detectedWebsiteCol] || '-').trim();
+                const city = String(row["City"] || row[detectedCityCol] || '').trim();
+                const state = String(row["State"] || row[detectedStateCol] || '').trim();
 
-                // 1. Checkbox cell
+                // 0. Selection Checkbox cell
                 const tdCheck = document.createElement('td');
                 tdCheck.className = 'w-10 px-4 py-3.5 text-center';
                 const checkbox = document.createElement('input');
@@ -1100,43 +1779,19 @@
                 tdCheck.appendChild(checkbox);
                 tr.appendChild(tdCheck);
 
-                // 2. Business Name cell
+                // 1. Business Name cell (click opens full Audit & Intelligence drawer preserving all underlying data)
                 const tdBiz = document.createElement('td');
-                tdBiz.className = 'px-4 py-3.5 font-bold text-slate-900 max-w-[150px] truncate';
-                tdBiz.title = bizName;
-                tdBiz.textContent = bizName;
+                tdBiz.className = 'px-4 py-3.5 font-bold text-slate-900 max-w-[180px]';
+                const bizBtn = document.createElement('button');
+                bizBtn.type = 'button';
+                bizBtn.className = 'text-left font-bold text-slate-900 hover:text-indigo-700 hover:underline truncate max-w-[170px] block';
+                bizBtn.title = `${bizName} — click to inspect full audit details`;
+                bizBtn.textContent = bizName;
+                bizBtn.addEventListener('click', () => openIntelModal(idx));
+                tdBiz.appendChild(bizBtn);
                 tr.appendChild(tdBiz);
 
-                // 3. Website cell (strictly http/https only)
-                const tdWeb = document.createElement('td');
-                tdWeb.className = 'px-4 py-3.5';
-                const safeWebHref = sanitizeExternalUrl(web);
-                if (safeWebHref) {
-                    const webLink = document.createElement('a');
-                    webLink.href = safeWebHref;
-                    webLink.target = '_blank';
-                    webLink.rel = 'noopener noreferrer';
-                    webLink.className = 'text-indigo-600 hover:text-indigo-800 font-semibold hover:underline flex items-center gap-1 max-w-[130px] truncate';
-                    webLink.title = safeWebHref;
-                    const webLabel = document.createElement('span');
-                    webLabel.className = 'truncate';
-                    webLabel.textContent = web.replace(/^https?:\/\/(www\.)?/i, '');
-                    webLink.appendChild(webLabel);
-                    webLink.appendChild(createSvgIcon(
-                        'w-3.5 h-3.5 flex-shrink-0 text-indigo-400',
-                        [{ d: 'M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14', strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: '2' }],
-                        { stroke: 'currentColor' }
-                    ));
-                    tdWeb.appendChild(webLink);
-                } else {
-                    const dash = document.createElement('span');
-                    dash.className = 'text-slate-400';
-                    dash.textContent = '-';
-                    tdWeb.appendChild(dash);
-                }
-                tr.appendChild(tdWeb);
-
-                // 4. Decision Maker cell
+                // 2. Contact Person cell
                 const tdDm = document.createElement('td');
                 tdDm.className = 'px-4 py-3.5';
                 if (dm) {
@@ -1159,10 +1814,10 @@
                 }
                 tr.appendChild(tdDm);
 
-                // 5. Email cell (bound via addEventListener — no inline onclick string interpolation)
+                // 3. Email cell (bound via addEventListener — no inline onclick string interpolation)
                 const tdEmail = document.createElement('td');
                 tdEmail.className = 'px-4 py-3.5';
-                if (em) {
+                if (!isEmptyEmailPlaceholder(em)) {
                     const emailChip = document.createElement('span');
                     emailChip.className = 'font-mono text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 px-2 py-0.5 rounded-lg font-bold cursor-pointer group inline-flex items-center gap-1.5 transition-colors';
                     emailChip.title = 'Click to copy';
@@ -1184,11 +1839,41 @@
                 }
                 tr.appendChild(tdEmail);
 
-                // 6. Verification Badge cell
+                // 4. Email Status cell
                 const tdVer = document.createElement('td');
                 tdVer.className = 'px-4 py-3.5';
                 const verSpan = document.createElement('span');
-                if (ver.includes('Verified')) {
+                const verDetails = row.email_verification_details || null;
+                if (verDetails) {
+                    const tipParts = [verDetails.details, verDetails.method ? `Method: ${verDetails.method}` : '', verDetails.verified_at ? `Checked: ${verDetails.verified_at}` : ''].filter(Boolean);
+                    if (tipParts.length > 0) verSpan.title = tipParts.join(' | ');
+                }
+                const normStatus = getNormalizedRowEmailStatus(row);
+                if (normStatus === 'valid') {
+                    verSpan.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/80 flex items-center gap-1.5 w-fit shadow-xs';
+                    const dot = document.createElement('span');
+                    dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500';
+                    verSpan.appendChild(dot);
+                    verSpan.appendChild(document.createTextNode('Valid'));
+                } else if (normStatus === 'risky') {
+                    verSpan.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200/80 flex items-center gap-1.5 w-fit shadow-xs';
+                    const dot = document.createElement('span');
+                    dot.className = 'w-1.5 h-1.5 rounded-full bg-amber-500';
+                    verSpan.appendChild(dot);
+                    verSpan.appendChild(document.createTextNode('Risky'));
+                } else if (normStatus === 'invalid') {
+                    verSpan.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200/80 flex items-center gap-1.5 w-fit shadow-xs';
+                    const dot = document.createElement('span');
+                    dot.className = 'w-1.5 h-1.5 rounded-full bg-rose-500';
+                    verSpan.appendChild(dot);
+                    verSpan.appendChild(document.createTextNode('Invalid'));
+                } else if (normStatus === 'unknown') {
+                    verSpan.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-300/80 flex items-center gap-1.5 w-fit shadow-xs';
+                    const dot = document.createElement('span');
+                    dot.className = 'w-1.5 h-1.5 rounded-full bg-slate-400';
+                    verSpan.appendChild(dot);
+                    verSpan.appendChild(document.createTextNode('Unknown'));
+                } else if (ver.includes('Verified')) {
                     verSpan.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/80 flex items-center gap-1.5 w-fit shadow-xs';
                     const dot = document.createElement('span');
                     dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500';
@@ -1213,101 +1898,62 @@
                 tdVer.appendChild(verSpan);
                 tr.appendChild(tdVer);
 
-                // 7. Priority Badge cell
-                const tdPri = document.createElement('td');
-                tdPri.className = 'px-4 py-3.5';
-                const priority = String(row["Priority"] || opps.priority_tier || intel.priority_tier || "Manual Review");
-                const priSpan = document.createElement('span');
-                if (priority === "High Priority" || priority === "High") {
-                    priSpan.className = 'px-2 py-0.5 rounded-md text-[11px] font-bold bg-amber-50 text-amber-900 border border-amber-200';
-                } else if (priority === "Medium Priority" || priority === "Medium") {
-                    priSpan.className = 'px-2 py-0.5 rounded-md text-[11px] font-bold bg-indigo-50 text-indigo-800 border border-indigo-200';
-                } else if (priority === "Low Priority" || priority === "Low") {
-                    priSpan.className = 'px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-700 border border-slate-200';
+                // 5. Phone cell
+                const tdPhone = document.createElement('td');
+                tdPhone.className = 'px-4 py-3.5 font-mono text-slate-700 whitespace-nowrap';
+                tdPhone.textContent = phone || '-';
+                if (!phone) tdPhone.classList.add('text-slate-400');
+                tr.appendChild(tdPhone);
+
+                // 6. Website cell (strictly http/https only)
+                const tdWeb = document.createElement('td');
+                tdWeb.className = 'px-4 py-3.5';
+                const safeWebHref = sanitizeExternalUrl(web);
+                if (safeWebHref) {
+                    const webLink = document.createElement('a');
+                    webLink.href = safeWebHref;
+                    webLink.target = '_blank';
+                    webLink.rel = 'noopener noreferrer';
+                    webLink.className = 'text-indigo-600 hover:text-indigo-800 font-semibold hover:underline flex items-center gap-1 max-w-[150px] truncate';
+                    webLink.title = safeWebHref;
+                    const webLabel = document.createElement('span');
+                    webLabel.className = 'truncate';
+                    webLabel.textContent = web.replace(/^https?:\/\/(www\.)?/i, '');
+                    webLink.appendChild(webLabel);
+                    webLink.appendChild(createSvgIcon(
+                        'w-3.5 h-3.5 flex-shrink-0 text-indigo-400',
+                        [{ d: 'M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14', strokeLinecap: 'round', strokeLinejoin: 'round', strokeWidth: '2' }],
+                        { stroke: 'currentColor' }
+                    ));
+                    tdWeb.appendChild(webLink);
                 } else {
-                    priSpan.className = 'px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-600 border border-slate-200';
-                }
-                priSpan.textContent = priority;
-                tdPri.appendChild(priSpan);
-                tr.appendChild(tdPri);
-
-                // 8. Main Gap Summary cell
-                const tdGap = document.createElement('td');
-                tdGap.className = 'px-4 py-3.5';
-                const mainGap = String(row["Main Opportunity"] || opps.main_gap || "General Review");
-                const gapSpan = document.createElement('span');
-                gapSpan.className = 'text-[11px] font-medium text-slate-600 truncate max-w-[180px] block';
-                gapSpan.title = mainGap;
-                gapSpan.textContent = mainGap;
-                tdGap.appendChild(gapSpan);
-                tr.appendChild(tdGap);
-
-                // 9. Audit Button cell
-                const tdAudit = document.createElement('td');
-                tdAudit.className = 'px-4 py-3.5 text-center';
-                const auditBtn = document.createElement('button');
-                auditBtn.type = 'button';
-                auditBtn.className = 'px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-bold text-xs inline-flex items-center gap-1 transition-colors shadow-xs';
-                auditBtn.addEventListener('click', () => openIntelModal(idx));
-                const auditLabel = document.createElement('span');
-                auditLabel.textContent = 'Audit';
-                auditBtn.appendChild(auditLabel);
-                auditBtn.appendChild(createSvgIcon(
-                    'w-3 h-3 text-indigo-600',
-                    [{ d: 'M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z', fillRule: 'evenodd', clipRule: 'evenodd' }],
-                    { viewBox: '0 0 20 20', fill: 'currentColor' }
-                ));
-                tdAudit.appendChild(auditBtn);
-                tr.appendChild(tdAudit);
-
-                // 10. Socials cell (strictly http/https URLs only)
-                const tdSocial = document.createElement('td');
-                tdSocial.className = 'px-4 py-3.5';
-                const socialWrap = document.createElement('div');
-                socialWrap.className = 'flex items-center gap-1';
-                const safeFbHref = sanitizeExternalUrl(fb);
-                const safeLiHref = sanitizeExternalUrl(li);
-                if (safeFbHref) {
-                    const fbA = document.createElement('a');
-                    fbA.href = safeFbHref;
-                    fbA.target = '_blank';
-                    fbA.rel = 'noopener noreferrer';
-                    fbA.className = 'p-1 rounded bg-blue-50 text-[#1877F2] hover:bg-blue-100';
-                    fbA.title = 'Facebook';
-                    fbA.appendChild(createSvgIcon(
-                        'w-3.5 h-3.5 fill-current',
-                        [{ d: 'M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z' }],
-                        { fill: 'currentColor' }
-                    ));
-                    socialWrap.appendChild(fbA);
-                }
-                if (safeLiHref) {
-                    const liA = document.createElement('a');
-                    liA.href = safeLiHref;
-                    liA.target = '_blank';
-                    liA.rel = 'noopener noreferrer';
-                    liA.className = 'p-1 rounded bg-sky-50 text-[#0A66C2] hover:bg-sky-100';
-                    liA.title = 'LinkedIn';
-                    liA.appendChild(createSvgIcon(
-                        'w-3.5 h-3.5 fill-current',
-                        [{ d: 'M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z' }],
-                        { fill: 'currentColor' }
-                    ));
-                    socialWrap.appendChild(liA);
-                }
-                if (!safeFbHref && !safeLiHref) {
                     const dash = document.createElement('span');
                     dash.className = 'text-slate-400';
                     dash.textContent = '-';
-                    socialWrap.appendChild(dash);
+                    tdWeb.appendChild(dash);
                 }
-                tdSocial.appendChild(socialWrap);
-                tr.appendChild(tdSocial);
+                tr.appendChild(tdWeb);
+
+                // 7. City cell
+                const tdCity = document.createElement('td');
+                tdCity.className = 'px-4 py-3.5 text-slate-700 whitespace-nowrap';
+                tdCity.textContent = city || '-';
+                if (!city) tdCity.classList.add('text-slate-400');
+                tr.appendChild(tdCity);
+
+                // 8. State cell
+                const tdState = document.createElement('td');
+                tdState.className = 'px-4 py-3.5 text-slate-700 whitespace-nowrap';
+                tdState.textContent = state || '-';
+                if (!state) tdState.classList.add('text-slate-400');
+                tr.appendChild(tdState);
 
                 tbody.appendChild(tr);
             });
 
             document.getElementById('resultsTableContainer').classList.remove('hidden');
+            updateVerifyEmailsButtonState();
+            filterTableRows();
         }
 
         // Selection Management
@@ -1510,12 +2156,24 @@
         }
 
         function filterTableRows() {
-            const query = document.getElementById('tableSearchInput').value.toLowerCase();
+            const query = (document.getElementById('tableSearchInput')?.value || '').toLowerCase();
+            const statusFilter = document.getElementById('verificationStatusFilter')?.value || 'all';
             const rows = document.querySelectorAll('.table-row-item');
+            let visibleCount = 0;
             rows.forEach(r => {
                 const text = r.textContent.toLowerCase();
-                r.style.display = text.includes(query) ? '' : 'none';
+                const matchesText = !query || text.includes(query);
+                const matchesStatus = statusFilter === 'all' || (r.dataset.verifyStatus === statusFilter);
+                const visible = matchesText && matchesStatus;
+                r.style.display = visible ? '' : 'none';
+                if (visible) visibleCount++;
             });
+            const countEl = document.getElementById('tableRowCount');
+            if (countEl) {
+                countEl.textContent = (statusFilter !== 'all' || query)
+                    ? `${visibleCount} of ${rows.length} records`
+                    : `${rows.length} records`;
+            }
         }
 
         function copyText(str) {
@@ -1524,10 +2182,26 @@
             });
         }
 
+        function buildLeadTrackerExportRows(leads) {
+            return (leads || []).map(r => {
+                const em = getRowEmailValue(r);
+                return {
+                    "Business Name": r["Business Name"] || r["Name"] || "",
+                    "Contact Person": r["Contact Person"] || r["Decision Maker"] || r[detectedDmCol] || "",
+                    "Email": em,
+                    "Email Status": r["Email Status"] || r["Email Verification"] || r[detectedVerCol] || (isEmptyEmailPlaceholder(em) ? "Not Found" : "Unverified"),
+                    "Phone": r["Phone"] || r["Phone Number"] || r[detectedPhoneCol] || "",
+                    "Website": r["Website"] || r[detectedWebsiteCol] || "",
+                    "City": r["City"] || r[detectedCityCol] || "Unknown",
+                    "State": r["State"] || r[detectedStateCol] || "Unknown"
+                };
+            });
+        }
+
         function copyTableToClipboard() {
             const data = getLeadsForExport();
             if(!data || !data.length) return;
-            const csv = Papa.unparse(data);
+            const csv = Papa.unparse(buildLeadTrackerExportRows(data), { columns: LEAD_TRACKER_EXPORT_COLUMNS });
             navigator.clipboard.writeText(csv).then(() => {
                 showToast(`Copied ${data.length} records (CSV) to clipboard!`);
             });
@@ -1562,15 +2236,19 @@
                     "Facebook": row["Facebook"] || "",
                     "Instagram": row["Instagram"] || "",
                     "LinkedIn": row["LinkedIn"] || "",
+                    "email_verification_details": row.email_verification_details || null,
                     "intelligence": row.intelligence || null
                 };
             });
         }
 
-        // Format A: Lead Tracker CSV Export (16 Essential Fields)
+        // Format A: Lead Tracker CSV Export (8 Essential Fields)
         async function downloadFormatA() {
             const leads = getLeadsForExport();
             if (!leads || leads.length === 0) return alert("No lead records available to export.");
+
+            const authCheck = await ensureUiAuthenticated();
+            if (!authCheck.ok) return;
 
             try {
                 const res = await fetch('/api/export-csv', {
@@ -1589,25 +2267,17 @@
                     showToast(`Downloaded Lead Tracker CSV (${leads.length} leads)`);
                     return;
                 } else if (res.status === 401 || res.status === 503) {
-                    showToast("API authentication required — enter a valid API Key.", "🔒");
+                    handleAuthFailureState();
+                    showToast("Authentication required — unlock your session with a valid Access Key.", "🔒");
                     return;
                 }
             } catch (e) {
                 console.error("Format A export error", e);
             }
 
-            // Fallback CSV download with exact 16 columns
-            const cols = [
-                "Business Name", "Category", "City", "State", "Phone",
-                "Website", "Google Maps URL", "Rating", "Reviews", "Contact Person",
-                "Email", "Email Status", "Priority", "Lead Score", "Main Opportunity", "Notes"
-            ];
-            const flattened = leads.map(r => {
-                const row = {};
-                cols.forEach(c => row[c] = r[c] !== undefined ? r[c] : "");
-                return row;
-            });
-            const csv = Papa.unparse(flattened);
+            // Fallback CSV download with exact 8 Lead Tracker columns
+            const flattened = buildLeadTrackerExportRows(leads);
+            const csv = Papa.unparse(flattened, { columns: LEAD_TRACKER_EXPORT_COLUMNS });
             const blob = new Blob(["\uFEFF" + csv], { type: 'text/csv;charset=utf-8;' });
             const link = document.createElement("a");
             link.href = URL.createObjectURL(blob);
@@ -1620,6 +2290,9 @@
         async function downloadFormatB() {
             const leads = getLeadsForExport();
             if (!leads || leads.length === 0) return alert("No lead records available to export.");
+
+            const authCheck = await ensureUiAuthenticated();
+            if (!authCheck.ok) return;
 
             try {
                 const res = await fetch('/api/export-excel', {
@@ -1638,7 +2311,8 @@
                     showToast(`Downloaded 3-Sheet Workbook (${leads.length} leads)`);
                     return;
                 } else if (res.status === 401 || res.status === 503) {
-                    showToast("API authentication required — enter a valid API Key.", "🔒");
+                    handleAuthFailureState();
+                    showToast("Authentication required — unlock your session with a valid Access Key.", "🔒");
                     return;
                 }
             } catch (e) {

@@ -74,9 +74,13 @@ class SharedSlidingWindowRateLimiter:
         self._cached_redis = None
         self._cached_redis_url = ""
 
-    def _get_limits(self) -> tuple[int, int]:
-        max_req = get_int_env("RATE_LIMIT_MAX_REQUESTS", 30, min_value=1, max_value=10000)
+    def _get_limits(self, bucket: str = "write") -> tuple[int, int]:
         window_sec = get_int_env("RATE_LIMIT_WINDOW_SECONDS", 60, min_value=1, max_value=3600)
+        if bucket == "read":
+            max_req = get_int_env("RATE_LIMIT_READ_MAX_REQUESTS", 120, min_value=1, max_value=10000)
+            read_window = get_int_env("RATE_LIMIT_READ_WINDOW_SECONDS", window_sec, min_value=1, max_value=3600)
+            return max_req, read_window
+        max_req = get_int_env("RATE_LIMIT_MAX_REQUESTS", 30, min_value=1, max_value=10000)
         return max_req, window_sec
 
     def _should_fail_closed(self) -> bool:
@@ -171,10 +175,21 @@ class SharedSlidingWindowRateLimiter:
         # Contention exceeded bounded CAS retries — fail closed for safety
         return False, 1
 
-    def _check_redis(self, r_client, client_key: str, max_req: int, window_sec: int) -> tuple[bool, int]:
+    def _check_redis(
+        self,
+        r_client,
+        client_key: str,
+        max_req: int,
+        window_sec: int,
+        bucket: str = "write",
+    ) -> tuple[bool, int]:
         now = time.time()
         cutoff = now - window_sec
-        key = f"leadhunter:ratelimit:{client_key}"
+        key = (
+            f"leadhunter:ratelimit:read:{client_key}"
+            if bucket == "read"
+            else f"leadhunter:ratelimit:{client_key}"
+        )
         member = f"{now:.6f}:{uuid.uuid4().hex[:10]}"
 
         try:
@@ -199,9 +214,11 @@ class SharedSlidingWindowRateLimiter:
                 )
             raise
 
-    def check(self, client_key: str) -> tuple[bool, int]:
-        max_req, window_sec = self._get_limits()
+    def check(self, client_key: str, *, bucket: str = "write") -> tuple[bool, int]:
+        normalized_bucket = "read" if bucket == "read" else "write"
+        max_req, window_sec = self._get_limits(normalized_bucket)
         fail_closed = self._should_fail_closed()
+        mem_key = f"read:{client_key}" if normalized_bucket == "read" else client_key
 
         try:
             r_client = self._get_redis()
@@ -209,23 +226,23 @@ class SharedSlidingWindowRateLimiter:
             logger.error("Redis rate limiter client initialization failed: %s", exc)
             if fail_closed:
                 return False, window_sec
-            return self._check_memory(client_key, max_req, window_sec)
+            return self._check_memory(mem_key, max_req, window_sec)
 
         if r_client is not None:
             try:
-                return self._check_redis(r_client, client_key, max_req, window_sec)
+                return self._check_redis(r_client, client_key, max_req, window_sec, normalized_bucket)
             except Exception as exc:
                 logger.error("Redis rate limiter unavailable (%s); fail_closed=%s", exc, fail_closed)
                 if fail_closed:
                     return False, window_sec
-                return self._check_memory(client_key, max_req, window_sec)
+                return self._check_memory(mem_key, max_req, window_sec)
 
         # No Redis configured: production fails closed (never silently downgrades to per-process memory)
         if is_production_env() and fail_closed:
             logger.error("Redis rate limiter is not configured in production; failing closed.")
             return False, window_sec
 
-        return self._check_memory(client_key, max_req, window_sec)
+        return self._check_memory(mem_key, max_req, window_sec)
 
     def reset(self):
         with self._lock:

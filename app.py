@@ -13,6 +13,7 @@ import random
 import hashlib
 import logging
 import secrets
+import threading
 from functools import wraps
 from urllib.parse import urlparse
 from flask import Flask, render_template, request, jsonify, send_file, g, make_response
@@ -20,6 +21,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from whitenoise import WhiteNoise
 
 from services.browser_runtime import check_chromium_available
+from services.email_verifier import get_email_verification_provider
 from services.job_queue import (
     JobNotFoundError,
     JobReservationConflictError,
@@ -29,9 +31,11 @@ from services.job_queue import (
     check_redis_health,
     check_worker_health,
     count_active_workers,
+    enqueue_email_verification_job,
     enqueue_scrape_job,
     get_job_result_payload,
     get_job_status_payload,
+    get_redis_connection,
 )
 from services.rate_limiter import SharedSlidingWindowRateLimiter
 from services.runtime_config import (
@@ -113,14 +117,113 @@ MAX_TEXT_FIELD_LENGTH = 200
 MAX_RESULTS_MIN = 1
 MAX_RESULTS_MAX = 50
 MAX_EXPORT_LEADS = 1000
+MAX_VERIFY_EMAILS_BATCH = 500
+MAX_EMAIL_LENGTH = 320
 SAFE_ID_PATTERN = re.compile(r'^[A-Za-z0-9_.:-]{1,128}$')
 
 rate_limiter = SharedSlidingWindowRateLimiter()
 
 UI_SESSION_COOKIE_NAME = "lh_ui_session"
 UI_CSRF_HEADER_NAME = "X-CSRF-Token"
+UI_SESSION_MODE_AUTO = "auto"
+UI_SESSION_MODE_EXPLICIT = "explicit"
+_UI_TOKEN_PURPOSES = {
+    UI_SESSION_MODE_AUTO: ("session", "csrf"),
+    UI_SESSION_MODE_EXPLICIT: ("explicit-session", "explicit-csrf"),
+}
+_UI_REVOKED_KEY_PREFIX = "leadhunter:ui_revoked:"
 _HEX_32_RE = re.compile(r'^[0-9a-f]{32}$')
 _HEX_64_RE = re.compile(r'^[0-9a-f]{64}$')
+_revoked_ui_sessions_lock = threading.Lock()
+_revoked_ui_sessions: dict[str, int] = {}
+
+
+def _prune_revoked_ui_sessions_locked(current_ts: int) -> None:
+    if len(_revoked_ui_sessions) > 1000:
+        expired = [k for k, exp in _revoked_ui_sessions.items() if exp <= current_ts]
+        for k in expired:
+            _revoked_ui_sessions.pop(k, None)
+
+
+def _is_redis_revocation_configured() -> bool:
+    """Explicitly checks whether Redis is configured via `REDIS_URL` (never inferred from exceptions)."""
+    return bool(get_redis_url())
+
+
+def _revoke_ui_session_nonce(nonce_hex: str, expires_at: int, *, now: int | None = None) -> bool:
+    """
+    Marks an explicit UI session nonce as revoked in both process memory and Redis (when configured).
+    - Never infers Redis configuration state from `QueueUnavailableError` alone.
+    - Whenever `REDIS_URL` is configured (local Docker staging OR production), any failure to
+      obtain a Redis connection or persist revocation fails closed (`False`).
+    - Process-local revocation fallback is permitted ONLY when Redis is genuinely unconfigured
+      in a non-production single-process development/test environment.
+    """
+    if not _HEX_32_RE.match(nonce_hex or ""):
+        return False
+    current_ts = int(time.time()) if now is None else int(now)
+    remaining_ttl = max(1, int(expires_at) - current_ts)
+    with _revoked_ui_sessions_lock:
+        _revoked_ui_sessions[nonce_hex] = current_ts + remaining_ttl
+        _prune_revoked_ui_sessions_locked(current_ts)
+
+    redis_configured = _is_redis_revocation_configured()
+    try:
+        conn = get_redis_connection()
+    except QueueUnavailableError as exc:
+        if redis_configured or is_production_env():
+            logger.error("UI session revocation failed closed (redis_configured=%s): %s", redis_configured, exc)
+            return False
+        return True
+    except Exception as exc:
+        logger.error("UI session revocation connection failed closed (%s)", exc.__class__.__name__)
+        return False
+
+    try:
+        conn.set(f"{_UI_REVOKED_KEY_PREFIX}{nonce_hex}", "1", ex=remaining_ttl)
+        return True
+    except Exception as exc:
+        logger.error("Failed to persist UI session revocation to Redis: %s", exc.__class__.__name__)
+        return False
+
+
+def _is_ui_session_revoked(nonce_hex: str, *, now: int | None = None) -> bool:
+    """
+    Checks whether an explicit UI session nonce has been revoked.
+    - Process-local revocation cache provides bounded fast-path rejection for locally revoked nonces.
+    - Never infers Redis configuration state from `QueueUnavailableError` alone.
+    - Whenever `REDIS_URL` is configured (local Docker staging OR production), Redis is authoritative
+      across all web workers: any connection/init/lookup failure ALWAYS fails closed (`True`).
+    - Process-local fallback is permitted ONLY when Redis is genuinely unconfigured in a
+      non-production single-process development/test environment.
+    """
+    if not _HEX_32_RE.match(nonce_hex or ""):
+        return True
+    current_ts = int(time.time()) if now is None else int(now)
+    with _revoked_ui_sessions_lock:
+        exp = _revoked_ui_sessions.get(nonce_hex)
+        if exp is not None:
+            if exp > current_ts:
+                return True
+            _revoked_ui_sessions.pop(nonce_hex, None)
+
+    redis_configured = _is_redis_revocation_configured()
+    try:
+        conn = get_redis_connection()
+    except QueueUnavailableError as exc:
+        if redis_configured or is_production_env():
+            logger.error("UI session revocation check failed closed (redis_configured=%s): %s", redis_configured, exc)
+            return True
+        return False
+    except Exception as exc:
+        logger.error("UI session revocation connection check failed closed (%s)", exc.__class__.__name__)
+        return True
+
+    try:
+        return bool(conn.exists(f"{_UI_REVOKED_KEY_PREFIX}{nonce_hex}"))
+    except Exception as exc:
+        logger.error("UI session revocation lookup failed closed (%s)", exc.__class__.__name__)
+        return True
 
 
 def _sign_ui_token(secret_key: str, purpose: str, payload: str) -> str:
@@ -129,14 +232,66 @@ def _sign_ui_token(secret_key: str, purpose: str, payload: str) -> str:
     return hmac.new(secret_key.encode("utf-8"), msg, hashlib.sha256).hexdigest()
 
 
-def _create_ui_session_tokens(secret_key: str, now: int | None = None) -> tuple[str, str]:
+def _create_ui_session_tokens(
+    secret_key: str,
+    now: int | None = None,
+    *,
+    mode: str = UI_SESSION_MODE_AUTO,
+) -> tuple[str, str]:
     """Creates a signed HttpOnly session cookie value and a separate paired CSRF token."""
+    if mode not in _UI_TOKEN_PURPOSES:
+        raise ValueError(f"Unsupported UI session mode: {mode}")
+    session_purpose, csrf_purpose = _UI_TOKEN_PURPOSES[mode]
     nonce_hex = secrets.token_hex(16)
     issued_at = int(time.time()) if now is None else int(now)
     payload = f"{nonce_hex}.{issued_at}"
-    session_sig = _sign_ui_token(secret_key, "session", payload)
-    csrf_token = _sign_ui_token(secret_key, "csrf", payload)
+    session_sig = _sign_ui_token(secret_key, session_purpose, payload)
+    csrf_token = _sign_ui_token(secret_key, csrf_purpose, payload)
     return f"{payload}.{session_sig}", csrf_token
+
+
+def _parse_and_verify_ui_session_cookie(
+    cookie_val: str,
+    secret_key: str,
+    *,
+    mode: str = UI_SESSION_MODE_AUTO,
+    now: int | None = None,
+    check_revocation: bool = True,
+) -> tuple[bool, str, str, int]:
+    """
+    Validates a signed UI session cookie's syntax, domain-separated HMAC, expiry, and revocation.
+    Returns `(is_valid, expected_csrf_token, nonce_hex, expires_at)`.
+    """
+    if not cookie_val or not secret_key or mode not in _UI_TOKEN_PURPOSES:
+        return False, "", "", 0
+    parts = cookie_val.split(".")
+    if len(parts) != 3:
+        return False, "", "", 0
+    nonce_hex, issued_at_str, sig_hex = parts
+    if not _HEX_32_RE.match(nonce_hex) or not _HEX_64_RE.match(sig_hex):
+        return False, "", "", 0
+    try:
+        issued_at = int(issued_at_str)
+    except ValueError:
+        return False, "", "", 0
+
+    current_ts = int(time.time()) if now is None else int(now)
+    ttl = get_ui_session_ttl_seconds()
+    if issued_at > current_ts + 60 or (current_ts - issued_at) > ttl:
+        return False, "", "", 0
+
+    session_purpose, csrf_purpose = _UI_TOKEN_PURPOSES[mode]
+    payload = f"{nonce_hex}.{issued_at_str}"
+    expected_sig = _sign_ui_token(secret_key, session_purpose, payload)
+    if not hmac.compare_digest(sig_hex, expected_sig):
+        return False, "", "", 0
+
+    if check_revocation and mode == UI_SESSION_MODE_EXPLICIT and _is_ui_session_revoked(nonce_hex, now=current_ts):
+        return False, "", "", 0
+
+    expected_csrf = _sign_ui_token(secret_key, csrf_purpose, payload)
+    expires_at = issued_at + ttl + 60
+    return True, expected_csrf, nonce_hex, expires_at
 
 
 def _verify_ui_session_and_csrf(
@@ -145,32 +300,17 @@ def _verify_ui_session_and_csrf(
     secret_key: str,
     *,
     now: int | None = None,
+    mode: str = UI_SESSION_MODE_AUTO,
 ) -> bool:
-    """Verifies signed UI session cookie integrity, expiry, and paired CSRF token in constant time."""
+    """Verifies signed UI session cookie integrity, expiry, revocation, and paired CSRF token in constant time."""
     if not cookie_val or not csrf_val or not secret_key:
         return False
-    parts = cookie_val.split(".")
-    if len(parts) != 3:
+    valid, expected_csrf, _nonce, _exp = _parse_and_verify_ui_session_cookie(
+        cookie_val, secret_key, mode=mode, now=now
+    )
+    if not valid:
         return False
-    nonce_hex, issued_at_str, sig_hex = parts
-    if not _HEX_32_RE.match(nonce_hex) or not _HEX_64_RE.match(sig_hex):
-        return False
-    try:
-        issued_at = int(issued_at_str)
-    except ValueError:
-        return False
-
-    current_ts = int(time.time()) if now is None else int(now)
-    ttl = get_ui_session_ttl_seconds()
-    if issued_at > current_ts + 60 or (current_ts - issued_at) > ttl:
-        return False
-
-    payload = f"{nonce_hex}.{issued_at_str}"
-    expected_sig = _sign_ui_token(secret_key, "session", payload)
-    expected_csrf = _sign_ui_token(secret_key, "csrf", payload)
-    sig_ok = hmac.compare_digest(sig_hex, expected_sig)
-    csrf_ok = hmac.compare_digest(csrf_val, expected_csrf)
-    return sig_ok and csrf_ok
+    return hmac.compare_digest(csrf_val, expected_csrf)
 
 
 def _normalize_origin(raw_url: str, *, strict_origin_only: bool = False) -> tuple[str, str, int] | None:
@@ -260,62 +400,76 @@ def _extract_provided_api_key() -> str:
     return ''
 
 
-def require_api_auth_and_rate_limit(fn):
+def require_api_auth_and_rate_limit(fn=None, *, rate_limit_bucket: str = "write"):
     """
     Enforces fail-closed dual-mode authentication and per-client rate limiting on API endpoints:
     1. Programmatic clients: explicit `X-API-Key` or `Authorization: Bearer <key>` header.
-    2. Built-in Web UI (only when `UI_AUTO_SESSION` is enabled for this request): signed
-       `HttpOnly; SameSite=Strict` session cookie paired with a matching `X-CSRF-Token` header
-       and strict same-origin validation.
+    2. Built-in Web UI: signed `HttpOnly; SameSite=Strict` session cookie paired with a
+       matching `X-CSRF-Token` header and strict same-origin validation (auto-session when
+       enabled, or explicit-login session minted via `POST /api/ui-session`).
+    Rate limiting separates expensive/state-changing routes (`rate_limit_bucket="write"`)
+    from lightweight read-only job polling routes (`rate_limit_bucket="read"`).
     """
-    @wraps(fn)
-    def wrapper(*args, **kwargs):
-        # 1. Fail-closed server secret check (required for BOTH modes)
-        expected_key = get_configured_api_key()
-        if not expected_key:
-            logger.error("API access blocked: LEADHUNTER_API_KEY is not configured.")
-            return jsonify({
-                "success": False,
-                "error": "Service authentication is not configured."
-            }), 503
+    def decorator(target_fn):
+        @wraps(target_fn)
+        def wrapper(*args, **kwargs):
+            # 1. Fail-closed server secret check (required for BOTH modes)
+            expected_key = get_configured_api_key()
+            if not expected_key:
+                logger.error("API access blocked: LEADHUNTER_API_KEY is not configured.")
+                return jsonify({
+                    "success": False,
+                    "error": "Service authentication is not configured."
+                }), 503
 
-        provided_key = _extract_provided_api_key()
-        authenticated = False
+            provided_key = _extract_provided_api_key()
+            authenticated = False
 
-        if provided_key:
-            # Explicit API key header was sent: validate strictly without cookie fallback
-            authenticated = hmac.compare_digest(provided_key, expected_key)
-        elif is_ui_auto_session_enabled(
-            remote_addr=request.remote_addr,
-            host_header=request.host,
-            proxy_secret_header=request.headers.get(get_trusted_auth_proxy_header_name()),
-        ):
-            # Built-in UI automatic session: require same-origin + signed HttpOnly cookie + CSRF header
-            cookie_val = (request.cookies.get(UI_SESSION_COOKIE_NAME) or "").strip()
-            csrf_val = (request.headers.get(UI_CSRF_HEADER_NAME) or "").strip()
-            if cookie_val and csrf_val and _is_same_origin_ui_request():
-                authenticated = _verify_ui_session_and_csrf(cookie_val, csrf_val, expected_key)
+            if provided_key:
+                # Explicit API key header was sent: validate strictly without cookie fallback
+                authenticated = hmac.compare_digest(provided_key, expected_key)
+            else:
+                # Built-in Web UI session: require same-origin + signed HttpOnly cookie + paired CSRF header
+                cookie_val = (request.cookies.get(UI_SESSION_COOKIE_NAME) or "").strip()
+                csrf_val = (request.headers.get(UI_CSRF_HEADER_NAME) or "").strip()
+                if cookie_val and csrf_val and _is_same_origin_ui_request():
+                    if is_ui_auto_session_enabled(
+                        remote_addr=request.remote_addr,
+                        host_header=request.host,
+                        proxy_secret_header=request.headers.get(get_trusted_auth_proxy_header_name()),
+                    ):
+                        authenticated = _verify_ui_session_and_csrf(
+                            cookie_val, csrf_val, expected_key, mode=UI_SESSION_MODE_AUTO
+                        )
+                    if not authenticated:
+                        authenticated = _verify_ui_session_and_csrf(
+                            cookie_val, csrf_val, expected_key, mode=UI_SESSION_MODE_EXPLICIT
+                        )
 
-        if not authenticated:
-            return jsonify({
-                "success": False,
-                "error": "Unauthorized: valid API key required."
-            }), 401
+            if not authenticated:
+                return jsonify({
+                    "success": False,
+                    "error": "Unauthorized: valid API key required."
+                }), 401
 
-        # 2. Per-client sliding-window rate limit (keyed on peer/trusted-proxy remote_addr)
-        client_ip = request.remote_addr or "unknown"
-        allowed, retry_after = rate_limiter.check(client_ip)
-        if not allowed:
-            resp = jsonify({
-                "success": False,
-                "error": "Rate limit exceeded. Please try again later."
-            })
-            resp.status_code = 429
-            resp.headers['Retry-After'] = str(retry_after)
-            return resp
+            # 2. Per-client sliding-window rate limit (keyed on peer/trusted-proxy remote_addr)
+            client_ip = request.remote_addr or "unknown"
+            allowed, retry_after = rate_limiter.check(client_ip, bucket=rate_limit_bucket)
+            if not allowed:
+                resp = jsonify({
+                    "success": False,
+                    "error": "Rate limit exceeded. Please try again later."
+                })
+                resp.status_code = 429
+                resp.headers['Retry-After'] = str(retry_after)
+                return resp
 
-        return fn(*args, **kwargs)
-    return wrapper
+            return target_fn(*args, **kwargs)
+        return wrapper
+
+    if fn is not None:
+        return decorator(fn)
+    return decorator
 
 
 def _parse_json_object():
@@ -419,6 +573,31 @@ def get_random_delay():
     return random.uniform(1.2, 2.5)
 
 
+def _set_ui_session_cookie(resp, session_cookie_val: str) -> None:
+    resp.set_cookie(
+        UI_SESSION_COOKIE_NAME,
+        session_cookie_val,
+        max_age=get_ui_session_ttl_seconds(),
+        httponly=True,
+        samesite="Strict",
+        secure=(request.is_secure or is_production_env()),
+        path="/",
+    )
+
+
+def _clear_ui_session_cookie(resp) -> None:
+    resp.set_cookie(
+        UI_SESSION_COOKIE_NAME,
+        "",
+        max_age=0,
+        expires=0,
+        httponly=True,
+        samesite="Strict",
+        secure=(request.is_secure or is_production_env()),
+        path="/",
+    )
+
+
 @app.route('/')
 def index():
     ui_auto_session = is_ui_auto_session_enabled(
@@ -428,29 +607,154 @@ def index():
     )
     expected_key = get_configured_api_key()
     ui_csrf_token = ""
+    ui_authenticated = False
     session_cookie_val = None
 
     if ui_auto_session and expected_key:
-        session_cookie_val, ui_csrf_token = _create_ui_session_tokens(expected_key)
+        session_cookie_val, ui_csrf_token = _create_ui_session_tokens(
+            expected_key, mode=UI_SESSION_MODE_AUTO
+        )
+        ui_authenticated = True
+    elif expected_key:
+        existing_cookie = (request.cookies.get(UI_SESSION_COOKIE_NAME) or "").strip()
+        if existing_cookie:
+            valid_explicit, derived_csrf, _nonce, _exp = _parse_and_verify_ui_session_cookie(
+                existing_cookie, expected_key, mode=UI_SESSION_MODE_EXPLICIT
+            )
+            if valid_explicit:
+                ui_csrf_token = derived_csrf
+                ui_authenticated = True
 
     resp = make_response(
         render_template(
             'index.html',
             ui_auto_session=ui_auto_session,
+            ui_authenticated=ui_authenticated,
             ui_csrf_token=ui_csrf_token,
         )
     )
     if session_cookie_val:
-        resp.set_cookie(
-            UI_SESSION_COOKIE_NAME,
-            session_cookie_val,
-            max_age=get_ui_session_ttl_seconds(),
-            httponly=True,
-            samesite="Strict",
-            secure=(request.is_secure or is_production_env()),
-            path="/",
-        )
+        _set_ui_session_cookie(resp, session_cookie_val)
+    if session_cookie_val or ui_authenticated:
         resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route('/api/ui-session', methods=['POST'])
+def create_ui_session_api():
+    """
+    Exchanges a valid operator API key (in `X-API-Key` or `Authorization: Bearer`)
+    for a domain-separated HttpOnly signed UI session cookie + in-memory CSRF token,
+    avoiding any storage of `LEADHUNTER_API_KEY` in browser storage.
+    """
+    expected_key = get_configured_api_key()
+    if not expected_key:
+        logger.error("UI session login blocked: LEADHUNTER_API_KEY is not configured.")
+        return jsonify({
+            "success": False,
+            "error": "Service authentication is not configured."
+        }), 503
+
+    client_ip = request.remote_addr or "unknown"
+    allowed, retry_after = rate_limiter.check(client_ip)
+    if not allowed:
+        resp = jsonify({
+            "success": False,
+            "error": "Rate limit exceeded. Please try again later."
+        })
+        resp.status_code = 429
+        resp.headers["Retry-After"] = str(retry_after)
+        return resp
+
+    if not _is_same_origin_ui_request():
+        return jsonify({
+            "success": False,
+            "error": "Forbidden: same-origin request required."
+        }), 403
+
+    provided_key = _extract_provided_api_key()
+    if not provided_key or not hmac.compare_digest(provided_key, expected_key):
+        return jsonify({
+            "success": False,
+            "error": "Unauthorized: valid API key required."
+        }), 401
+
+    session_cookie_val, csrf_token = _create_ui_session_tokens(
+        expected_key, mode=UI_SESSION_MODE_EXPLICIT
+    )
+    resp = make_response(
+        jsonify({
+            "success": True,
+            "authenticated": True,
+            "csrf_token": csrf_token,
+            "expires_in": get_ui_session_ttl_seconds(),
+        }),
+        200,
+    )
+    _set_ui_session_cookie(resp, session_cookie_val)
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route('/api/ui-session', methods=['DELETE'])
+def delete_ui_session_api():
+    """
+    Revokes and clears an explicit UI session cookie.
+    Requires strict same-origin validation and, when an active session cookie is present,
+    a valid paired `X-CSRF-Token` header to prevent logout CSRF.
+    """
+    if not _is_same_origin_ui_request():
+        return jsonify({
+            "success": False,
+            "error": "Forbidden: same-origin request required."
+        }), 403
+
+    expected_key = get_configured_api_key()
+    cookie_val = (request.cookies.get(UI_SESSION_COOKIE_NAME) or "").strip()
+    csrf_val = (request.headers.get(UI_CSRF_HEADER_NAME) or "").strip()
+
+    if cookie_val and expected_key:
+        valid_explicit, expected_explicit_csrf, nonce_hex, expires_at = _parse_and_verify_ui_session_cookie(
+            cookie_val, expected_key, mode=UI_SESSION_MODE_EXPLICIT, check_revocation=False
+        )
+        if valid_explicit:
+            if not csrf_val or not hmac.compare_digest(csrf_val, expected_explicit_csrf):
+                return jsonify({
+                    "success": False,
+                    "error": "Unauthorized: valid CSRF token required."
+                }), 401
+            revoked_ok = _revoke_ui_session_nonce(nonce_hex, expires_at)
+            if not revoked_ok:
+                resp = make_response(
+                    jsonify({
+                        "success": False,
+                        "authenticated": False,
+                        "error": "Session revocation store temporarily unavailable.",
+                    }),
+                    503,
+                )
+                _clear_ui_session_cookie(resp)
+                resp.headers["Cache-Control"] = "no-store"
+                return resp
+        else:
+            valid_auto, expected_auto_csrf, _auto_nonce, _auto_exp = _parse_and_verify_ui_session_cookie(
+                cookie_val, expected_key, mode=UI_SESSION_MODE_AUTO
+            )
+            if valid_auto and (not csrf_val or not hmac.compare_digest(csrf_val, expected_auto_csrf)):
+                return jsonify({
+                    "success": False,
+                    "error": "Unauthorized: valid CSRF token required."
+                }), 401
+
+    resp = make_response(
+        jsonify({
+            "success": True,
+            "authenticated": False,
+        }),
+        200,
+    )
+    _clear_ui_session_cookie(resp)
+    resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
@@ -603,8 +907,120 @@ def create_job_api():
         }), 500
 
 
-@app.route('/api/jobs/<job_id>', methods=['GET'])
+@app.route('/api/jobs/verify-emails', methods=['POST'])
 @require_api_auth_and_rate_limit
+def create_email_verification_job_api():
+    """
+    Asynchronous batch email verification job submission endpoint (Redis + RQ).
+    Processes lead records with unverified emails using the configured verification provider.
+    """
+    data, err_resp = _parse_json_object()
+    if err_resp:
+        return err_resp
+
+    raw_items = data.get("items")
+    if not isinstance(raw_items, list) or not raw_items:
+        return jsonify({
+            "success": False,
+            "error": "Field 'items' must be a non-empty list of email verification entries.",
+        }), 400
+    if len(raw_items) > MAX_VERIFY_EMAILS_BATCH:
+        return jsonify({
+            "success": False,
+            "error": f"Maximum batch size of {MAX_VERIFY_EMAILS_BATCH} emails exceeded.",
+        }), 400
+
+    cleaned_items: list[dict] = []
+    for idx, entry in enumerate(raw_items):
+        if not isinstance(entry, dict):
+            return jsonify({"success": False, "error": f"Item at index {idx} must be a JSON object."}), 400
+        raw_row_idx = entry.get("row_index", idx)
+        if isinstance(raw_row_idx, bool) or not isinstance(raw_row_idx, int) or raw_row_idx < 0:
+            return jsonify({"success": False, "error": f"Item at index {idx} has invalid 'row_index'."}), 400
+        raw_email = entry.get("email")
+        if not isinstance(raw_email, str) or not raw_email.strip():
+            return jsonify({"success": False, "error": f"Item at index {idx} requires a non-empty 'email' string."}), 400
+        cleaned_email = raw_email.strip()
+        if len(cleaned_email) > MAX_EMAIL_LENGTH:
+            return jsonify({
+                "success": False,
+                "error": f"Item at index {idx} exceeds maximum email length of {MAX_EMAIL_LENGTH} characters.",
+            }), 400
+        cleaned_items.append({"row_index": raw_row_idx, "email": cleaned_email})
+
+    raw_provider = data.get("provider")
+    provider_name = None
+    if raw_provider is not None:
+        if not isinstance(raw_provider, str) or len(raw_provider.strip()) > 64:
+            return jsonify({"success": False, "error": "Field 'provider' must be a short string."}), 400
+        provider_name = raw_provider.strip().lower() or None
+        if provider_name:
+            try:
+                get_email_verification_provider(provider_name)
+            except ValueError as exc:
+                return jsonify({"success": False, "error": str(exc)}), 400
+
+    try:
+        enqueued = enqueue_email_verification_job(
+            items=cleaned_items,
+            provider_name=provider_name,
+        )
+        job_id = enqueued["job_id"]
+        return jsonify({
+            "success": True,
+            "job_id": job_id,
+            "job_type": "email_verification",
+            "status": enqueued["status"],
+            "deduplicated": enqueued["deduplicated"],
+            "workers_online": enqueued["workers_online"],
+            "total_items": len(cleaned_items),
+            "poll_url": f"/api/jobs/{job_id}",
+            "result_url": f"/api/jobs/{job_id}/result",
+        }), 202
+    except JobReservationConflictError:
+        resp = jsonify({
+            "success": False,
+            "code": "reservation_in_progress",
+            "retryable": True,
+            "error": "An identical email verification batch is currently being queued. Please retry shortly.",
+        })
+        resp.status_code = 409
+        resp.headers["Retry-After"] = "1"
+        return resp
+    except JobReservationOwnershipError:
+        resp = jsonify({
+            "success": False,
+            "code": "reservation_ownership_lost",
+            "retryable": True,
+            "error": "Email verification submission could not be confirmed. Please retry.",
+        })
+        resp.status_code = 409
+        resp.headers["Retry-After"] = "1"
+        return resp
+    except QueueUnavailableError:
+        logger.error("Failed to enqueue email verification batch: Redis queue unavailable")
+        return jsonify({
+            "success": False,
+            "code": "queue_unavailable",
+            "error": "Background job queue is temporarily unavailable.",
+        }), 503
+    except WorkerUnavailableError:
+        logger.error("Failed to enqueue email verification batch: no active RQ workers")
+        return jsonify({
+            "success": False,
+            "code": "worker_unavailable",
+            "error": "No background workers are currently available to verify emails.",
+        }), 503
+    except Exception:
+        logger.exception("Internal error enqueueing email verification batch")
+        return jsonify({
+            "success": False,
+            "error": "Internal server error while scheduling email verification batch.",
+        }), 500
+
+
+@app.route('/api/jobs/<job_id>', methods=['GET'])
+@require_api_auth_and_rate_limit(rate_limit_bucket="read")
 def get_job_status_api(job_id: str):
     """Returns status and progress metadata for an asynchronous scrape/enrichment job."""
     if not SAFE_ID_PATTERN.match(job_id or ""):
@@ -627,7 +1043,7 @@ def get_job_status_api(job_id: str):
 
 
 @app.route('/api/jobs/<job_id>/result', methods=['GET'])
-@require_api_auth_and_rate_limit
+@require_api_auth_and_rate_limit(rate_limit_bucket="read")
 def get_job_result_api(job_id: str):
     """Returns the completed result payload for an asynchronous scrape/enrichment job."""
     if not SAFE_ID_PATTERN.match(job_id or ""):
@@ -931,7 +1347,7 @@ def export_excel_api():
 @app.route('/api/export-csv', methods=['POST'])
 @require_api_auth_and_rate_limit
 def export_csv_api():
-    """Generates and serves the standardized 16-field Lead Tracker CSV."""
+    """Generates and serves the standardized 8-field Lead Tracker CSV."""
     data, err_resp = _parse_json_object()
     if err_resp:
         return err_resp

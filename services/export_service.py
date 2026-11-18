@@ -2,11 +2,11 @@
 LeadHunter Export Service
 Generates clean, standardized exports for B2B lead generation:
   1. Standard 3-Sheet Lead Intelligence Workbook (.xlsx):
-     - Sheet 01: Lead Tracker (16 Essential Fields)
+     - Sheet 01: Lead Tracker (8 Essential Fields)
      - Sheet 02: Website Audit (15 Essential Fields)
      - Sheet 03: Business Opportunities (7 Essential Fields)
   2. Lead Tracker CSV (.csv):
-     - Exactly 16 Essential Lead Tracker Fields
+     - Exactly 8 Essential Lead Tracker Fields
 """
 
 import io
@@ -46,24 +46,16 @@ FONT_MED = Font(name='Segoe UI', size=10, bold=True, color='3730A3')
 FILL_LOW = PatternFill(start_color='F1F5F9', end_color='F1F5F9', fill_type='solid')      # Slate light
 FONT_LOW = Font(name='Segoe UI', size=10, color='475569')
 
-# 16 Essential Lead Tracker Fields (Sheet 01 & CSV)
+# 8 Essential Lead Tracker Fields (Sheet 01 & CSV)
 LEAD_TRACKER_COLUMNS = [
     "Business Name",
-    "Category",
-    "City",
-    "State",
-    "Phone",
-    "Website",
-    "Google Maps URL",
-    "Rating",
-    "Reviews",
     "Contact Person",
     "Email",
     "Email Status",
-    "Priority",
-    "Lead Score",
-    "Main Opportunity",
-    "Notes"
+    "Phone",
+    "Website",
+    "City",
+    "State"
 ]
 
 # Backward-compatible alias
@@ -204,14 +196,32 @@ def clean_contact_person(person_raw: str, business_name: str = "") -> str:
 
 
 def normalize_email_status(status_raw: str, email: str = "") -> str:
-    """Normalizes email verification status to one of: Verified, MX Only, Unverified, Invalid, Not Found."""
-    if not email or "@" not in email:
-        return "Not Found"
+    """
+    Normalizes email verification status while preserving both legacy statuses
+    (`Verified`, `MX Only`, `Invalid`, `Not Found`, `Unverified`) and explicit
+    batch verification statuses (`Valid`, `Risky`, `Invalid`, `Unknown`).
+    MX-only strings (including `Valid (MX Only)`) are never promoted to `Verified` or `Valid`.
+    """
+    email_str = str(email or "").strip()
     s = str(status_raw or "").strip()
-    if "SMTP Verified" in s or s == "Verified" or s == "SMTP Valid":
-        return "Verified"
+    if not email_str:
+        return "Not Found"
+    if "@" not in email_str:
+        if "Invalid" in s:
+            return "Invalid"
+        if s == "Unverified":
+            return "Unverified"
+        return "Not Found"
     if "Catch-All" in s or "MX Only" in s or "MX Valid" in s:
         return "MX Only"
+    if "SMTP Verified" in s or s == "Verified" or s == "SMTP Valid":
+        return "Verified"
+    if s == "Valid":
+        return "Valid"
+    if s == "Risky":
+        return "Risky"
+    if s == "Unknown":
+        return "Unknown"
     if "Invalid" in s:
         return "Invalid"
     if "Not Found" in s:
@@ -360,16 +370,16 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
     """
     Standard Lead Intelligence Workbook (Format B).
     Generates exactly three sheets:
-      - Sheet 01: Lead Tracker (16 Essential Fields)
+      - Sheet 01: Lead Tracker (8 Essential Fields)
       - Sheet 02: Website Audit (15 Essential Fields)
       - Sheet 03: Business Opportunities (7 Essential Fields)
-    Applies deduplication, numeric formatting, and eliminates phantom records.
+    Applies deduplication and eliminates phantom records while preserving all underlying lead data.
     """
     wb = Workbook()
     deduped_leads = deduplicate_leads(leads_data)
 
     # -------------------------------------------------------------
-    # Sheet 01: Lead Tracker (16 Essential Fields)
+    # Sheet 01: Lead Tracker (8 Essential Fields)
     # -------------------------------------------------------------
     ws_leads = wb.active
     ws_leads.title = "Lead Tracker"
@@ -379,59 +389,17 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
         lead = dict(item)
 
         biz_name = lead.get("Business Name") or lead.get("Name") or ""
-        category = lead.get("Category") or lead.get("Google Category") or "Unknown"
-        city = lead.get("City") or "Unknown"
-        state = lead.get("State") or "Unknown"
-        phone = lead.get("Phone") or lead.get("Phone Number") or ""
-        website = clean_external_website_url(lead.get("Website") or "")
-        maps_url = lead.get("Google Maps URL") or lead.get("Google Maps Profile") or lead.get("Source URL") or ""
-
-        # Numeric Rating
-        rating_raw = lead.get("Rating") if lead.get("Rating") is not None else lead.get("Google Rating")
-        rating_val = None
-        if rating_raw not in (None, ""):
-            try:
-                rating_val = float(rating_raw)
-            except (ValueError, TypeError):
-                rating_val = None
-
-        # Numeric Reviews
-        rev_raw = lead.get("Reviews") if lead.get("Reviews") is not None else lead.get("Review Count")
-        rev_val = None
-        if rev_raw not in (None, ""):
-            try:
-                rev_val = int(rev_raw)
-            except (ValueError, TypeError):
-                rev_val = None
-
         contact = clean_contact_person(lead.get("Contact Person") or lead.get("Decision Maker") or "", biz_name)
         email = lead.get("Email") or lead.get("Contact Email") or ""
         email_status = normalize_email_status(lead.get("Email Status") or lead.get("Email Verification") or "", email)
+        phone = lead.get("Phone") or lead.get("Phone Number") or ""
+        website = clean_external_website_url(lead.get("Website") or "")
+        city = lead.get("City") or "Unknown"
+        state = lead.get("State") or "Unknown"
 
-        priority, lead_score, main_opp, notes = resolve_lead_summary_fields(lead, website)
-
-        row_idx = ws_leads.max_row + 1
         ws_leads.append([
-            biz_name, category, city, state, phone, website, maps_url,
-            rating_val if rating_val is not None else "",
-            rev_val if rev_val is not None else "",
-            contact, email, email_status, priority, lead_score, main_opp, notes
+            biz_name, contact, email, email_status, phone, website, city, state
         ])
-
-        # Cell number formats
-        if rating_val is not None:
-            r_cell = ws_leads.cell(row=row_idx, column=8)
-            r_cell.number_format = '0.0'
-            r_cell.alignment = DATA_ALIGN_CENTER
-
-        if rev_val is not None:
-            rev_cell = ws_leads.cell(row=row_idx, column=9)
-            rev_cell.number_format = '#,##0'
-            rev_cell.alignment = DATA_ALIGN_CENTER
-
-        score_cell = ws_leads.cell(row=row_idx, column=14)
-        score_cell.number_format = '0'
-        score_cell.alignment = DATA_ALIGN_CENTER
 
     apply_sheet_styling(ws_leads, HEADER_FILL_PRIMARY, LEAD_TRACKER_COLUMNS)
 
@@ -650,8 +618,8 @@ def generate_standard_intelligence_workbook(leads_data: list) -> io.BytesIO:
 
 def generate_lead_tracker_csv(leads_data: list) -> str:
     """
-    Generates standardized 16-field Lead Tracker CSV.
-    Deduplicates leads and eliminates phantom/legacy fields.
+    Generates standardized 8-field Lead Tracker CSV.
+    Deduplicates leads while leaving underlying input lead records unmodified.
     """
     deduped = deduplicate_leads(leads_data)
     rows = []
@@ -659,42 +627,23 @@ def generate_lead_tracker_csv(leads_data: list) -> str:
         lead = dict(item)
 
         biz_name = lead.get("Business Name") or lead.get("Name") or ""
-        category = lead.get("Category") or lead.get("Google Category") or "Unknown"
-        city = lead.get("City") or "Unknown"
-        state = lead.get("State") or "Unknown"
-        phone = lead.get("Phone") or lead.get("Phone Number") or ""
-        website = clean_external_website_url(lead.get("Website") or "")
-        maps_url = lead.get("Google Maps URL") or lead.get("Google Maps Profile") or lead.get("Source URL") or ""
-
-        rating_raw = lead.get("Rating") if lead.get("Rating") is not None else lead.get("Google Rating")
-        rating = f"{float(rating_raw):.1f}" if rating_raw not in (None, "") else ""
-
-        rev_raw = lead.get("Reviews") if lead.get("Reviews") is not None else lead.get("Review Count")
-        reviews = str(int(rev_raw)) if rev_raw not in (None, "") else ""
-
         contact = clean_contact_person(lead.get("Contact Person") or lead.get("Decision Maker") or "", biz_name)
         email = lead.get("Email") or lead.get("Contact Email") or ""
         email_status = normalize_email_status(lead.get("Email Status") or lead.get("Email Verification") or "", email)
-
-        priority, lead_score, main_opp, notes = resolve_lead_summary_fields(lead, website)
+        phone = lead.get("Phone") or lead.get("Phone Number") or ""
+        website = clean_external_website_url(lead.get("Website") or "")
+        city = lead.get("City") or "Unknown"
+        state = lead.get("State") or "Unknown"
 
         rows.append({
             "Business Name": biz_name,
-            "Category": category,
-            "City": city,
-            "State": state,
-            "Phone": phone,
-            "Website": website,
-            "Google Maps URL": maps_url,
-            "Rating": rating,
-            "Reviews": reviews,
             "Contact Person": contact,
             "Email": email,
             "Email Status": email_status,
-            "Priority": priority,
-            "Lead Score": lead_score,
-            "Main Opportunity": main_opp,
-            "Notes": notes
+            "Phone": phone,
+            "Website": website,
+            "City": city,
+            "State": state
         })
 
     df = pd.DataFrame(rows, columns=LEAD_TRACKER_COLUMNS)

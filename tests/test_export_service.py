@@ -7,6 +7,7 @@ from services.export_service import (
     deduplicate_leads,
     normalize_priority,
     normalize_email_status,
+    resolve_lead_summary_fields,
     LEAD_TRACKER_COLUMNS,
     WEBSITE_AUDIT_COLUMNS,
     BUSINESS_OPPORTUNITIES_COLUMNS
@@ -85,10 +86,20 @@ class TestExportService(unittest.TestCase):
         # Verify exactly 3 sheets
         self.assertEqual(wb.sheetnames, ["Lead Tracker", "Website Audit", "Business Opportunities"])
 
-        # Sheet 1: exactly 16 essential columns
+        # Sheet 1: exactly 8 essential Lead Tracker columns
         ws1 = wb["Lead Tracker"]
         header1 = [cell.value for cell in ws1[1]]
-        self.assertEqual(len(header1), 16)
+        self.assertEqual(len(header1), 8)
+        self.assertEqual(header1, [
+            "Business Name",
+            "Contact Person",
+            "Email",
+            "Email Status",
+            "Phone",
+            "Website",
+            "City",
+            "State",
+        ])
         self.assertEqual(header1, LEAD_TRACKER_COLUMNS)
         self.assertEqual(ws1.freeze_panes, "A2")
 
@@ -122,23 +133,29 @@ class TestExportService(unittest.TestCase):
         wb = openpyxl.load_workbook(excel_stream)
         ws1 = wb["Lead Tracker"]
 
-        # Rating cell (col 8): float with 0.0 format
-        rating_cell = ws1.cell(row=2, column=8)
-        self.assertIsInstance(rating_cell.value, float)
-        self.assertEqual(rating_cell.value, 4.8)
-        self.assertEqual(rating_cell.number_format, '0.0')
+        # Sheet 01 exports exact 8 Lead Tracker fields
+        row_values = [ws1.cell(row=2, column=c).value for c in range(1, 9)]
+        self.assertEqual(row_values, [
+            "Acme Air HVAC",
+            "John Doe",
+            "john@acmeairhvac.com",
+            "Verified",
+            "+1-214-555-0100",
+            "https://acmeairhvac.com",
+            "Dallas",
+            "TX",
+        ])
 
-        # Reviews cell (col 9): int with #,##0 format
-        rev_cell = ws1.cell(row=2, column=9)
-        self.assertIsInstance(rev_cell.value, int)
-        self.assertEqual(rev_cell.value, 120)
-        self.assertEqual(rev_cell.number_format, '#,##0')
-
-        # Lead Score cell (col 14): int with 0 format
-        score_cell = ws1.cell(row=2, column=14)
-        self.assertIsInstance(score_cell.value, int)
-        self.assertEqual(score_cell.value, 78)
-        self.assertEqual(score_cell.number_format, '0')
+        # Underlying non-displayed lead attributes MUST remain intact on the lead records
+        lead0 = self.sample_leads[0]
+        self.assertEqual(lead0["Rating"], 4.8)
+        self.assertEqual(lead0["Reviews"], 120)
+        self.assertEqual(lead0["Lead Score"], 78)
+        self.assertEqual(lead0["Priority"], "High")
+        self.assertEqual(lead0["Category"], "HVAC Contractor")
+        self.assertEqual(lead0["Google Maps URL"], "https://maps.google.com/?cid=123")
+        self.assertEqual(lead0["Main Opportunity"], "No online booking")
+        self.assertEqual(lead0["Notes"], "High opportunity score with booking gap")
 
     def test_phantom_records_prevented_in_sheet_03(self):
         # Lead with 0 opportunities
@@ -241,22 +258,30 @@ class TestExportService(unittest.TestCase):
             # No Priority, no intelligence
         }
 
-        # 1. Test Excel export Sheet 01 priority column (column 13)
+        # 1. Summary resolver still defaults missing priority to Manual Review (never Low)
+        priority_val, lead_score, _main_opp, _notes = resolve_lead_summary_fields(
+            lead_missing_priority, lead_missing_priority["Website"]
+        )
+        self.assertEqual(priority_val, "Manual Review")
+        self.assertNotEqual(priority_val, "Low")
+        self.assertEqual(lead_score, 0)
+
+        # 2. Excel Sheet 01 exports exact 8 columns cleanly for incomplete records
         stream = generate_standard_intelligence_workbook([lead_missing_priority])
         wb = openpyxl.load_workbook(stream)
         ws1 = wb["Lead Tracker"]
-        priority_val = ws1.cell(row=2, column=13).value
-        self.assertEqual(priority_val, "Manual Review")
-        self.assertNotEqual(priority_val, "Low")
+        self.assertEqual(ws1.max_column, 8)
+        self.assertEqual(ws1.cell(row=2, column=1).value, "Incomplete Data LLC")
+        self.assertEqual(ws1.cell(row=2, column=4).value, "Not Found")
+        self.assertEqual(ws1.cell(row=2, column=5).value, "+1-555-0001")
+        self.assertEqual(ws1.cell(row=2, column=6).value, "https://incompletedata.com")
 
-        # 2. Test CSV export priority column
+        # 3. CSV export emits exact 8 columns cleanly
         csv_str = generate_lead_tracker_csv([lead_missing_priority])
         lines = csv_str.strip().split("\n")
         self.assertEqual(len(lines), 2)
-        row_fields = lines[1].split(",")
-        priority_idx = LEAD_TRACKER_COLUMNS.index("Priority")
-        self.assertEqual(row_fields[priority_idx], "Manual Review")
-        self.assertNotEqual(row_fields[priority_idx], "Low")
+        self.assertEqual(lines[0].strip().split(","), LEAD_TRACKER_COLUMNS)
+        self.assertEqual(len(lines[1].split(",")), 8)
 
     def test_audit_status_consistency_no_contradictions(self):
         # A high-quality lead with 100/100 score and complete metadata (e.g. Harlen Johnson HVAC)
@@ -346,14 +371,19 @@ class TestExportService(unittest.TestCase):
         stream = generate_standard_intelligence_workbook([lead_aclk, lead_relative])
         wb = openpyxl.load_workbook(stream)
 
-        # Sheet 01 (Lead Tracker)
+        # Sheet 01 (Lead Tracker - 8 columns)
         ws_leads = wb["Lead Tracker"]
         # Website must be sanitized to empty/None (col 6)
         self.assertIn(ws_leads.cell(row=2, column=6).value, [None, ""])
         self.assertIn(ws_leads.cell(row=3, column=6).value, [None, ""])
-        # Google Maps URL is preserved independently (col 7)
-        self.assertEqual(ws_leads.cell(row=2, column=7).value, "https://www.google.com/maps/place/Skylinq+Home")
-        self.assertEqual(ws_leads.cell(row=3, column=7).value, "https://www.google.com/maps/place/Tempo+Air")
+        # City (col 7) and State (col 8) are exported accurately
+        self.assertEqual(ws_leads.cell(row=2, column=7).value, "Dallas")
+        self.assertEqual(ws_leads.cell(row=2, column=8).value, "TX")
+        self.assertEqual(ws_leads.cell(row=3, column=7).value, "Irving")
+        self.assertEqual(ws_leads.cell(row=3, column=8).value, "TX")
+        # Underlying Google Maps URL remains preserved on the original lead records
+        self.assertEqual(lead_aclk["Google Maps URL"], "https://www.google.com/maps/place/Skylinq+Home")
+        self.assertEqual(lead_relative["Google Maps URL"], "https://www.google.com/maps/place/Tempo+Air")
 
         # Sheet 02 (Website Audit)
         ws_audit = wb["Website Audit"]
@@ -389,8 +419,8 @@ class TestExportService(unittest.TestCase):
         stream = generate_standard_intelligence_workbook([lead_mx])
         wb = openpyxl.load_workbook(stream)
         ws_leads = wb["Lead Tracker"]
-        # Col 12 is Email Status
-        status_val = ws_leads.cell(row=2, column=12).value
+        # Col 4 is Email Status in the 8-column Lead Tracker schema
+        status_val = ws_leads.cell(row=2, column=4).value
         self.assertEqual(status_val, "MX Only")
         self.assertNotEqual(status_val, "Verified")
 

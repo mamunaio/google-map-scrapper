@@ -222,7 +222,7 @@ class TestRqJobLifecycleAndContracts(_BasePhase101BTestCase):
         self.assertEqual(res_body["leads"][0]["Business Name"], "Dallas HVAC")
         self.assertEqual(res_body["leads"][0]["Email Status"], "MX Only")
 
-        # 5. Verify approved 16/15/7 Excel & 16-col CSV export parity from async job result
+        # 5. Verify approved 8/15/7 Excel & 8-col CSV export parity from async job result
         excel_resp = self.client.post(
             "/api/export-excel",
             json={"leads": res_body["leads"], "format_type": "standard_3_sheet"},
@@ -232,13 +232,17 @@ class TestRqJobLifecycleAndContracts(_BasePhase101BTestCase):
         wb = openpyxl.load_workbook(io.BytesIO(excel_resp.data))
         self.assertEqual(wb.sheetnames, ["Lead Tracker", "Website Audit", "Business Opportunities"])
         self.assertEqual([c.value for c in wb["Lead Tracker"][1]], LEAD_TRACKER_COLUMNS)
+        self.assertEqual(len(wb["Lead Tracker"][1]), 8)
         self.assertEqual([c.value for c in wb["Website Audit"][1]], WEBSITE_AUDIT_COLUMNS)
+        self.assertEqual(len(wb["Website Audit"][1]), 15)
         self.assertEqual([c.value for c in wb["Business Opportunities"][1]], BUSINESS_OPPORTUNITIES_COLUMNS)
+        self.assertEqual(len(wb["Business Opportunities"][1]), 7)
 
         csv_resp = self.client.post("/api/export-csv", json={"leads": res_body["leads"]}, headers=self.auth)
         self.assertEqual(csv_resp.status_code, 200)
         header_cols = csv_resp.data.decode("utf-8-sig").splitlines()[0].split(",")
-        self.assertEqual(len(header_cols), 16)
+        self.assertEqual(len(header_cols), 8)
+        self.assertEqual(header_cols, LEAD_TRACKER_COLUMNS)
 
     @patch("app.validate_and_sanitize_url", side_effect=lambda u: u)
     @patch("services.job_tasks.validate_and_sanitize_url", side_effect=lambda u: u)

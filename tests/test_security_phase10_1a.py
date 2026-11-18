@@ -1538,5 +1538,918 @@ class TestDualModeUiSessionAuth(unittest.TestCase):
         self.assertEqual(r_429.status_code, 429)
 
 
+class TestExplicitUiSessionAndFrontendWorkflow(unittest.TestCase):
+    """
+    Verifies explicit interactive UI session authentication (`POST /api/ui-session`,
+    `DELETE /api/ui-session`), domain-separated tokens, server-side logout revocation,
+    multi-URL auth propagation, zero browser storage of API keys, and accurate partial/auth
+    failure reporting in `templates/index.html`.
+    """
+
+    def setUp(self):
+        self._orig_env = dict(os.environ)
+        self.secret_key = "explicit-ui-session-secret-key-987654"
+        os.environ["LEADHUNTER_API_KEY"] = self.secret_key
+        os.environ["UI_AUTO_SESSION"] = "false"
+        os.environ["CONTAINER"] = "true"
+        os.environ["LEADHUNTER_ENV"] = "development"
+        os.environ["RATE_LIMIT_MAX_REQUESTS"] = "200"
+        os.environ["RATE_LIMIT_WINDOW_SECONDS"] = "60"
+        for k in (
+            "FLASK_ENV",
+            "RENDER",
+            "TRUSTED_PROXY_HOPS",
+            "UI_AUTO_SESSION_BEHIND_TRUSTED_AUTH_PROXY",
+            "TRUSTED_AUTH_PROXY_SECRET",
+            "REDIS_URL",
+        ):
+            os.environ.pop(k, None)
+        rate_limiter.reset()
+
+    def tearDown(self):
+        from services.job_queue import set_redis_connection
+        set_redis_connection(None)
+        rate_limiter.set_redis_client(None)
+        os.environ.clear()
+        os.environ.update(self._orig_env)
+        rate_limiter.reset()
+
+    @staticmethod
+    def _same_origin_post_headers(csrf_token: str = "", extra: dict | None = None) -> dict:
+        hdrs = {"Origin": "http://localhost", "Sec-Fetch-Site": "same-origin"}
+        if csrf_token:
+            hdrs["X-CSRF-Token"] = csrf_token
+        if extra:
+            hdrs.update(extra)
+        return hdrs
+
+    @staticmethod
+    def _same_origin_get_headers(csrf_token: str = "") -> dict:
+        hdrs = {"Sec-Fetch-Site": "same-origin", "Referer": "http://localhost/"}
+        if csrf_token:
+            hdrs["X-CSRF-Token"] = csrf_token
+        return hdrs
+
+    @staticmethod
+    def _extract_csrf(html: str) -> str:
+        m = re.search(r'<meta\s+name="csrf-token"\s+content="([^"]+)"', html)
+        return m.group(1) if m else ""
+
+    @staticmethod
+    def _extract_cookie_value(resp, cookie_name: str) -> str:
+        for hdr in resp.headers.getlist("Set-Cookie"):
+            if hdr.startswith(f"{cookie_name}="):
+                return hdr.split("=", 1)[1].split(";", 1)[0]
+        return ""
+
+    def test_explicit_ui_session_login_multi_url_propagation_reload_and_logout_revocation(self):
+        import fakeredis
+        from app import UI_SESSION_COOKIE_NAME
+        from services.job_queue import set_redis_connection
+
+        fake_redis = fakeredis.FakeRedis()
+        set_redis_connection(fake_redis)
+
+        client = app.test_client()
+
+        # 1. Unauthenticated GET / with UI_AUTO_SESSION=false issues no cookie, no CSRF, no secret
+        r_home = client.get("/")
+        html_locked = r_home.data.decode("utf-8")
+        self.assertEqual(r_home.status_code, 200)
+        self.assertEqual(self._extract_csrf(html_locked), "")
+        self.assertEqual(self._extract_cookie_value(r_home, UI_SESSION_COOKIE_NAME), "")
+        self.assertNotIn(self.secret_key, html_locked)
+        self.assertIn('id="apiKeyInput"', html_locked)
+        self.assertIn('id="btnUnlockSession"', html_locked)
+
+        # 2. Unauthenticated API request rejected with 401
+        r_unauth = client.post("/api/jobs", json={"url": "https://example.com", "type": "website"})
+        self.assertEqual(r_unauth.status_code, 401)
+
+        # 3. POST /api/ui-session rejects cross-origin, missing key, and invalid key
+        r_cross = client.post(
+            "/api/ui-session",
+            json={},
+            headers={"Origin": "https://evil.example", "X-API-Key": self.secret_key},
+        )
+        self.assertEqual(r_cross.status_code, 403)
+        r_missing_key = client.post("/api/ui-session", json={}, headers=self._same_origin_post_headers())
+        self.assertEqual(r_missing_key.status_code, 401)
+        r_wrong_key = client.post(
+            "/api/ui-session",
+            json={},
+            headers=self._same_origin_post_headers(extra={"X-API-Key": "wrong-key"}),
+        )
+        self.assertEqual(r_wrong_key.status_code, 401)
+
+        # 4. Valid login exchanges X-API-Key for HttpOnly SameSite=Strict cookie + paired CSRF token
+        r_login = client.post(
+            "/api/ui-session",
+            json={},
+            headers=self._same_origin_post_headers(extra={"X-API-Key": self.secret_key}),
+        )
+        self.assertEqual(r_login.status_code, 200)
+        login_data = r_login.get_json()
+        self.assertTrue(login_data["success"])
+        self.assertTrue(login_data["authenticated"])
+        csrf_token = login_data["csrf_token"]
+        self.assertTrue(csrf_token)
+        self.assertNotIn(self.secret_key, r_login.data.decode("utf-8"))
+        self.assertEqual(r_login.headers.get("Cache-Control"), "no-store")
+        set_cookie_hdr = [
+            h for h in r_login.headers.getlist("Set-Cookie") if h.startswith(f"{UI_SESSION_COOKIE_NAME}=")
+        ][0]
+        self.assertIn("HttpOnly", set_cookie_hdr)
+        self.assertIn("SameSite=Strict", set_cookie_hdr)
+        captured_cookie = self._extract_cookie_value(r_login, UI_SESSION_COOKIE_NAME)
+        self.assertTrue(captured_cookie)
+
+        # 5. Page reload preserves unlocked session by re-deriving paired CSRF without leaking API key
+        r_reload = client.get("/")
+        html_unlocked = r_reload.data.decode("utf-8")
+        self.assertEqual(self._extract_csrf(html_unlocked), csrf_token)
+        self.assertEqual(r_reload.headers.get("Cache-Control"), "no-store")
+        self.assertNotIn(self.secret_key, html_unlocked)
+
+        # 6. Multi-URL per-URL job submission, polling, and result retrieval all succeed via cookie + CSRF
+        urls = ["https://alpha.example.com", "https://beta.example.com", "https://gamma.example.com"]
+        with patch("app.validate_and_sanitize_url", side_effect=lambda u: u), \
+             patch(
+                 "app.enqueue_scrape_job",
+                 side_effect=lambda **kw: {
+                     "job_id": f"job-{abs(hash(kw['url'])) % 100000}",
+                     "status": "queued",
+                     "deduplicated": False,
+                     "workers_online": 1,
+                 },
+             ), \
+             patch(
+                 "app.get_job_status_payload",
+                 side_effect=lambda jid: {"success": True, "job_id": jid, "status": "finished", "progress": {}},
+             ), \
+             patch(
+                 "app.get_job_result_payload",
+                 side_effect=lambda jid: (
+                     {"success": True, "status": "finished", "count": 1, "data": {"Business Name": jid, "Website": "https://example.com"}},
+                     200,
+                 ),
+             ):
+            for u in urls:
+                r_enq = client.post(
+                    "/api/jobs",
+                    json={"url": u, "type": "website"},
+                    headers=self._same_origin_post_headers(csrf_token),
+                )
+                self.assertEqual(r_enq.status_code, 202, r_enq.data)
+                jid = r_enq.get_json()["job_id"]
+
+                r_st = client.get(f"/api/jobs/{jid}", headers=self._same_origin_get_headers(csrf_token))
+                self.assertEqual(r_st.status_code, 200)
+                self.assertEqual(r_st.get_json()["status"], "finished")
+
+                r_res = client.get(f"/api/jobs/{jid}/result", headers=self._same_origin_get_headers(csrf_token))
+                self.assertEqual(r_res.status_code, 200)
+                self.assertTrue(r_res.get_json()["success"])
+
+            # 7. Missing CSRF, cross-origin, and bad explicit X-API-Key alongside valid cookie MUST fail (401)
+            self.assertEqual(
+                client.post(
+                    "/api/jobs",
+                    json={"url": urls[0], "type": "website"},
+                    headers=self._same_origin_post_headers(""),
+                ).status_code,
+                401,
+            )
+            self.assertEqual(
+                client.post(
+                    "/api/jobs",
+                    json={"url": urls[0], "type": "website"},
+                    headers={"Origin": "https://evil.example", "X-CSRF-Token": csrf_token},
+                ).status_code,
+                401,
+            )
+            self.assertEqual(
+                client.post(
+                    "/api/jobs",
+                    json={"url": urls[0], "type": "website"},
+                    headers=self._same_origin_post_headers(csrf_token, extra={"X-API-Key": "wrong-key"}),
+                ).status_code,
+                401,
+            )
+
+            # 8. DELETE /api/ui-session rejects missing CSRF (logout CSRF protection) & cross-origin
+            self.assertEqual(
+                client.delete("/api/ui-session", headers=self._same_origin_post_headers("")).status_code,
+                401,
+            )
+            self.assertEqual(
+                client.delete(
+                    "/api/ui-session",
+                    headers={"Origin": "https://evil.example", "X-CSRF-Token": csrf_token},
+                ).status_code,
+                403,
+            )
+
+            # 9. Valid logout revokes the explicit session server-side and clears cookie
+            r_logout = client.delete("/api/ui-session", headers=self._same_origin_post_headers(csrf_token))
+            self.assertEqual(r_logout.status_code, 200)
+            self.assertFalse(r_logout.get_json()["authenticated"])
+
+            # 10. Replaying the captured pre-logout cookie + CSRF MUST be rejected (401) even if resent manually
+            replay_client = app.test_client()
+            replay_client.set_cookie(UI_SESSION_COOKIE_NAME, captured_cookie)
+            r_replay_api = replay_client.post(
+                "/api/jobs",
+                json={"url": urls[0], "type": "website"},
+                headers=self._same_origin_post_headers(csrf_token),
+            )
+            self.assertEqual(r_replay_api.status_code, 401)
+            r_replay_home = replay_client.get("/")
+            self.assertEqual(self._extract_csrf(r_replay_home.data.decode("utf-8")), "")
+
+    def test_explicit_and_auto_session_tokens_are_cryptographically_separated_and_expire(self):
+        import time
+        from app import (
+            UI_SESSION_COOKIE_NAME,
+            UI_SESSION_MODE_AUTO,
+            UI_SESSION_MODE_EXPLICIT,
+            _create_ui_session_tokens,
+            _verify_ui_session_and_csrf,
+        )
+
+        now = int(time.time())
+        auto_cookie, auto_csrf = _create_ui_session_tokens(self.secret_key, now=now, mode=UI_SESSION_MODE_AUTO)
+        exp_cookie, exp_csrf = _create_ui_session_tokens(self.secret_key, now=now, mode=UI_SESSION_MODE_EXPLICIT)
+
+        # Domain separation: auto != explicit
+        self.assertTrue(_verify_ui_session_and_csrf(auto_cookie, auto_csrf, self.secret_key, now=now, mode=UI_SESSION_MODE_AUTO))
+        self.assertFalse(_verify_ui_session_and_csrf(auto_cookie, auto_csrf, self.secret_key, now=now, mode=UI_SESSION_MODE_EXPLICIT))
+        self.assertTrue(_verify_ui_session_and_csrf(exp_cookie, exp_csrf, self.secret_key, now=now, mode=UI_SESSION_MODE_EXPLICIT))
+        self.assertFalse(_verify_ui_session_and_csrf(exp_cookie, exp_csrf, self.secret_key, now=now, mode=UI_SESSION_MODE_AUTO))
+
+        # Auto-session cookie MUST NOT authenticate when UI_AUTO_SESSION=false
+        c_auto = app.test_client()
+        c_auto.set_cookie(UI_SESSION_COOKIE_NAME, auto_cookie)
+        r_reject_auto = c_auto.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Test"}]},
+            headers=self._same_origin_post_headers(auto_csrf),
+        )
+        self.assertEqual(r_reject_auto.status_code, 401)
+
+        # Expired explicit session MUST fail
+        old_cookie, old_csrf = _create_ui_session_tokens(
+            self.secret_key, now=now - 40000, mode=UI_SESSION_MODE_EXPLICIT
+        )
+        self.assertFalse(_verify_ui_session_and_csrf(old_cookie, old_csrf, self.secret_key, now=now, mode=UI_SESSION_MODE_EXPLICIT))
+        c_old = app.test_client()
+        c_old.set_cookie(UI_SESSION_COOKIE_NAME, old_cookie)
+        r_expired = c_old.post(
+            "/api/export-csv",
+            json={"leads": [{"Business Name": "Test"}]},
+            headers=self._same_origin_post_headers(old_csrf),
+        )
+        self.assertEqual(r_expired.status_code, 401)
+
+        # Production login fails closed (429) if Redis rate limiter is unconfigured,
+        # and sets Secure + HttpOnly + SameSite=Strict when Redis is available
+        import fakeredis
+        os.environ["LEADHUNTER_ENV"] = "production"
+        r_prod_no_redis = app.test_client().post(
+            "/api/ui-session",
+            json={},
+            headers=self._same_origin_post_headers(extra={"X-API-Key": self.secret_key}),
+        )
+        self.assertEqual(r_prod_no_redis.status_code, 429)
+
+        rate_limiter.set_redis_client(fakeredis.FakeRedis())
+        c_prod = app.test_client()
+        r_prod_login = c_prod.post(
+            "/api/ui-session",
+            json={},
+            headers=self._same_origin_post_headers(extra={"X-API-Key": self.secret_key}),
+        )
+        self.assertEqual(r_prod_login.status_code, 200)
+        prod_cookie_hdr = [
+            h for h in r_prod_login.headers.getlist("Set-Cookie") if h.startswith(f"{UI_SESSION_COOKIE_NAME}=")
+        ][0]
+        self.assertIn("Secure", prod_cookie_hdr)
+        self.assertIn("HttpOnly", prod_cookie_hdr)
+        self.assertIn("SameSite=Strict", prod_cookie_hdr)
+
+        os.environ.pop("LEADHUNTER_API_KEY", None)
+        r_503 = app.test_client().post("/api/ui-session", json={}, headers=self._same_origin_post_headers())
+        self.assertEqual(r_503.status_code, 503)
+
+    def test_frontend_zero_storage_auth_propagation_partial_failure_and_401_short_circuit_in_chromium(self):
+        from pathlib import Path
+        from playwright.sync_api import sync_playwright
+
+        # 1. Static source audit: never write/read leadhunter_api_key in sessionStorage/localStorage
+        tpl_path = Path(__file__).resolve().parent.parent / "templates" / "index.html"
+        tpl_src = tpl_path.read_text(encoding="utf-8")
+        self.assertNotIn("sessionStorage.setItem('leadhunter_api_key'", tpl_src)
+        self.assertNotIn('sessionStorage.setItem("leadhunter_api_key"', tpl_src)
+        self.assertNotIn("sessionStorage.getItem('leadhunter_api_key'", tpl_src)
+        self.assertNotIn('sessionStorage.getItem("leadhunter_api_key"', tpl_src)
+        self.assertNotIn("localStorage.setItem('leadhunter_api_key'", tpl_src)
+        self.assertNotIn('localStorage.setItem("leadhunter_api_key"', tpl_src)
+        self.assertNotIn("localStorage.getItem('leadhunter_api_key'", tpl_src)
+
+        # Render the real template as served when UI_AUTO_SESSION=false
+        rendered_html = app.test_client().get("/").data.decode("utf-8")
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                page.route(
+                    "**/*",
+                    lambda route: route.fulfill(status=200, body="", content_type="application/javascript")
+                    if not route.request.url.startswith(("http://localhost", "about:", "data:"))
+                    else route.continue_(),
+                )
+                # Serve rendered HTML at http://localhost/ so sessionStorage/localStorage are enabled
+                page.route(
+                    "http://localhost/",
+                    lambda route: route.fulfill(status=200, body=rendered_html, content_type="text/html; charset=utf-8"),
+                )
+                # Seed legacy browser storage keys BEFORE page loads to confirm cleanup on DOMContentLoaded
+                page.add_init_script("""
+                    sessionStorage.setItem('leadhunter_api_key', 'legacy-leaked-secret');
+                    localStorage.setItem('leadhunter_api_key', 'legacy-leaked-secret');
+                """)
+                page.goto("http://localhost/", wait_until="domcontentloaded")
+
+                result = page.evaluate("""async () => {
+                    // Speed up polling timers in runAsyncScrapeJob
+                    const origSetTimeout = window.setTimeout;
+                    window.setTimeout = (fn, ms) => origSetTimeout(fn, Math.min(ms || 0, 5));
+
+                    const legacyCleared = (
+                        sessionStorage.getItem('leadhunter_api_key') === null &&
+                        localStorage.getItem('leadhunter_api_key') === null
+                    );
+
+                    const calls = [];
+                    let mode = 'partial';
+                    let jobSeq = 0;
+
+                    window.fetch = async (url, opts = {}) => {
+                        const headers = opts.headers || {};
+                        calls.push({ url: String(url), method: opts.method || 'GET', headers: { ...headers }, credentials: opts.credentials });
+                        const mkJson = (status, obj) => ({
+                            ok: status >= 200 && status < 300,
+                            status,
+                            headers: { get: (k) => k.toLowerCase() === 'content-type' ? 'application/json' : null },
+                            json: async () => obj
+                        });
+
+                        if (url === '/api/ui-session' && opts.method === 'POST') {
+                            if (headers['X-API-Key'] === 'valid-operator-key') {
+                                return mkJson(200, { success: true, authenticated: true, csrf_token: 'csrf-memory-token-abc' });
+                            }
+                            return mkJson(401, { success: false, error: 'Unauthorized: valid API key required.' });
+                        }
+                        if (url === '/api/ui-session' && opts.method === 'DELETE') {
+                            return mkJson(200, { success: true, authenticated: false });
+                        }
+                        if (url === '/api/jobs' && opts.method === 'POST') {
+                            jobSeq += 1;
+                            if (mode === 'auth_abort' && jobSeq === 2) {
+                                return mkJson(401, { success: false, error: 'Unauthorized: valid API key required.' });
+                            }
+                            if (mode === 'all_fail') {
+                                return mkJson(422, { success: false, error: 'Target unreachable' });
+                            }
+                            if (mode === 'partial' && jobSeq === 2) {
+                                return mkJson(422, { success: false, error: 'Target unreachable' });
+                            }
+                            return mkJson(202, { success: true, job_id: 'job-' + jobSeq, status: 'queued' });
+                        }
+                        if (String(url).startsWith('/api/jobs/') && !String(url).endsWith('/result')) {
+                            const jid = String(url).split('/').pop();
+                            return mkJson(200, { success: true, job_id: jid, status: 'finished', progress: { message: 'Done' } });
+                        }
+                        if (String(url).endsWith('/result')) {
+                            return mkJson(200, {
+                                success: true,
+                                status: 'finished',
+                                count: 1,
+                                data: {
+                                    'Business Name': 'Test Co',
+                                    'Website': 'https://example.com',
+                                    'Email': 'owner@example.com',
+                                    'Email Verification': 'Verified',
+                                    'intelligence': { technical: { status: 'OK' }, seo: { status: 'OK' }, opportunities: { detected_opportunities: [] } }
+                                }
+                            });
+                        }
+                        return mkJson(404, { success: false, error: 'Not found' });
+                    };
+
+                    // Scenario A: Pre-flight auth guard blocks unauthenticated start without calling /api/jobs
+                    document.getElementById('manualUrls').value = 'https://a.example.com\\nhttps://b.example.com';
+                    await startManualScraping();
+                    const scenarioA = {
+                        callsCount: calls.length,
+                        statusText: document.getElementById('statusText').textContent
+                    };
+
+                    // Unlock session via UI input; verify input cleared and zero browser storage written
+                    document.getElementById('apiKeyInput').value = 'valid-operator-key';
+                    const unlockRes = await unlockUiSession();
+                    const afterUnlock = {
+                        ok: unlockRes.ok,
+                        inputCleared: document.getElementById('apiKeyInput').value === '',
+                        sessionStorageKey: sessionStorage.getItem('leadhunter_api_key'),
+                        localStorageKey: localStorage.getItem('leadhunter_api_key'),
+                        lockedHidden: document.getElementById('uiAuthLocked').classList.contains('hidden'),
+                        unlockedVisible: !document.getElementById('uiAuthUnlocked').classList.contains('hidden')
+                    };
+
+                    // Scenario B: Partial failure (2 succeed, 1 fails) on 3-URL file enrichment batch
+                    calls.length = 0;
+                    jobSeq = 0;
+                    mode = 'partial';
+                    inputType = 'file';
+                    scrapeMode = 'website';
+                    uploadedData = [
+                        { 'Business Name': 'Biz 1', 'Website': 'https://b1.example.com', intelligence: null },
+                        { 'Business Name': 'Biz 2', 'Website': 'https://b2.example.com', intelligence: null },
+                        { 'Business Name': 'Biz 3', 'Website': 'https://b3.example.com', intelligence: null },
+                        { 'Business Name': 'Biz 4 No Web', 'Website': '', intelligence: null }
+                    ];
+                    targetQueue = [
+                        { rowIndex: 0, url: 'https://b1.example.com', business_name: 'Biz 1', decision_maker: '' },
+                        { rowIndex: 1, url: 'https://b2.example.com', business_name: 'Biz 2', decision_maker: '' },
+                        { rowIndex: 2, url: 'https://b3.example.com', business_name: 'Biz 3', decision_maker: '' }
+                    ];
+                    showProgress(true);
+                    await processQueue();
+                    const apiCallsB = calls.filter(c => c.url.startsWith('/api/jobs'));
+                    const scenarioB = {
+                        allCarryCsrf: apiCallsB.every(c => c.headers['X-CSRF-Token'] === 'csrf-memory-token-abc'),
+                        allSameOriginCreds: apiCallsB.every(c => c.credentials === 'same-origin'),
+                        noneSendRawApiKey: apiCallsB.every(c => !('X-API-Key' in c.headers)),
+                        scanned: document.getElementById('statWebsitesScanned').textContent,
+                        succeeded: document.getElementById('statSuccessfulAudits').textContent,
+                        failed: document.getElementById('statFailedAudits').textContent,
+                        progressCount: document.getElementById('progressCount').textContent,
+                        statusText: document.getElementById('statusText').textContent,
+                        downloadVisible: !document.getElementById('downloadSection').classList.contains('hidden')
+                    };
+
+                    // Scenario C: Mid-queue 401 short-circuit on 5-URL batch (URL 1 ok, URL 2 -> 401, URLs 3-5 skipped)
+                    calls.length = 0;
+                    jobSeq = 0;
+                    mode = 'auth_abort';
+                    targetQueue = [0, 1, 2, 3, 4].map(i => ({ url: `https://s${i}.example.com` }));
+                    inputType = 'manual';
+                    showProgress(true);
+                    await processQueue();
+                    const submitCallsC = calls.filter(c => c.url === '/api/jobs' && c.method === 'POST');
+                    const scenarioC = {
+                        submitCallCount: submitCallsC.length,
+                        scanned: document.getElementById('statWebsitesScanned').textContent,
+                        succeeded: document.getElementById('statSuccessfulAudits').textContent,
+                        failed: document.getElementById('statFailedAudits').textContent,
+                        progressCount: document.getElementById('progressCount').textContent,
+                        statusText: document.getElementById('statusText').textContent,
+                        relocked: !document.getElementById('uiAuthLocked').classList.contains('hidden')
+                    };
+
+                    // Scenario D: Re-unlock, then 100% failure (0/2 audited) -> must NOT say Complete and must hide export
+                    await unlockUiSession('valid-operator-key');
+                    calls.length = 0;
+                    jobSeq = 0;
+                    mode = 'all_fail';
+                    targetQueue = [{ url: 'https://f1.example.com' }, { url: 'https://f2.example.com' }];
+                    inputType = 'manual';
+                    showProgress(true);
+                    await processQueue();
+                    const scenarioD = {
+                        scanned: document.getElementById('statWebsitesScanned').textContent,
+                        succeeded: document.getElementById('statSuccessfulAudits').textContent,
+                        failed: document.getElementById('statFailedAudits').textContent,
+                        statusText: document.getElementById('statusText').textContent,
+                        downloadHidden: document.getElementById('downloadSection').classList.contains('hidden')
+                    };
+
+                    // Lock session cleans up UI state
+                    await lockUiSession();
+                    const afterLock = {
+                        lockedVisible: !document.getElementById('uiAuthLocked').classList.contains('hidden'),
+                        unlockedHidden: document.getElementById('uiAuthUnlocked').classList.contains('hidden')
+                    };
+
+                    return { legacyCleared, scenarioA, afterUnlock, scenarioB, scenarioC, scenarioD, afterLock };
+                }""")
+
+                self.assertTrue(result["legacyCleared"])
+                self.assertEqual(result["scenarioA"]["callsCount"], 0)
+                self.assertIn("Authentication Required", result["scenarioA"]["statusText"])
+
+                self.assertTrue(result["afterUnlock"]["ok"])
+                self.assertTrue(result["afterUnlock"]["inputCleared"])
+                self.assertIsNone(result["afterUnlock"]["sessionStorageKey"])
+                self.assertIsNone(result["afterUnlock"]["localStorageKey"])
+                self.assertTrue(result["afterUnlock"]["lockedHidden"])
+                self.assertTrue(result["afterUnlock"]["unlockedVisible"])
+
+                self.assertTrue(result["scenarioB"]["allCarryCsrf"])
+                self.assertTrue(result["scenarioB"]["allSameOriginCreds"])
+                self.assertTrue(result["scenarioB"]["noneSendRawApiKey"])
+                self.assertEqual(result["scenarioB"]["scanned"], "3")
+                self.assertEqual(result["scenarioB"]["succeeded"], "2")
+                self.assertEqual(result["scenarioB"]["failed"], "1")
+                self.assertIn("3 / 3 URLs processed (2 audited, 1 failed)", result["scenarioB"]["progressCount"])
+                self.assertIn("Completed with Failures", result["scenarioB"]["statusText"])
+                self.assertTrue(result["scenarioB"]["downloadVisible"])
+
+                self.assertEqual(result["scenarioC"]["submitCallCount"], 2)
+                self.assertEqual(result["scenarioC"]["scanned"], "2")
+                self.assertEqual(result["scenarioC"]["succeeded"], "1")
+                self.assertEqual(result["scenarioC"]["failed"], "1")
+                self.assertIn("2 / 5 URLs processed (1 audited, 1 failed)", result["scenarioC"]["progressCount"])
+                self.assertIn("Stopped — Authentication Required", result["scenarioC"]["statusText"])
+                self.assertTrue(result["scenarioC"]["relocked"])
+
+                self.assertEqual(result["scenarioD"]["scanned"], "2")
+                self.assertEqual(result["scenarioD"]["succeeded"], "0")
+                self.assertEqual(result["scenarioD"]["failed"], "2")
+                self.assertIn("Audit Failed (0 / 2 URLs audited)", result["scenarioD"]["statusText"])
+                self.assertTrue(result["scenarioD"]["downloadHidden"])
+
+                self.assertTrue(result["afterLock"]["lockedVisible"])
+                self.assertTrue(result["afterLock"]["unlockedHidden"])
+            finally:
+                browser.close()
+
+    def test_independent_read_and_write_rate_limit_buckets_recovery_and_api_key_compatibility(self):
+        import time
+        import fakeredis
+        from services.job_queue import set_redis_connection
+
+        fake_redis = fakeredis.FakeRedis()
+        set_redis_connection(fake_redis)
+        rate_limiter.set_redis_client(fake_redis)
+        os.environ["RATE_LIMIT_MAX_REQUESTS"] = "2"
+        os.environ["RATE_LIMIT_WINDOW_SECONDS"] = "60"
+        os.environ["RATE_LIMIT_READ_MAX_REQUESTS"] = "3"
+        os.environ["RATE_LIMIT_READ_WINDOW_SECONDS"] = "1"
+        os.environ["RATE_LIMIT_FAIL_CLOSED"] = "true"
+        rate_limiter.reset()
+
+        client = app.test_client()
+        x_headers = {"X-API-Key": self.secret_key}
+        bearer_headers = {"Authorization": f"Bearer {self.secret_key}"}
+
+        with patch("app.validate_and_sanitize_url", side_effect=lambda u: u), \
+             patch(
+                 "app.enqueue_scrape_job",
+                 return_value={"job_id": "job-rl-1", "status": "queued", "deduplicated": False, "workers_online": 1},
+             ), \
+             patch(
+                 "app.get_job_status_payload",
+                 return_value={"success": True, "job_id": "job-rl-1", "status": "finished", "progress": {}},
+             ), \
+             patch(
+                 "app.get_job_result_payload",
+                 return_value=({"success": True, "status": "finished", "count": 1, "data": {"Business Name": "A"}}, 200),
+             ):
+            # 1. Exhaust write bucket (2 allowed, 3rd -> 429) using X-API-Key & Bearer
+            self.assertEqual(client.post("/api/jobs", json={"url": "https://a.example.com", "type": "website"}, headers=x_headers).status_code, 202)
+            self.assertEqual(client.post("/api/jobs", json={"url": "https://b.example.com", "type": "website"}, headers=bearer_headers).status_code, 202)
+            r_write_429 = client.post("/api/jobs", json={"url": "https://c.example.com", "type": "website"}, headers=x_headers)
+            self.assertEqual(r_write_429.status_code, 429)
+            self.assertTrue(int(r_write_429.headers.get("Retry-After", "0")) >= 1)
+
+            # 2. Read bucket is INDEPENDENT: GET /api/jobs/<id> & /result still succeed up to 3 reads!
+            self.assertEqual(client.get("/api/jobs/job-rl-1", headers=x_headers).status_code, 200)
+            self.assertEqual(client.get("/api/jobs/job-rl-1", headers=bearer_headers).status_code, 200)
+            self.assertEqual(client.get("/api/jobs/job-rl-1/result", headers=x_headers).status_code, 200)
+
+            # 3. 4th read exhausts the read bucket -> 429 with Retry-After (not exempted!)
+            r_read_429 = client.get("/api/jobs/job-rl-1", headers=x_headers)
+            self.assertEqual(r_read_429.status_code, 429)
+            self.assertTrue(int(r_read_429.headers.get("Retry-After", "0")) >= 1)
+
+            # Verify separate Redis keys for write vs read buckets
+            self.assertEqual(fake_redis.zcard("leadhunter:ratelimit:127.0.0.1"), 2)
+            self.assertEqual(fake_redis.zcard("leadhunter:ratelimit:read:127.0.0.1"), 3)
+
+            # 4. Read bucket recovers after its 1-second sliding window expires while write stays exhausted
+            time.sleep(1.15)
+            self.assertEqual(client.get("/api/jobs/job-rl-1", headers=bearer_headers).status_code, 200)
+            self.assertEqual(client.post("/api/jobs", json={"url": "https://d.example.com", "type": "website"}, headers=x_headers).status_code, 429)
+
+            # 5. Read bucket fails closed (429) if Redis errors when RATE_LIMIT_FAIL_CLOSED=true
+            broken_redis = MagicMock()
+            broken_redis.eval.side_effect = ConnectionError("redis down")
+            rate_limiter.set_redis_client(broken_redis)
+            r_fail_closed = client.get("/api/jobs/job-rl-1", headers=x_headers)
+            self.assertEqual(r_fail_closed.status_code, 429)
+
+    def test_explicit_session_revocation_cross_worker_and_redis_failure_fail_closed(self):
+        import time
+        import fakeredis
+        from app import (
+            UI_SESSION_COOKIE_NAME,
+            _is_ui_session_revoked,
+            _revoke_ui_session_nonce,
+            _revoked_ui_sessions,
+            _revoked_ui_sessions_lock,
+        )
+        from services.job_queue import QueueUnavailableError, set_redis_connection
+
+        # Local Docker staging mode: LEADHUNTER_ENV=development + REDIS_URL explicitly configured
+        os.environ["LEADHUNTER_ENV"] = "development"
+        os.environ["UI_AUTO_SESSION"] = "false"
+        os.environ["CONTAINER"] = "true"
+        os.environ["REDIS_URL"] = "redis://redis:6379/0"
+        fake_redis = fakeredis.FakeRedis()
+        set_redis_connection(fake_redis)
+        rate_limiter.set_redis_client(fake_redis)
+
+        client = app.test_client()
+        r_login = client.post(
+            "/api/ui-session",
+            json={},
+            headers=self._same_origin_post_headers(extra={"X-API-Key": self.secret_key}),
+        )
+        self.assertEqual(r_login.status_code, 200)
+        csrf_token = r_login.get_json()["csrf_token"]
+        cookie_val = self._extract_cookie_value(r_login, UI_SESSION_COOKIE_NAME)
+        nonce_hex = cookie_val.split(".")[0]
+
+        # 1A. REDIS_URL configured + get_redis_connection() raises QueueUnavailableError -> MUST fail closed
+        #     even in non-production local Docker staging (never infer unconfigured from exception type!)
+        with patch("app.get_redis_connection", side_effect=QueueUnavailableError("Failed to create Redis connection")):
+            self.assertTrue(_is_ui_session_revoked(nonce_hex))
+            self.assertFalse(_revoke_ui_session_nonce(nonce_hex, int(time.time()) + 300))
+
+            # Clear local cache so we prove fail-closed came from Redis-unavailable check, not local cache
+            with _revoked_ui_sessions_lock:
+                _revoked_ui_sessions.clear()
+
+            r_api_queue_err = client.post(
+                "/api/export-csv",
+                json={"leads": [{"Business Name": "Test"}]},
+                headers=self._same_origin_post_headers(csrf_token),
+            )
+            self.assertEqual(r_api_queue_err.status_code, 401)
+
+            r_logout_queue_err = client.delete(
+                "/api/ui-session",
+                headers=self._same_origin_post_headers(csrf_token),
+            )
+            self.assertEqual(r_logout_queue_err.status_code, 503)
+            self.assertTrue(
+                any("Max-Age=0" in h for h in r_logout_queue_err.headers.getlist("Set-Cookie"))
+            )
+
+        # 1B. Redis exists()/set() runtime ConnectionError -> MUST also fail closed & return 503 on logout
+        with _revoked_ui_sessions_lock:
+            _revoked_ui_sessions.clear()
+        client.set_cookie(UI_SESSION_COOKIE_NAME, cookie_val)
+        broken_redis = MagicMock()
+        broken_redis.exists.side_effect = ConnectionError("redis timeout")
+        broken_redis.set.side_effect = ConnectionError("redis timeout")
+        set_redis_connection(broken_redis)
+
+        self.assertTrue(_is_ui_session_revoked(nonce_hex))
+        self.assertEqual(
+            client.post(
+                "/api/export-csv",
+                json={"leads": [{"Business Name": "Test"}]},
+                headers=self._same_origin_post_headers(csrf_token),
+            ).status_code,
+            401,
+        )
+        r_logout_conn_err = client.delete(
+            "/api/ui-session",
+            headers=self._same_origin_post_headers(csrf_token),
+        )
+        self.assertEqual(r_logout_conn_err.status_code, 503)
+        self.assertTrue(
+            any("Max-Age=0" in h for h in r_logout_conn_err.headers.getlist("Set-Cookie"))
+        )
+
+        # 2. Cross-worker logout revocation: Worker A revokes in Redis -> clear process-local cache
+        #    (simulating Worker B) -> Worker B MUST reject replayed pre-logout cookie!
+        set_redis_connection(fake_redis)
+        with _revoked_ui_sessions_lock:
+            _revoked_ui_sessions.clear()
+
+        r_login2 = client.post(
+            "/api/ui-session",
+            json={},
+            headers=self._same_origin_post_headers(extra={"X-API-Key": self.secret_key}),
+        )
+        self.assertEqual(r_login2.status_code, 200)
+        csrf2 = r_login2.get_json()["csrf_token"]
+        cookie2 = self._extract_cookie_value(r_login2, UI_SESSION_COOKIE_NAME)
+
+        r_logout2 = client.delete("/api/ui-session", headers=self._same_origin_post_headers(csrf2))
+        self.assertEqual(r_logout2.status_code, 200)
+
+        with _revoked_ui_sessions_lock:
+            _revoked_ui_sessions.clear()
+
+        worker_b_client = app.test_client()
+        worker_b_client.set_cookie(UI_SESSION_COOKIE_NAME, cookie2)
+        self.assertEqual(
+            worker_b_client.post(
+                "/api/export-csv",
+                json={"leads": [{"Business Name": "Test"}]},
+                headers=self._same_origin_post_headers(csrf2),
+            ).status_code,
+            401,
+        )
+        self.assertEqual(self._extract_csrf(worker_b_client.get("/").data.decode("utf-8")), "")
+
+        # 3. Redis genuinely unconfigured in non-production single-process local dev -> local fallback works
+        set_redis_connection(None)
+        rate_limiter.set_redis_client(None)
+        os.environ["LEADHUNTER_ENV"] = "development"
+        os.environ.pop("REDIS_URL", None)
+        with _revoked_ui_sessions_lock:
+            _revoked_ui_sessions.clear()
+
+        c_local = app.test_client()
+        r_local_login = c_local.post(
+            "/api/ui-session",
+            json={},
+            headers=self._same_origin_post_headers(extra={"X-API-Key": self.secret_key}),
+        )
+        self.assertEqual(r_local_login.status_code, 200)
+        local_csrf = r_local_login.get_json()["csrf_token"]
+        local_cookie = self._extract_cookie_value(r_local_login, UI_SESSION_COOKIE_NAME)
+        local_nonce = local_cookie.split(".")[0]
+
+        self.assertFalse(_is_ui_session_revoked(local_nonce))
+        self.assertEqual(
+            c_local.post(
+                "/api/export-csv",
+                json={"leads": [{"Business Name": "Local"}]},
+                headers=self._same_origin_post_headers(local_csrf),
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            c_local.delete("/api/ui-session", headers=self._same_origin_post_headers(local_csrf)).status_code,
+            200,
+        )
+        self.assertTrue(_is_ui_session_revoked(local_nonce))
+        c_local_replay = app.test_client()
+        c_local_replay.set_cookie(UI_SESSION_COOKIE_NAME, local_cookie)
+        self.assertEqual(
+            c_local_replay.post(
+                "/api/export-csv",
+                json={"leads": [{"Business Name": "Local"}]},
+                headers=self._same_origin_post_headers(local_csrf),
+            ).status_code,
+            401,
+        )
+
+        # 4. Production with Redis unavailable (unconfigured OR QueueUnavailableError) MUST fail closed
+        os.environ["LEADHUNTER_ENV"] = "production"
+        os.environ.pop("REDIS_URL", None)
+        with _revoked_ui_sessions_lock:
+            _revoked_ui_sessions.clear()
+        self.assertTrue(_is_ui_session_revoked("a" * 32))
+        self.assertFalse(_revoke_ui_session_nonce("a" * 32, int(time.time()) + 300))
+
+        os.environ["REDIS_URL"] = "redis://redis:6379/0"
+        with patch("app.get_redis_connection", side_effect=QueueUnavailableError("prod redis down")):
+            with _revoked_ui_sessions_lock:
+                _revoked_ui_sessions.clear()
+            self.assertTrue(_is_ui_session_revoked("b" * 32))
+            self.assertFalse(_revoke_ui_session_nonce("b" * 32, int(time.time()) + 300))
+
+    def test_frontend_retry_after_and_bounded_polling_backoff_in_chromium(self):
+        from playwright.sync_api import sync_playwright
+
+        rendered_html = app.test_client().get("/").data.decode("utf-8")
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            try:
+                page = browser.new_page()
+                page.route(
+                    "**/*",
+                    lambda route: route.fulfill(status=200, body="", content_type="application/javascript")
+                    if not route.request.url.startswith(("http://localhost", "about:", "data:"))
+                    else route.continue_(),
+                )
+                page.route(
+                    "http://localhost/",
+                    lambda route: route.fulfill(status=200, body=rendered_html, content_type="text/html; charset=utf-8"),
+                )
+                page.goto("http://localhost/", wait_until="domcontentloaded")
+
+                res = page.evaluate("""async () => {
+                    const backoffSchedule = [0, 1, 2, 3, 4, 5, 10].map(a => getPollDelayMs(a));
+                    const parsedValid = parseRetryAfterMs({ headers: { get: () => '7' } });
+                    const parsedClamped = parseRetryAfterMs({ headers: { get: () => '999' } });
+                    const parsedFallback = parseRetryAfterMs({ headers: { get: () => 'not-a-number' } }, 3, 60);
+
+                    const recordedDelays = [];
+                    const origSetTimeout = window.setTimeout;
+                    window.setTimeout = (fn, ms) => {
+                        recordedDelays.push(ms);
+                        return origSetTimeout(fn, 1);
+                    };
+
+                    uiCsrfToken = 'csrf-retry-test';
+                    uiSessionActive = true;
+
+                    let statusCalls = 0;
+                    let resultCalls = 0;
+                    window.fetch = async (url, opts = {}) => {
+                        const mkResp = (status, obj, retryAfter = null) => ({
+                            ok: status >= 200 && status < 300,
+                            status,
+                            headers: {
+                                get: (k) => {
+                                    const kl = k.toLowerCase();
+                                    if (kl === 'content-type') return 'application/json';
+                                    if (kl === 'retry-after') return retryAfter;
+                                    return null;
+                                }
+                            },
+                            json: async () => obj
+                        });
+                        if (url === '/api/jobs' && opts.method === 'POST') {
+                            return mkResp(202, { success: true, job_id: 'job-backoff-1', status: 'queued' });
+                        }
+                        if (url === '/api/jobs/job-backoff-1') {
+                            statusCalls += 1;
+                            if (statusCalls === 1) return mkResp(429, { success: false, error: 'Rate limit exceeded.' }, '3');
+                            if (statusCalls === 2) return mkResp(200, { success: true, job_id: 'job-backoff-1', status: 'queued', progress: {} });
+                            if (statusCalls === 3) return mkResp(200, { success: true, job_id: 'job-backoff-1', status: 'started', progress: {} });
+                            return mkResp(200, { success: true, job_id: 'job-backoff-1', status: 'finished', progress: {} });
+                        }
+                        if (url === '/api/jobs/job-backoff-1/result') {
+                            resultCalls += 1;
+                            if (resultCalls === 1) return mkResp(429, { success: false, error: 'Rate limit exceeded.' }, '2');
+                            return mkResp(200, { success: true, status: 'finished', count: 1, data: { 'Business Name': 'Backoff Co', 'Website': 'https://example.com' } });
+                        }
+                        return mkResp(404, { success: false, error: 'Not found' });
+                    };
+
+                    const jobOut = await runAsyncScrapeJob({ url: 'https://example.com', type: 'website' });
+                    const jobDelays = recordedDelays.slice();
+                    recordedDelays.length = 0;
+
+                    // Verify bounded 429 retries stop cleanly after MAX_RATE_LIMIT_RETRIES (3)
+                    let always429Calls = 0;
+                    window.fetch = async (url) => {
+                        always429Calls += 1;
+                        return {
+                            ok: false,
+                            status: 429,
+                            headers: { get: (k) => k.toLowerCase() === 'retry-after' ? '1' : 'application/json' },
+                            json: async () => ({ success: false, error: 'Rate limit exceeded.' })
+                        };
+                    };
+                    const exhaustedOut = await runAsyncScrapeJob({ url: 'https://example.com', type: 'website' });
+                    const exhaustedDelays = recordedDelays.slice();
+
+                    return {
+                        backoffSchedule,
+                        parsedValid,
+                        parsedClamped,
+                        parsedFallback,
+                        jobDelays,
+                        exhaustedDelays,
+                        statusCalls,
+                        resultCalls,
+                        jobOut,
+                        always429Calls,
+                        exhaustedOut
+                    };
+                }""")
+
+                self.assertEqual(res["backoffSchedule"], [2000, 2500, 3000, 4000, 5000, 5000, 5000])
+                self.assertEqual(res["parsedValid"], 7000)
+                self.assertEqual(res["parsedClamped"], 60000)
+                self.assertEqual(res["parsedFallback"], 3000)
+                self.assertTrue(res["jobOut"]["success"])
+                self.assertEqual(res["statusCalls"], 4)
+                self.assertEqual(res["resultCalls"], 2)
+                # Delays: poll0(2000) -> 429 Retry-After(3000) -> poll1(2500) -> poll2(3000) -> result 429 Retry-After(2000)
+                self.assertEqual(res["jobDelays"], [2000, 3000, 2500, 3000, 2000])
+                # Bounded retries: 1 initial + 3 retries (1000ms each) = 4 total calls, returns clean non-auth 429 failure
+                self.assertEqual(res["always429Calls"], 4)
+                self.assertEqual(res["exhaustedDelays"], [1000, 1000, 1000])
+                self.assertFalse(res["exhaustedOut"]["success"])
+                self.assertEqual(res["exhaustedOut"]["status"], 429)
+                self.assertFalse(res["exhaustedOut"]["authError"])
+            finally:
+                browser.close()
+
+
 if __name__ == "__main__":
     unittest.main()
