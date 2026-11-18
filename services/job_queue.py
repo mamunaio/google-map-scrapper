@@ -37,6 +37,20 @@ class JobNotFoundError(KeyError):
     """Raised when a requested job ID does not exist or has expired."""
 
 
+class JobReservationConflictError(RuntimeError):
+    """
+    Retryable error raised when another caller owns an in-flight reservation that has not
+    yet committed a confirmed job within the bounded wait window.
+    """
+
+
+class JobReservationOwnershipError(RuntimeError):
+    """
+    Raised when reservation ownership is lost before job commit/promotion can be confirmed.
+    Prevents silently reporting success or overwriting another caller's reservation.
+    """
+
+
 _conn_lock = threading.Lock()
 _injected_connection = None
 _cached_connection = None
@@ -232,6 +246,14 @@ else
 end
 """
 
+_COMPARE_AND_EXTEND_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('expire', KEYS[1], tonumber(ARGV[2]))
+else
+    return 0
+end
+"""
+
 
 def _decode_redis_str(raw) -> str | None:
     if raw is None:
@@ -307,6 +329,87 @@ def _compare_and_swap_key(connection, key: str, expected_value: str, new_value: 
             logger.debug("Fallback CAS warning for key %s: %s", key, exc)
             return False
     return False
+
+
+def _compare_and_extend_key(connection, key: str, expected_value: str, ex: int) -> bool:
+    """Atomically extends TTL on `key` ONLY if its current value still equals `expected_value`."""
+    try:
+        extended = connection.eval(_COMPARE_AND_EXTEND_LUA, 1, key, expected_value, str(int(ex)))
+        return bool(int(extended))
+    except redis.ResponseError as exc:
+        if "unknown command" not in str(exc).lower() or "eval" not in str(exc).lower():
+            logger.debug("Error extending key %s: %s", key, exc)
+            return False
+    except Exception as exc:
+        logger.debug("Error extending key %s: %s", key, exc)
+        return False
+
+    # Atomic WATCH/MULTI/EXEC fallback for test emulators without Lua EVAL
+    for _ in range(10):
+        try:
+            with connection.pipeline() as pipe:
+                pipe.watch(key)
+                current_str = _decode_redis_str(pipe.get(key))
+                if current_str != expected_value:
+                    pipe.unwatch()
+                    return False
+                pipe.multi()
+                pipe.expire(key, int(ex))
+                pipe.execute()
+                return True
+        except redis.WatchError:
+            continue
+        except Exception as exc:
+            logger.debug("Fallback extend warning for key %s: %s", key, exc)
+            return False
+    return False
+
+
+class _ReservationLeaseRenewer:
+    """
+    Background ownership-safe lease renewer that periodically extends `dedup_key` TTL
+    while `queue.enqueue()` is executing. Never extends another owner's reservation;
+    records `ownership_lost=True` if renewal detects lost ownership.
+    """
+
+    def __init__(self, connection, key: str, expected_value: str, ttl_seconds: int, renew_interval: float | None = None):
+        self._connection = connection
+        self._key = key
+        self._expected_value = expected_value
+        self._ttl_seconds = max(1, int(ttl_seconds))
+        self._interval = (
+            float(renew_interval)
+            if renew_interval is not None
+            else max(0.05, self._ttl_seconds / 3.0)
+        )
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.ownership_lost = False
+        self.renew_count = 0
+
+    def _run(self):
+        while not self._stop_event.wait(self._interval):
+            ok = _compare_and_extend_key(
+                self._connection,
+                self._key,
+                self._expected_value,
+                self._ttl_seconds,
+            )
+            if ok:
+                self.renew_count += 1
+            else:
+                self.ownership_lost = True
+                return
+
+    def __enter__(self):
+        self._thread = threading.Thread(target=self._run, daemon=True, name="dedup-lease-renewer")
+        self._thread.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self._stop_event.set()
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
 
 
 def compute_job_dedup_key(
@@ -389,12 +492,18 @@ def enqueue_scrape_job(
     decision_maker: str = "",
     conn=None,
     require_worker: bool | None = None,
+    reservation_wait_seconds: float | None = None,
+    reservation_ttl_seconds: int | None = None,
+    lease_renew_interval_seconds: float | None = None,
 ) -> dict:
     """
     Submits a scrape/audit job to RQ with:
     - Redis reachability verification (`QueueUnavailableError` on failure)
     - Optional active worker verification (`WorkerUnavailableError` when required)
-    - Duplicate-job prevention for matching active jobs (`deduplicated=True`)
+    - Atomic pre-generated job ID reservation (`SET NX EX`) + ownership-safe lease renewal
+    - Strict confirmation guarantee: NEVER returns an unconfirmed in-flight Job ID; raises
+      retryable `JobReservationConflictError` if bounded wait expires while another caller
+      is still enqueueing, or `JobReservationOwnershipError` if ownership is lost before commit
     - Bounded retries (`JOB_MAX_RETRIES`, default 2, intervals [10s, 30s])
     - Job timeout (`JOB_TIMEOUT_SECONDS`, default 900s)
     - Result & failure TTL expiration (`JOB_RESULT_TTL_SECONDS`, `JOB_FAILURE_TTL_SECONDS`)
@@ -423,22 +532,27 @@ def enqueue_scrape_job(
     failure_ttl = get_int_env("JOB_FAILURE_TTL_SECONDS", 3600, min_value=60, max_value=86400)
     max_retries = get_int_env("JOB_MAX_RETRIES", 2, min_value=0, max_value=5)
     dedup_ttl = get_int_env("JOB_DEDUP_TTL_SECONDS", job_timeout, min_value=60, max_value=3600)
-    reservation_ttl = get_int_env(
-        "JOB_RESERVATION_TTL_SECONDS",
-        max(120, dedup_ttl),
-        min_value=30,
-        max_value=3600,
+    reservation_ttl = (
+        max(1, int(reservation_ttl_seconds))
+        if reservation_ttl_seconds is not None
+        else get_int_env("JOB_RESERVATION_TTL_SECONDS", 60, min_value=10, max_value=3600)
+    )
+    wait_timeout = (
+        max(0.01, float(reservation_wait_seconds))
+        if reservation_wait_seconds is not None
+        else get_int_env("JOB_RESERVATION_WAIT_MS", 1500, min_value=10, max_value=10000) / 1000.0
     )
 
     retry_policy = Retry(max=max_retries, interval=[10, 30][:max_retries] or 10) if max_retries > 0 else None
 
     # Pre-generate the RQ job ID before enqueueing so `SET dedup_key <reservation> NX EX`
-    # atomically claims ownership without relying on a short 15s lock lease.
+    # atomically claims ownership. Lease renewal maintains ownership during prolonged enqueues.
     reserved_job_id = str(uuid.uuid4())
     reservation_val = f"{RESERVING_PREFIX}{reserved_job_id}"
 
     acquired_reservation = False
-    for _attempt in range(15):
+    wait_deadline = time.monotonic() + wait_timeout
+    for _attempt in range(30):
         if connection.set(dedup_key, reservation_val, nx=True, ex=reservation_ttl):
             acquired_reservation = True
             break
@@ -448,42 +562,46 @@ def enqueue_scrape_job(
             # Key vanished between SET NX and GET; retry atomic reservation
             continue
 
-        # Case 1: Another caller currently holds an in-flight reservation for this exact payload
+        # Case 1: Another caller currently holds an in-flight reservation for this exact payload.
+        # NEVER return an unconfirmed Job ID — wait boundedly for either:
+        #   (a) owner commits -> transition to Case 2 (confirmed active job),
+        #   (b) owner fails & releases -> retry atomic reservation and enqueue, or
+        #   (c) wait deadline expires -> raise explicit retryable `JobReservationConflictError`.
         if existing_raw.startswith(RESERVING_PREFIX):
-            in_flight_job_id = existing_raw[len(RESERVING_PREFIX):]
-            # Poll briefly in case the owner finishes enqueueing or fails & releases immediately
-            poll_deadline = time.monotonic() + 0.20
-            while time.monotonic() < poll_deadline:
+            promoted_value = None
+            released = False
+            while time.monotonic() < wait_deadline:
                 latest_raw = _decode_redis_str(connection.get(dedup_key))
                 if not latest_raw:
-                    # Owner's enqueue failed and released the reservation; retry claiming it
+                    released = True
                     break
                 if not latest_raw.startswith(RESERVING_PREFIX):
-                    existing_raw = latest_raw
+                    promoted_value = latest_raw
                     break
                 time.sleep(0.015)
-            else:
-                # Owner is still actively enqueueing under `in_flight_job_id` — return winning job ID
-                # without ever spawning a duplicate job
-                try:
-                    existing_job = Job.fetch(in_flight_job_id, connection=connection)
-                    existing_status, _ = _normalize_job_status(existing_job)
-                except NoSuchJobError:
-                    existing_status = "queued"
-                logger.info(
-                    "Deduplicated job request against in-flight reservation; returning job_id=%s status=%s",
-                    in_flight_job_id,
-                    existing_status,
-                )
-                return {
-                    "job_id": in_flight_job_id,
-                    "status": existing_status,
-                    "deduplicated": True,
-                    "workers_online": workers_online,
-                }
 
-            if not _decode_redis_str(connection.get(dedup_key)):
+            if released:
+                # Owner failed and released its reservation; loop to atomically claim it
                 continue
+
+            if promoted_value is None:
+                # One final check at deadline boundary before returning retryable conflict
+                final_raw = _decode_redis_str(connection.get(dedup_key))
+                if not final_raw:
+                    continue
+                if not final_raw.startswith(RESERVING_PREFIX):
+                    promoted_value = final_raw
+                else:
+                    logger.info(
+                        "Bounded wait (%.2fs) expired while another job reservation is still in flight for key=%s",
+                        wait_timeout,
+                        dedup_key,
+                    )
+                    raise JobReservationConflictError(
+                        "An identical job submission is currently in progress; please retry shortly."
+                    )
+
+            existing_raw = promoted_value
 
         # Case 2: Committed job ID stored in `dedup_key`
         existing_id = existing_raw
@@ -492,7 +610,7 @@ def enqueue_scrape_job(
             existing_status, _ = _normalize_job_status(existing_job)
             if existing_status in ACTIVE_JOB_STATUSES:
                 logger.info(
-                    "Deduplicated job request; returning active job_id=%s status=%s",
+                    "Deduplicated job request; returning confirmed active job_id=%s status=%s",
                     existing_id,
                     existing_status,
                 )
@@ -512,42 +630,70 @@ def enqueue_scrape_job(
             break
 
     if not acquired_reservation:
-        raise QueueUnavailableError("Could not atomically reserve deduplication slot; please retry.")
+        raise JobReservationConflictError(
+            "An identical job submission is currently in progress; please retry shortly."
+        )
 
     queue = get_job_queue(conn=connection)
-    try:
-        job = queue.enqueue(
-            execute_scrape_job,
-            kwargs={
-                "url": url,
-                "scrape_type": scrape_type,
-                "max_results": max_results,
-                "business_name": business_name,
-                "decision_maker": decision_maker,
-            },
-            job_id=reserved_job_id,
-            job_timeout=job_timeout,
-            result_ttl=result_ttl,
-            failure_ttl=failure_ttl,
-            retry=retry_policy,
-            meta={
-                "stage": "queued",
-                "progress_pct": 0,
-                "processed_leads": 0,
-                "total_leads": max_results if scrape_type == "maps" else 1,
-                "message": "Queued for background processing",
-                "scrape_type": scrape_type,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            },
-        )
-    except Exception:
-        # Owner-safe cleanup: release `dedup_key` ONLY if it still holds our reservation token
-        _compare_and_delete_key(connection, dedup_key, reservation_val)
-        raise
+    with _ReservationLeaseRenewer(
+        connection,
+        dedup_key,
+        reservation_val,
+        ttl_seconds=reservation_ttl,
+        renew_interval=lease_renew_interval_seconds,
+    ) as renewer:
+        # Confirm ownership immediately before enqueueing
+        if _decode_redis_str(connection.get(dedup_key)) != reservation_val:
+            logger.error("Lost reservation ownership before enqueue for job_id=%s", reserved_job_id)
+            raise JobReservationOwnershipError(
+                "Reservation ownership was lost before job submission; please retry."
+            )
 
-    # Atomically promote reservation -> committed job ID with `dedup_ttl`
-    # (only if `dedup_key` still holds our reservation token; never overwrite another caller)
-    _compare_and_swap_key(connection, dedup_key, reservation_val, job.id, ex=dedup_ttl)
+        try:
+            job = queue.enqueue(
+                execute_scrape_job,
+                kwargs={
+                    "url": url,
+                    "scrape_type": scrape_type,
+                    "max_results": max_results,
+                    "business_name": business_name,
+                    "decision_maker": decision_maker,
+                },
+                job_id=reserved_job_id,
+                job_timeout=job_timeout,
+                result_ttl=result_ttl,
+                failure_ttl=failure_ttl,
+                retry=retry_policy,
+                meta={
+                    "stage": "queued",
+                    "progress_pct": 0,
+                    "processed_leads": 0,
+                    "total_leads": max_results if scrape_type == "maps" else 1,
+                    "message": "Queued for background processing",
+                    "scrape_type": scrape_type,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception:
+            # Owner-safe cleanup: release `dedup_key` ONLY if it still holds our reservation token
+            _compare_and_delete_key(connection, dedup_key, reservation_val)
+            raise
+
+    # Verify ownership was NOT lost during prolonged enqueue and atomically promote
+    # `"reserving:<job_id>"` -> `"<job_id>"` with `dedup_ttl`.
+    # Never silently report success if ownership was lost or promotion fails.
+    if renewer.ownership_lost:
+        logger.error("Reservation ownership was lost during enqueue for job_id=%s", job.id)
+        raise JobReservationOwnershipError(
+            "Reservation ownership was lost before job commit could be confirmed."
+        )
+
+    promoted = _compare_and_swap_key(connection, dedup_key, reservation_val, job.id, ex=dedup_ttl)
+    if not promoted:
+        logger.error("Failed to promote reservation for job_id=%s: ownership lost before commit", job.id)
+        raise JobReservationOwnershipError(
+            "Reservation ownership was lost before job commit could be confirmed."
+        )
 
     logger.info("Enqueued background job_id=%s type=%s max_results=%d", job.id, scrape_type, max_results)
     return {

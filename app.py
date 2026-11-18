@@ -19,6 +19,8 @@ from whitenoise import WhiteNoise
 from services.browser_runtime import check_chromium_available
 from services.job_queue import (
     JobNotFoundError,
+    JobReservationConflictError,
+    JobReservationOwnershipError,
     QueueUnavailableError,
     WorkerUnavailableError,
     check_redis_health,
@@ -368,6 +370,28 @@ def create_job_api():
             "poll_url": f"/api/jobs/{job_id}",
             "result_url": f"/api/jobs/{job_id}/result",
         }), 202
+    except JobReservationConflictError:
+        logger.info("Job submission conflict: identical reservation already in progress")
+        resp = jsonify({
+            "success": False,
+            "code": "reservation_in_progress",
+            "retryable": True,
+            "error": "An identical job submission is currently in progress. Please retry shortly.",
+        })
+        resp.status_code = 409
+        resp.headers["Retry-After"] = "1"
+        return resp
+    except JobReservationOwnershipError:
+        logger.error("Job submission failed: reservation ownership lost before commit")
+        resp = jsonify({
+            "success": False,
+            "code": "reservation_ownership_lost",
+            "retryable": True,
+            "error": "Job submission could not be confirmed due to lost reservation ownership. Please retry.",
+        })
+        resp.status_code = 409
+        resp.headers["Retry-After"] = "1"
+        return resp
     except QueueUnavailableError:
         logger.error("Failed to enqueue job: Redis queue unavailable")
         return jsonify({

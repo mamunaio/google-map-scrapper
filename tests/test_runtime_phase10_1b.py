@@ -76,6 +76,7 @@ class _BasePhase101BTestCase(unittest.TestCase):
             "JOB_FAILURE_TTL_SECONDS",
             "JOB_DEDUP_TTL_SECONDS",
             "JOB_RESERVATION_TTL_SECONDS",
+            "JOB_RESERVATION_WAIT_MS",
             "JOB_MAX_RETRIES",
             "WORKER_HEARTBEAT_MAX_AGE_SECONDS",
             "WORKER_TTL_SECONDS",
@@ -458,11 +459,11 @@ class TestRqJobLifecycleAndContracts(_BasePhase101BTestCase):
         self.assertFalse(after_failed["deduplicated"])
         self.assertNotEqual(after_failed["job_id"], ok_after_fail["job_id"])
 
-    def test_delayed_enqueue_beyond_former_15s_lease_preserves_single_job_and_owner_safe_cleanup(self):
+    def test_delayed_enqueue_waits_for_confirmation_or_returns_retryable_conflict_never_unconfirmed_id(self):
         from rq import Queue
         from services.job_queue import (
+            JobReservationConflictError,
             RESERVING_PREFIX,
-            _compare_and_delete_key,
             compute_job_dedup_key,
         )
 
@@ -480,7 +481,6 @@ class TestRqJobLifecycleAndContracts(_BasePhase101BTestCase):
 
         def delayed_enqueue(self_q, *args, **kwargs):
             caller1_in_enqueue.set()
-            # Simulates an arbitrarily delayed enqueue (well beyond former 15s lock lease)
             release_caller1.wait(timeout=5.0)
             return orig_enqueue(self_q, *args, **kwargs)
 
@@ -494,26 +494,63 @@ class TestRqJobLifecycleAndContracts(_BasePhase101BTestCase):
             t1.start()
             self.assertTrue(caller1_in_enqueue.wait(timeout=3.0))
 
-            # Verify reservation key exists with TTL far exceeding old 15s lock (and holds reserving:<job_id>)
+            # Verify reservation key exists in reserving:<job_id> state
             raw_res = conn1.get(dedup_key).decode("utf-8")
             self.assertTrue(raw_res.startswith(RESERVING_PREFIX))
-            self.assertGreaterEqual(conn1.ttl(dedup_key), 120)
 
-            # Caller 2 arrives while Caller 1 is still stalled in Queue.enqueue()
-            results["c2"] = enqueue_scrape_job(url=url, scrape_type="maps", max_results=20, conn=conn2)
+            # Scenario A: Caller B's bounded wait expires while Caller A remains in-flight
+            # -> MUST raise retryable JobReservationConflictError, NEVER return an unconfirmed Job ID
+            with self.assertRaises(JobReservationConflictError):
+                enqueue_scrape_job(
+                    url=url,
+                    scrape_type="maps",
+                    max_results=20,
+                    conn=conn2,
+                    reservation_wait_seconds=0.05,
+                )
 
-            # Now let Caller 1 finish enqueueing
+            # Verify API layer maps in-flight wait expiry to HTTP 409 retryable with NO job_id
+            set_redis_connection(conn2)
+            os.environ["JOB_RESERVATION_WAIT_MS"] = "40"
+            with patch("app.validate_google_maps_url", side_effect=lambda u: u):
+                r_conflict = self.client.post(
+                    "/api/jobs",
+                    json={"url": url, "type": "maps", "max_results": 20},
+                    headers=self.auth,
+                )
+            self.assertEqual(r_conflict.status_code, 409)
+            conflict_body = json.loads(r_conflict.data)
+            self.assertFalse(conflict_body["success"])
+            self.assertEqual(conflict_body["code"], "reservation_in_progress")
+            self.assertTrue(conflict_body["retryable"])
+            self.assertNotIn("job_id", conflict_body)
+            self.assertIn("Retry-After", r_conflict.headers)
+
+            # Scenario B: Caller C waits while Caller A commits -> receives CONFIRMED winning job_id
+            t_waiter = threading.Thread(
+                target=lambda: results.__setitem__(
+                    "c3",
+                    enqueue_scrape_job(
+                        url=url,
+                        scrape_type="maps",
+                        max_results=20,
+                        conn=conn2,
+                        reservation_wait_seconds=2.0,
+                    ),
+                )
+            )
+            t_waiter.start()
             release_caller1.set()
             t1.join(timeout=3.0)
+            t_waiter.join(timeout=3.0)
 
-        # Exactly ONE active job exists in the queue and BOTH callers receive the exact same job ID
+        # Exactly ONE active job exists in the queue and BOTH Caller A and confirmed waiter share its ID
         q = get_job_queue(conn=conn1)
         self.assertEqual(len(q), 1)
-        self.assertEqual(results["c1"]["job_id"], results["c2"]["job_id"])
+        self.assertEqual(results["c1"]["job_id"], results["c3"]["job_id"])
         self.assertFalse(results["c1"]["deduplicated"])
-        self.assertTrue(results["c2"]["deduplicated"])
+        self.assertTrue(results["c3"]["deduplicated"])
         self.assertEqual(q.job_ids, [results["c1"]["job_id"]])
-        # Reservation promoted cleanly to committed job ID
         self.assertEqual(conn1.get(dedup_key).decode("utf-8"), results["c1"]["job_id"])
 
         # Expired (missing) RQ job hash on committed dedup key allows clean atomic replacement
@@ -523,27 +560,147 @@ class TestRqJobLifecycleAndContracts(_BasePhase101BTestCase):
         self.assertFalse(after_expired["deduplicated"])
         self.assertNotEqual(after_expired["job_id"], results["c1"]["job_id"])
 
-        # Owner-safe cleanup: failed enqueue releases ONLY its own reservation and NEVER deletes another caller's
-        other_url = "https://owner-safe.example.com"
-        other_dedup_key = compute_job_dedup_key(url=other_url, scrape_type="website", max_results=20)
+    def test_waiting_caller_acquires_and_enqueues_when_first_owner_fails(self):
+        from rq import Queue
+
+        shared_server = fakeredis.FakeServer()
+        conn_a = fakeredis.FakeRedis(server=shared_server)
+        conn_b = fakeredis.FakeRedis(server=shared_server)
+        url = "https://fail-then-takeover.example.com"
+
+        orig_enqueue = Queue.enqueue
+        a_in_enqueue = threading.Event()
+        let_a_fail = threading.Event()
+        call_count = {"n": 0}
+        outcomes = {}
+
+        def first_fails_second_succeeds(self_q, *args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                a_in_enqueue.set()
+                let_a_fail.wait(timeout=5.0)
+                raise RuntimeError("Transient enqueue failure for Caller A")
+            return orig_enqueue(self_q, *args, **kwargs)
+
+        with patch.object(Queue, "enqueue", first_fails_second_succeeds):
+            def run_a():
+                try:
+                    outcomes["a"] = enqueue_scrape_job(url=url, scrape_type="website", max_results=20, conn=conn_a)
+                except RuntimeError as exc:
+                    outcomes["a_error"] = str(exc)
+
+            def run_b():
+                outcomes["b"] = enqueue_scrape_job(
+                    url=url,
+                    scrape_type="website",
+                    max_results=20,
+                    conn=conn_b,
+                    reservation_wait_seconds=2.0,
+                )
+
+            ta = threading.Thread(target=run_a)
+            ta.start()
+            self.assertTrue(a_in_enqueue.wait(timeout=3.0))
+
+            tb = threading.Thread(target=run_b)
+            tb.start()
+            time.sleep(0.05)  # Ensure Caller B is actively waiting on Caller A's reservation
+            let_a_fail.set()
+            ta.join(timeout=3.0)
+            tb.join(timeout=3.0)
+
+        self.assertIn("Transient enqueue failure", outcomes.get("a_error", ""))
+        self.assertIn("b", outcomes)
+        self.assertFalse(outcomes["b"]["deduplicated"])
+        q = get_job_queue(conn=conn_b)
+        self.assertEqual(len(q), 1)
+        self.assertEqual(q.job_ids, [outcomes["b"]["job_id"]])
+
+    def test_prolonged_enqueue_lease_renewal_and_lost_ownership_error_and_owner_safe_cleanup(self):
+        from rq import Queue
+        from services.job_queue import (
+            JobReservationOwnershipError,
+            RESERVING_PREFIX,
+            _compare_and_delete_key,
+            _compare_and_extend_key,
+            compute_job_dedup_key,
+        )
+
+        shared_server = fakeredis.FakeServer()
+        conn = fakeredis.FakeRedis(server=shared_server)
+
+        # 1. Lease renewal keeps reservation alive during delayed enqueue (TTL approaches expiry)
+        url_renew = "https://lease-renew.example.com"
+        dedup_renew = compute_job_dedup_key(url=url_renew, scrape_type="website", max_results=20)
+        orig_enqueue = Queue.enqueue
+        extend_calls = {"count": 0}
+        orig_extend = _compare_and_extend_key
+        renewed_evt = threading.Event()
+
+        def tracked_extend(c, k, expected, ex):
+            ok = orig_extend(c, k, expected, ex)
+            if ok and k == dedup_renew:
+                extend_calls["count"] += 1
+                renewed_evt.set()
+            return ok
+
+        def slow_enqueue_until_renewed(self_q, *args, **kwargs):
+            # Hold until background lease renewer has renewed at least once
+            self.assertTrue(renewed_evt.wait(timeout=2.0))
+            return orig_enqueue(self_q, *args, **kwargs)
+
+        with patch("services.job_queue._compare_and_extend_key", side_effect=tracked_extend), \
+             patch.object(Queue, "enqueue", slow_enqueue_until_renewed):
+            res_renewed = enqueue_scrape_job(
+                url=url_renew,
+                scrape_type="website",
+                max_results=20,
+                conn=conn,
+                reservation_ttl_seconds=2,
+                lease_renew_interval_seconds=0.05,
+            )
+
+        self.assertGreaterEqual(extend_calls["count"], 1)
+        self.assertFalse(res_renewed["deduplicated"])
+        self.assertEqual(conn.get(dedup_renew).decode("utf-8"), res_renewed["job_id"])
+
+        # 2. Reservation ownership lost before promotion -> MUST raise JobReservationOwnershipError
+        # (never silently report success, and never overwrite another owner's reservation)
+        url_lost = "https://lost-ownership.example.com"
+        dedup_lost = compute_job_dedup_key(url=url_lost, scrape_type="website", max_results=20)
+        hijack_val = f"{RESERVING_PREFIX}other-active-owner"
+
+        def enqueue_while_ownership_lost(self_q, *args, **kwargs):
+            j = orig_enqueue(self_q, *args, **kwargs)
+            # Simulate external ownership takeover before promotion
+            conn.set(dedup_lost, hijack_val, ex=300)
+            return j
+
+        with patch.object(Queue, "enqueue", enqueue_while_ownership_lost):
+            with self.assertRaises(JobReservationOwnershipError):
+                enqueue_scrape_job(url=url_lost, scrape_type="website", max_results=20, conn=conn)
+
+        # Other owner's reservation must remain intact (not overwritten!)
+        self.assertEqual(conn.get(dedup_lost).decode("utf-8"), hijack_val)
+
+        # 3. Enqueue failure cleanup never deletes another owner's reservation
+        url_owner_safe = "https://owner-safe.example.com"
+        dedup_safe = compute_job_dedup_key(url=url_owner_safe, scrape_type="website", max_results=20)
         other_owner_val = f"{RESERVING_PREFIX}other-caller-job-id"
 
         def fail_after_owner_swap(self_q, *args, **kwargs):
-            # Simulate another caller now owning the key before this caller fails
-            conn1.set(other_dedup_key, other_owner_val, ex=300)
+            conn.set(dedup_safe, other_owner_val, ex=300)
             raise RuntimeError("Simulated delayed enqueue failure")
 
         with patch.object(Queue, "enqueue", fail_after_owner_swap):
             with self.assertRaises(RuntimeError):
-                enqueue_scrape_job(url=other_url, scrape_type="website", max_results=20, conn=conn1)
+                enqueue_scrape_job(url=url_owner_safe, scrape_type="website", max_results=20, conn=conn)
 
-        # Caller 2's reservation MUST remain intact
-        self.assertEqual(conn1.get(other_dedup_key).decode("utf-8"), other_owner_val)
-        # Wrong owner cannot delete it; actual owner CAN delete it
-        self.assertFalse(_compare_and_delete_key(conn1, other_dedup_key, f"{RESERVING_PREFIX}wrong-id"))
-        self.assertEqual(conn1.get(other_dedup_key).decode("utf-8"), other_owner_val)
-        self.assertTrue(_compare_and_delete_key(conn1, other_dedup_key, other_owner_val))
-        self.assertIsNone(conn1.get(other_dedup_key))
+        self.assertEqual(conn.get(dedup_safe).decode("utf-8"), other_owner_val)
+        self.assertFalse(_compare_and_delete_key(conn, dedup_safe, f"{RESERVING_PREFIX}wrong-id"))
+        self.assertEqual(conn.get(dedup_safe).decode("utf-8"), other_owner_val)
+        self.assertTrue(_compare_and_delete_key(conn, dedup_safe, other_owner_val))
+        self.assertIsNone(conn.get(dedup_safe))
 
 
 # =============================================================================
