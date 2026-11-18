@@ -23,7 +23,9 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 
 # Install Playwright Chromium and required Debian system libraries as root,
 # then grant read/execute access to non-root runtime user
-RUN playwright install --with-deps chromium \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libatomic1 \
+    && playwright install --with-deps chromium \
     && chmod -R a+rX /ms-playwright \
     && rm -rf /var/lib/apt/lists/*
 
