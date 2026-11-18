@@ -7,6 +7,8 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /healthz
     envVars:
+      - key: SERVICE_ROLE
+        value: web
       - key: LEADHUNTER_ENV
         value: production
       - key: LOG_LEVEL
@@ -31,6 +33,8 @@ services:
         value: "30"
       - key: RATE_LIMIT_WINDOW_SECONDS
         value: "60"
+      - key: RATE_LIMIT_FAIL_CLOSED
+        value: "true"
       - key: REDIS_URL
         fromService:
           type: redis
@@ -48,6 +52,8 @@ services:
     dockerfilePath: ./Dockerfile
     dockerCommand: python worker.py
     envVars:
+      - key: SERVICE_ROLE
+        value: worker
       - key: LEADHUNTER_ENV
         value: production
       - key: LOG_LEVEL

@@ -8,6 +8,8 @@ import hashlib
 import logging
 import os
 import threading
+import time
+import uuid
 from datetime import datetime, timezone
 
 import redis
@@ -98,13 +100,108 @@ def check_redis_health(conn=None) -> tuple[bool, str]:
 
 def count_active_workers(conn=None) -> int:
     """Returns the number of registered active RQ workers listening on the configured queue."""
+    health = check_worker_health(conn=conn)
+    return int(health["online"])
+
+
+def check_worker_health(conn=None) -> dict:
+    """
+    Verifies background worker availability using Redis connectivity and live RQ worker
+    registration/heartbeat state on the configured queue (no HTTP server required on workers).
+    """
     try:
         connection = conn if conn is not None else get_redis_connection()
+        if not connection.ping():
+            return {
+                "ok": False,
+                "redis_ok": False,
+                "online": 0,
+                "detail": "Redis ping returned false",
+            }
         q = get_job_queue(conn=connection)
         workers = Worker.all(queue=q)
-        return len(workers)
-    except Exception:
-        return 0
+        active_workers = []
+        for w in workers:
+            try:
+                state = w.get_state()
+                if state != "dead":
+                    active_workers.append(w)
+            except Exception:
+                active_workers.append(w)
+        online = len(active_workers)
+        return {
+            "ok": online >= 1,
+            "redis_ok": True,
+            "online": online,
+            "detail": (
+                f"{online} active RQ worker(s) registered"
+                if online >= 1
+                else "No active RQ workers registered"
+            ),
+        }
+    except QueueUnavailableError as exc:
+        return {
+            "ok": False,
+            "redis_ok": False,
+            "online": 0,
+            "detail": str(exc),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "redis_ok": False,
+            "online": 0,
+            "detail": f"Worker health check failed: {exc.__class__.__name__}",
+        }
+
+
+_RELEASE_LOCK_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+else
+    return 0
+end
+"""
+
+
+def _acquire_dedup_lock(connection, lock_key: str, lock_token: str, lock_ttl: int = 15, wait_timeout: float = 3.0) -> bool:
+    """Acquires an atomic per-dedup-key Redis lock using `SET NX EX`."""
+    deadline = time.monotonic() + wait_timeout
+    while True:
+        if connection.set(lock_key, lock_token, nx=True, ex=lock_ttl):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.015)
+
+
+def _release_dedup_lock(connection, lock_key: str, lock_token: str):
+    """Atomically releases the dedup lock ONLY if still owned by `lock_token`."""
+    try:
+        connection.eval(_RELEASE_LOCK_LUA, 1, lock_key, lock_token)
+        return
+    except redis.ResponseError as exc:
+        if "unknown command" not in str(exc).lower() or "eval" not in str(exc).lower():
+            logger.debug("Error releasing dedup lock %s: %s", lock_key, exc)
+            return
+    except Exception as exc:
+        logger.debug("Error releasing dedup lock %s: %s", lock_key, exc)
+        return
+
+    # Atomic WATCH/MULTI/EXEC fallback for test emulators without Lua EVAL
+    try:
+        with connection.pipeline() as pipe:
+            pipe.watch(lock_key)
+            current = pipe.get(lock_key)
+            current_str = current.decode("utf-8") if isinstance(current, bytes) else (str(current) if current is not None else None)
+            if current_str == lock_token:
+                pipe.multi()
+                pipe.delete(lock_key)
+                pipe.execute()
+            else:
+                pipe.unwatch()
+    except Exception as exc:
+        logger.debug("Fallback release warning for dedup lock %s: %s", lock_key, exc)
 
 
 def compute_job_dedup_key(
@@ -215,27 +312,8 @@ def enqueue_scrape_job(
         business_name=business_name,
         decision_maker=decision_maker,
     )
-
-    # Duplicate-job check: return existing active job if identical job is queued/running
-    try:
-        existing_id_bytes = connection.get(dedup_key)
-        if existing_id_bytes:
-            existing_id = existing_id_bytes.decode("utf-8") if isinstance(existing_id_bytes, bytes) else str(existing_id_bytes)
-            try:
-                existing_job = Job.fetch(existing_id, connection=connection)
-                existing_status, _ = _normalize_job_status(existing_job)
-                if existing_status in ACTIVE_JOB_STATUSES:
-                    logger.info("Deduplicated job request; returning active job_id=%s status=%s", existing_id, existing_status)
-                    return {
-                        "job_id": existing_job.id,
-                        "status": existing_status,
-                        "deduplicated": True,
-                        "workers_online": workers_online,
-                    }
-            except NoSuchJobError:
-                pass
-    except Exception as exc:
-        logger.debug("Dedup lookup warning: %s", exc)
+    lock_key = f"{dedup_key}:lock"
+    lock_token = uuid.uuid4().hex
 
     job_timeout = get_int_env("JOB_TIMEOUT_SECONDS", 900, min_value=30, max_value=3600)
     result_ttl = get_int_env("JOB_RESULT_TTL_SECONDS", 3600, min_value=60, max_value=86400)
@@ -245,43 +323,82 @@ def enqueue_scrape_job(
 
     retry_policy = Retry(max=max_retries, interval=[10, 30][:max_retries] or 10) if max_retries > 0 else None
 
-    queue = get_job_queue(conn=connection)
-    job = queue.enqueue(
-        execute_scrape_job,
-        kwargs={
-            "url": url,
-            "scrape_type": scrape_type,
-            "max_results": max_results,
-            "business_name": business_name,
-            "decision_maker": decision_maker,
-        },
-        job_timeout=job_timeout,
-        result_ttl=result_ttl,
-        failure_ttl=failure_ttl,
-        retry=retry_policy,
-        meta={
-            "stage": "queued",
-            "progress_pct": 0,
-            "processed_leads": 0,
-            "total_leads": max_results if scrape_type == "maps" else 1,
-            "message": "Queued for background processing",
-            "scrape_type": scrape_type,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        },
-    )
+    if not _acquire_dedup_lock(connection, lock_key, lock_token, lock_ttl=15, wait_timeout=3.0):
+        raise QueueUnavailableError("Could not acquire job deduplication lock in time; please retry.")
 
     try:
-        connection.set(dedup_key, job.id, ex=dedup_ttl)
-    except Exception as exc:
-        logger.debug("Could not write dedup key for job %s: %s", job.id, exc)
+        # Race-safe duplicate-job check inside atomic Redis lock
+        existing_id_bytes = connection.get(dedup_key)
+        if existing_id_bytes:
+            existing_id = (
+                existing_id_bytes.decode("utf-8")
+                if isinstance(existing_id_bytes, bytes)
+                else str(existing_id_bytes)
+            )
+            try:
+                existing_job = Job.fetch(existing_id, connection=connection)
+                existing_status, _ = _normalize_job_status(existing_job)
+                if existing_status in ACTIVE_JOB_STATUSES:
+                    logger.info(
+                        "Deduplicated job request; returning active job_id=%s status=%s",
+                        existing_id,
+                        existing_status,
+                    )
+                    return {
+                        "job_id": existing_job.id,
+                        "status": existing_status,
+                        "deduplicated": True,
+                        "workers_online": workers_online,
+                    }
+                # Previous job reached a terminal state (finished/failed/timed_out/canceled): clear stale key
+                connection.delete(dedup_key)
+            except NoSuchJobError:
+                # Previous job expired from Redis: clear stale key
+                connection.delete(dedup_key)
 
-    logger.info("Enqueued background job_id=%s type=%s max_results=%d", job.id, scrape_type, max_results)
-    return {
-        "job_id": job.id,
-        "status": "queued",
-        "deduplicated": False,
-        "workers_online": workers_online,
-    }
+        queue = get_job_queue(conn=connection)
+        try:
+            job = queue.enqueue(
+                execute_scrape_job,
+                kwargs={
+                    "url": url,
+                    "scrape_type": scrape_type,
+                    "max_results": max_results,
+                    "business_name": business_name,
+                    "decision_maker": decision_maker,
+                },
+                job_timeout=job_timeout,
+                result_ttl=result_ttl,
+                failure_ttl=failure_ttl,
+                retry=retry_policy,
+                meta={
+                    "stage": "queued",
+                    "progress_pct": 0,
+                    "processed_leads": 0,
+                    "total_leads": max_results if scrape_type == "maps" else 1,
+                    "message": "Queued for background processing",
+                    "scrape_type": scrape_type,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            connection.set(dedup_key, job.id, ex=dedup_ttl)
+        except Exception:
+            # Ensure no stale reservation remains if enqueueing or recording fails
+            try:
+                connection.delete(dedup_key)
+            except Exception:
+                pass
+            raise
+
+        logger.info("Enqueued background job_id=%s type=%s max_results=%d", job.id, scrape_type, max_results)
+        return {
+            "job_id": job.id,
+            "status": "queued",
+            "deduplicated": False,
+            "workers_online": workers_online,
+        }
+    finally:
+        _release_dedup_lock(connection, lock_key, lock_token)
 
 
 def get_job_status_payload(job_id: str, conn=None) -> dict:

@@ -1,15 +1,18 @@
 """
 LeadHunter Studio — Dedicated RQ Background Worker Entrypoint.
 Runs in a separate container/process using the same application Docker image as the web service.
+Supports `--healthcheck` to verify Redis connectivity and live RQ worker heartbeat/registration
+without requiring an HTTP server inside the worker container.
 """
 
+import argparse
 import logging
 import os
 import sys
 
 from rq import SimpleWorker, Worker
 
-from services.job_queue import get_job_queue, get_redis_connection
+from services.job_queue import check_worker_health, get_job_queue, get_redis_connection
 from services.runtime_config import configure_logging, validate_startup_config
 
 
@@ -22,7 +25,29 @@ def create_worker(conn=None):
     return worker_cls([queue], connection=connection)
 
 
-def main():
+def run_worker_healthcheck(conn=None) -> tuple[bool, dict]:
+    """
+    Verifies worker container health via Redis connectivity and active RQ worker registration.
+    Returns `(is_healthy, health_details)`.
+    """
+    details = check_worker_health(conn=conn)
+    is_healthy = bool(details.get("redis_ok") and details.get("ok"))
+    return is_healthy, details
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="LeadHunter RQ Background Worker")
+    parser.add_argument(
+        "--healthcheck",
+        action="store_true",
+        help="Check Redis connectivity and active RQ worker registration, then exit 0 (healthy) or 1 (unhealthy).",
+    )
+    args = parser.parse_args(argv)
+
+    if args.healthcheck:
+        healthy, details = run_worker_healthcheck()
+        sys.exit(0 if healthy else 1)
+
     # Conservative default concurrency for worker containers unless explicitly overridden
     os.environ.setdefault("BROWSER_MAX_CONCURRENCY", "1")
     configure_logging()

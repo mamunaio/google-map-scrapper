@@ -9,6 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     CONTAINER=true \
+    SERVICE_ROLE=web \
     PORT=5000
 
 WORKDIR /app
@@ -38,8 +39,11 @@ USER appuser
 
 EXPOSE 5000
 
+# Role-aware healthcheck:
+# - Web container (SERVICE_ROLE=web): HTTP liveness probe against /healthz
+# - Worker container (SERVICE_ROLE=worker): Redis connectivity & RQ worker heartbeat probe (no HTTP server)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import os, urllib.request; port = os.getenv('PORT', '5000'); urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=3)" || exit 1
+    CMD python -c "import os, sys, urllib.request; role = os.getenv('SERVICE_ROLE', 'web').strip().lower(); sys.exit(0 if (__import__('worker').run_worker_healthcheck()[0]) else 1) if role == 'worker' else urllib.request.urlopen(f'http://127.0.0.1:{os.getenv(\"PORT\", \"5000\")}/healthz', timeout=3)" || exit 1
 
 # Default command starts the production Gunicorn web server.
 # The Render background worker overrides this with: python worker.py

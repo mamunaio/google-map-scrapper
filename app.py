@@ -22,6 +22,7 @@ from services.job_queue import (
     QueueUnavailableError,
     WorkerUnavailableError,
     check_redis_health,
+    check_worker_health,
     count_active_workers,
     enqueue_scrape_job,
     get_job_result_payload,
@@ -277,21 +278,28 @@ def readyz():
     Readiness endpoint checking required runtime dependencies without exposing secrets:
     - LEADHUNTER_API_KEY presence
     - Redis broker connectivity (required when REDIS_URL is configured or in production)
-    - Active RQ worker visibility (required when REQUIRE_ACTIVE_WORKER=true)
+    - Active RQ worker heartbeat/registration (required in production or when REQUIRE_ACTIVE_WORKER=true)
     - Playwright Chromium executable availability
     """
     prod = is_production_env()
     api_key_ok = bool(get_configured_api_key())
     redis_configured = bool(get_redis_url())
     require_redis = prod or redis_configured
-    require_worker = get_bool_env("REQUIRE_ACTIVE_WORKER", False)
+    require_worker = get_bool_env("REQUIRE_ACTIVE_WORKER", default=prod)
 
     if require_redis:
         redis_ok, redis_msg = check_redis_health()
-        workers_online = count_active_workers() if redis_ok else 0
+        worker_health = check_worker_health() if redis_ok else {
+            "ok": False,
+            "online": 0,
+            "detail": "Skipped (Redis unavailable)",
+        }
+        workers_online = int(worker_health.get("online", 0))
+        worker_detail = str(worker_health.get("detail", ""))
     else:
         redis_ok, redis_msg = True, "Redis not configured (local fallback mode)"
         workers_online = 0
+        worker_detail = "Background worker not required in local fallback mode"
 
     chromium_ok, chromium_msg = check_chromium_available()
     worker_ok = (workers_online >= 1) if require_worker else True
@@ -302,7 +310,12 @@ def readyz():
         "checks": {
             "api_key_configured": api_key_ok,
             "redis": {"ok": redis_ok, "detail": redis_msg},
-            "workers": {"ok": worker_ok, "online": workers_online, "required": require_worker},
+            "workers": {
+                "ok": worker_ok,
+                "online": workers_online,
+                "required": require_worker,
+                "detail": worker_detail,
+            },
             "chromium": {"ok": chromium_ok, "detail": chromium_msg},
         },
     }

@@ -387,6 +387,74 @@ class TestRqJobLifecycleAndContracts(_BasePhase101BTestCase):
         # Unknown job ID -> 404
         self.assertEqual(self.client.get("/api/jobs/does-not-exist-123", headers=self.auth).status_code, 404)
 
+    def test_concurrent_duplicate_job_submissions_create_only_one_job_and_cleanup_on_failure(self):
+        from services.job_queue import compute_job_dedup_key
+
+        shared_server = fakeredis.FakeServer()
+        target_url = "https://www.google.com/maps/search/HVAC+Dallas+TX"
+        barrier = threading.Barrier(12)
+
+        def submit_independent_caller(_idx):
+            # Independent Redis client per caller sharing the same Redis server
+            conn = fakeredis.FakeRedis(server=shared_server)
+            barrier.wait(timeout=3.0)
+            return enqueue_scrape_job(
+                url=target_url,
+                scrape_type="maps",
+                max_results=20,
+                conn=conn,
+            )
+
+        with ThreadPoolExecutor(max_workers=12) as ex:
+            results = list(ex.map(submit_independent_caller, range(12)))
+
+        job_ids = {r["job_id"] for r in results}
+        fresh_count = sum(1 for r in results if not r["deduplicated"])
+        dedup_count = sum(1 for r in results if r["deduplicated"])
+
+        self.assertEqual(len(job_ids), 1, f"Expected exactly 1 unique job ID, got {job_ids}")
+        self.assertEqual(fresh_count, 1)
+        self.assertEqual(dedup_count, 11)
+
+        inspect_conn = fakeredis.FakeRedis(server=shared_server)
+        q = get_job_queue(conn=inspect_conn)
+        self.assertEqual(len(q), 1)
+
+        # Ensure reservation & lock cleanup if queue.enqueue fails
+        dedup_key = compute_job_dedup_key(url="https://fail-enqueue.example.com", scrape_type="website", max_results=20)
+        lock_key = f"{dedup_key}:lock"
+        with patch("services.job_queue.Queue.enqueue", side_effect=RuntimeError("Simulated enqueue error")):
+            with self.assertRaises(RuntimeError):
+                enqueue_scrape_job(
+                    url="https://fail-enqueue.example.com",
+                    scrape_type="website",
+                    max_results=20,
+                    conn=inspect_conn,
+                )
+        self.assertIsNone(inspect_conn.get(dedup_key))
+        self.assertIsNone(inspect_conn.get(lock_key))
+
+        # Next submission after failed enqueue must succeed cleanly (not blocked)
+        ok_after_fail = enqueue_scrape_job(
+            url="https://fail-enqueue.example.com",
+            scrape_type="website",
+            max_results=20,
+            conn=inspect_conn,
+        )
+        self.assertFalse(ok_after_fail["deduplicated"])
+
+        # After previous job finishes or fails or expires, a new identical job is NOT blocked
+        j = Job.fetch(ok_after_fail["job_id"], connection=inspect_conn)
+        j.set_status(JobStatus.FAILED)
+        after_failed = enqueue_scrape_job(
+            url="https://fail-enqueue.example.com",
+            scrape_type="website",
+            max_results=20,
+            conn=inspect_conn,
+        )
+        self.assertFalse(after_failed["deduplicated"])
+        self.assertNotEqual(after_failed["job_id"], ok_after_fail["job_id"])
+
 
 # =============================================================================
 # 2. CONCURRENCY, BROWSER LAUNCH FLAGS & DETERMINISTIC CLEANUP
@@ -548,6 +616,81 @@ class TestMultiWorkerRateLimiterAndProxyFix(_BasePhase101BTestCase):
         with self.assertRaises(ValueError):
             apply_trusted_proxy_middleware(app, hops=99)
 
+    def test_redis_rate_limiter_atomic_lua_script_invocation_and_concurrent_saturation(self):
+        from services.rate_limiter import SLIDING_WINDOW_LUA_SCRIPT
+
+        os.environ["RATE_LIMIT_MAX_REQUESTS"] = "5"
+        os.environ["RATE_LIMIT_WINDOW_SECONDS"] = "60"
+
+        # 1. Verify single atomic Lua EVAL invocation against real-Redis-compatible client
+        lua_redis = MagicMock()
+        lua_redis.eval.side_effect = [[1, 0], [0, 42]]
+        limiter_lua = SharedSlidingWindowRateLimiter(redis_client=lua_redis)
+
+        self.assertEqual(limiter_lua.check("198.51.100.7"), (True, 0))
+        self.assertEqual(limiter_lua.check("198.51.100.7"), (False, 42))
+        self.assertEqual(lua_redis.eval.call_count, 2)
+        first_args = lua_redis.eval.call_args_list[0][0]
+        self.assertEqual(first_args[0], SLIDING_WINDOW_LUA_SCRIPT)
+        self.assertEqual(first_args[1], 1)
+        self.assertEqual(first_args[2], "leadhunter:ratelimit:198.51.100.7")
+
+        # 2. High-concurrency test: 24 simultaneous requests across independent worker limiters
+        # sharing one Redis server must allow EXACTLY 5 (zero race overshoot)
+        shared_server = fakeredis.FakeServer()
+        barrier = threading.Barrier(24)
+
+        def concurrent_hit(_idx):
+            conn = fakeredis.FakeRedis(server=shared_server)
+            lim = SharedSlidingWindowRateLimiter(redis_client=conn)
+            barrier.wait(timeout=3.0)
+            return lim.check("203.0.113.88")
+
+        with ThreadPoolExecutor(max_workers=24) as ex:
+            outcomes = list(ex.map(concurrent_hit, range(24)))
+
+        allowed_count = sum(1 for allowed, _ in outcomes if allowed)
+        blocked = [retry for allowed, retry in outcomes if not allowed]
+        self.assertEqual(allowed_count, 5, f"Expected exactly 5 allowed under concurrency, got {allowed_count}")
+        self.assertEqual(len(blocked), 19)
+        self.assertTrue(all(r >= 1 for r in blocked))
+
+        inspect_conn = fakeredis.FakeRedis(server=shared_server)
+        self.assertEqual(inspect_conn.zcard("leadhunter:ratelimit:203.0.113.88"), 5)
+
+    def test_rate_limiter_fails_closed_in_production_and_falls_back_in_local_dev(self):
+        os.environ["RATE_LIMIT_MAX_REQUESTS"] = "2"
+        os.environ["RATE_LIMIT_WINDOW_SECONDS"] = "60"
+        os.environ.pop("RATE_LIMIT_FAIL_CLOSED", None)
+
+        broken_redis = MagicMock()
+        broken_redis.eval.side_effect = ConnectionError("Redis connection refused")
+
+        # 1. Production with unreachable Redis -> MUST fail closed (never silently fall back to memory)
+        os.environ["LEADHUNTER_ENV"] = "production"
+        prod_limiter = SharedSlidingWindowRateLimiter(redis_client=broken_redis)
+        allowed, retry_after = prod_limiter.check("198.51.100.20")
+        self.assertFalse(allowed)
+        self.assertEqual(retry_after, 60)
+
+        # Verify API endpoint returns 429 when production Redis rate limiter fails
+        rate_limiter.set_redis_client(broken_redis)
+        resp_prod = self.client.post("/api/audit", json={"url": "https://example.com"}, headers=self.auth)
+        self.assertEqual(resp_prod.status_code, 429)
+
+        # 2. Production with REDIS_URL unset -> MUST fail closed (never downgrade to per-process memory)
+        os.environ.pop("REDIS_URL", None)
+        prod_no_redis = SharedSlidingWindowRateLimiter(redis_client=None)
+        allowed_no_redis, _ = prod_no_redis.check("198.51.100.21")
+        self.assertFalse(allowed_no_redis)
+
+        # 3. Local dev with unreachable Redis -> gracefully falls back to in-memory limiter
+        os.environ.pop("LEADHUNTER_ENV", None)
+        dev_limiter = SharedSlidingWindowRateLimiter(redis_client=broken_redis)
+        self.assertEqual(dev_limiter.check("127.0.0.1"), (True, 0))
+        self.assertEqual(dev_limiter.check("127.0.0.1"), (True, 0))
+        self.assertEqual(dev_limiter.check("127.0.0.1")[0], False)
+
 
 # =============================================================================
 # 4. HEALTH / READINESS, STARTUP VALIDATION, LOGGING & DEPLOYMENT CONFIG
@@ -688,10 +831,66 @@ class TestHealthReadinessLoggingAndDeploymentConfig(_BasePhase101BTestCase):
         self.assertEqual(gconf.accesslog, "-")
         self.assertEqual(gconf.errorlog, "-")
 
-        # 6. worker.py creates a valid RQ worker against FakeRedis
+        # 6. worker.py creates a valid RQ worker against FakeRedis & role-aware Docker/Render health checks
         import worker as worker_module
         w = worker_module.create_worker(conn=self.fake_redis)
         self.assertEqual(w.queue_names(), ["leadhunter"])
+
+        # Role-aware Dockerfile HEALTHCHECK & Render config verification (Findings 2 & 4)
+        self.assertIn("SERVICE_ROLE", dockerfile)
+        self.assertIn("run_worker_healthcheck", dockerfile)
+        self.assertIn("RATE_LIMIT_FAIL_CLOSED", render_yaml)
+        self.assertIn("value: web", render_yaml)
+        self.assertIn("value: worker", render_yaml)
+
+    def test_worker_healthcheck_and_readyz_reflect_registered_and_missing_workers(self):
+        import worker as worker_module
+
+        os.environ["LEADHUNTER_ENV"] = "production"
+        os.environ["REDIS_URL"] = "redis://127.0.0.1:6379/0"
+        os.environ.pop("REQUIRE_ACTIVE_WORKER", None)  # Production defaults to requiring active worker
+
+        # 1. No worker registered -> worker healthcheck False & /readyz returns 503
+        healthy_none, details_none = worker_module.run_worker_healthcheck(conn=self.fake_redis)
+        self.assertFalse(healthy_none)
+        self.assertEqual(details_none["online"], 0)
+
+        with patch("app.check_chromium_available", return_value=(True, "Chromium OK")):
+            r_unready = self.client.get("/readyz")
+            self.assertEqual(r_unready.status_code, 503)
+            body_unready = json.loads(r_unready.data)
+            self.assertFalse(body_unready["checks"]["workers"]["ok"])
+            self.assertEqual(body_unready["checks"]["workers"]["online"], 0)
+
+        # 2. Register active RQ worker birth + heartbeat -> worker healthcheck True & /readyz returns 200
+        rq_worker = worker_module.create_worker(conn=self.fake_redis)
+        rq_worker.register_birth()
+        rq_worker.heartbeat()
+        try:
+            healthy_up, details_up = worker_module.run_worker_healthcheck(conn=self.fake_redis)
+            self.assertTrue(healthy_up)
+            self.assertEqual(details_up["online"], 1)
+
+            with patch("app.check_chromium_available", return_value=(True, "Chromium OK")):
+                r_ready = self.client.get("/readyz")
+                self.assertEqual(r_ready.status_code, 200)
+                body_ready = json.loads(r_ready.data)
+                self.assertTrue(body_ready["checks"]["workers"]["ok"])
+                self.assertEqual(body_ready["checks"]["workers"]["online"], 1)
+        finally:
+            rq_worker.register_death()
+
+        # 3. After worker death -> unhealthy again
+        healthy_after, details_after = worker_module.run_worker_healthcheck(conn=self.fake_redis)
+        self.assertFalse(healthy_after)
+        self.assertEqual(details_after["online"], 0)
+
+        # 4. Redis down -> worker healthcheck False cleanly
+        broken_redis = MagicMock()
+        broken_redis.ping.side_effect = ConnectionError("Redis offline")
+        healthy_down, details_down = worker_module.run_worker_healthcheck(conn=broken_redis)
+        self.assertFalse(healthy_down)
+        self.assertFalse(details_down["redis_ok"])
 
 
 if __name__ == "__main__":
