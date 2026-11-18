@@ -101,9 +101,10 @@ class TestEmailService(unittest.TestCase):
         name3, role3 = find_decision_maker_from_html(html_valid, business_name="Apex Cooling Co")
         self.assertEqual(name3, "Robert Johnson")
 
+    @patch('services.email_service.resolve_and_validate_public_ips', return_value=['93.184.216.34'])
     @patch('dns.resolver.resolve')
     @patch('smtplib.SMTP')
-    def test_verify_email_smtp_statuses(self, mock_smtp_class, mock_dns_resolve):
+    def test_verify_email_smtp_statuses(self, mock_smtp_class, mock_dns_resolve, mock_resolve_ips):
         # Setup DNS MX mock
         mx_mock = MagicMock()
         mx_mock.preference = 10
@@ -121,6 +122,8 @@ class TestEmailService(unittest.TestCase):
         is_valid, status = verify_email_smtp("john@example.com")
         self.assertTrue(is_valid)
         self.assertEqual(status, "Verified")
+        mock_resolve_ips.assert_called_with('mail.example.com', port=25, allow_ip_literal=False)
+        mock_smtp_class.assert_called_with('93.184.216.34', 25, timeout=5)
 
         # 2. Catch-all domain (probe returns 250) -> MX Only
         mock_smtp.rcpt.side_effect = [

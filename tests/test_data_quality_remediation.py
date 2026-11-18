@@ -994,13 +994,13 @@ def test_case_23_ssl_inspection_uses_certifi_and_preserves_original_sni_hostname
     mock_sock.__enter__.return_value = mock_sock
 
     with patch("services.technical_audit.ssl.create_default_context", return_value=mock_ctx) as mock_create_ctx, \
-         patch("services.technical_audit.socket.create_connection", return_value=mock_sock) as mock_connect:
+         patch("services.technical_audit.create_pinned_public_socket", return_value=(mock_sock, "93.184.216.34")) as mock_pinned_connect:
         res = inspect_ssl_certificate("www.airtron.com")
 
     # Must pass certifi CA bundle (never disable verification)
     mock_create_ctx.assert_called_once_with(cafile=certifi.where())
-    # Must preserve original hostname ("www.airtron.com") for both TCP connection and SNI
-    mock_connect.assert_called_once_with(("www.airtron.com", 443), timeout=4)
+    # Must connect via DNS-pinned public socket while preserving original hostname ("www.airtron.com") for SNI
+    mock_pinned_connect.assert_called_once_with("www.airtron.com", 443, timeout=4, allow_ip_literal=False)
     mock_ctx.wrap_socket.assert_called_once_with(mock_sock, server_hostname="www.airtron.com")
     assert res["status"] == "Valid"
     assert res["days_remaining"] > 0

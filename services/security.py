@@ -457,6 +457,140 @@ def is_safe_browser_url(url: str, is_main_document: bool = False) -> tuple[bool,
 
     return True, "OK"
 
+
+def resolve_and_validate_public_ips(hostname: str, port: int = 443, allow_ip_literal: bool = False) -> list[str]:
+    """
+    Resolves `hostname` in real time (no stale cache), verifies EVERY resolved IPv4/IPv6 address
+    with `is_ip_allowed()`, and rejects localhost, loopback, RFC1918 private, link-local,
+    cloud metadata, reserved, CGNAT, and multicast destinations.
+    Returns a deduplicated list of validated public IP strings, or raises `SecurityError`.
+    """
+    if not hostname or not isinstance(hostname, str):
+        raise SecurityError("Invalid hostname provided")
+
+    clean_host = hostname.strip().strip("[]").lower().rstrip(".")
+    if not clean_host:
+        raise SecurityError("Empty hostname provided")
+
+    if clean_host in ('localhost', '127.0.0.1', '::1', '0.0.0.0') or clean_host.endswith(('.local', '.internal', '.localhost')):
+        raise SecurityError(f"Access to local or private destination '{clean_host}' is forbidden.")
+
+    try:
+        clean_host.encode("idna")
+    except UnicodeError:
+        raise SecurityError(f"Invalid host label: '{clean_host}'")
+
+    # Check if hostname is an explicit IP literal
+    try:
+        ip_obj = ipaddress.ip_address(clean_host)
+        if not is_ip_allowed(str(ip_obj)):
+            raise SecurityError(f"Destination IP '{clean_host}' is in a restricted or private range.")
+        if not allow_ip_literal:
+            raise SecurityError(f"Direct IP destination '{clean_host}' is not permitted.")
+        return [str(ip_obj)]
+    except ValueError:
+        pass
+
+    try:
+        addr_info = socket.getaddrinfo(clean_host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise SecurityError(f"DNS resolution failed for '{clean_host}': {e}")
+    except Exception as e:
+        raise SecurityError(f"DNS validation error for '{clean_host}': {e}")
+
+    resolved_ips = list(dict.fromkeys(item[4][0] for item in addr_info if item and len(item) >= 5))
+    if not resolved_ips:
+        raise SecurityError(f"DNS resolution returned no addresses for '{clean_host}'")
+
+    for ip in resolved_ips:
+        if not is_ip_allowed(ip):
+            raise SecurityError(f"Domain '{clean_host}' resolves to restricted IP: {ip}")
+
+    return resolved_ips
+
+
+def create_pinned_public_socket(hostname: str, port: int, timeout: float = 5.0, allow_ip_literal: bool = False) -> tuple[socket.socket, str]:
+    """
+    Resolves `hostname` once, validates EVERY resolved IP as public via `resolve_and_validate_public_ips()`,
+    and opens a TCP socket directly to a validated public IP address without a secondary DNS lookup.
+    Defeats DNS rebinding (TOCTOU) for raw SSL and SMTP connections.
+    Returns `(connected_socket, pinned_ip)`.
+    """
+    validated_ips = resolve_and_validate_public_ips(hostname, port=port, allow_ip_literal=allow_ip_literal)
+    last_err = None
+    for pinned_ip in validated_ips:
+        family = socket.AF_INET6 if ':' in pinned_ip else socket.AF_INET
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        try:
+            sock.connect((pinned_ip, port))
+            return sock, pinned_ip
+        except OSError as e:
+            last_err = e
+            try:
+                sock.close()
+            except Exception:
+                pass
+    if last_err is not None:
+        raise last_err
+    raise OSError(f"Failed to connect to any validated public IP for {hostname}:{port}")
+
+
+def is_safe_public_browser_url(url: str, is_main_document: bool = False) -> tuple[bool, str]:
+    """
+    Validates destination URLs for public website Playwright crawls (main documents and subresources).
+    Enforces HTTP/HTTPS schemes, blocks localhost/private/loopback/link-local/metadata/reserved ranges,
+    and performs real-time DNS resolution (no stale cache) to defeat DNS rebinding.
+    """
+    if not url or not isinstance(url, str):
+        return False, "Empty or invalid URL"
+
+    url_str = url.strip()
+    if url_str == 'about:blank':
+        return True, "Browser internal"
+
+    if url_str.startswith('data:'):
+        if is_main_document:
+            return False, "Data URLs are not permitted for main document navigation"
+        return True, "Inline data resource"
+
+    if not url_str.startswith(('http://', 'https://')):
+        scheme = url_str.split(':', 1)[0]
+        return False, f"Unsupported scheme: '{scheme}'"
+
+    parsed = urlparse(url_str)
+    hostname = parsed.hostname
+    if not hostname:
+        return False, "URL missing hostname"
+
+    clean_host = hostname.strip("[]").lower()
+    port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+
+    is_safe, reason, _ = resolve_and_validate_hostname(clean_host, port=port)
+    if not is_safe:
+        return False, reason
+
+    return True, "OK"
+
+
+def create_public_website_route_interceptor(page):
+    """
+    Creates a Playwright route interceptor for public website SPA crawling.
+    Validates every navigation and subresource request in real time before allowing it through
+    SafeBrowserProxy(allow_public_hosts=True).
+    """
+    def handle_route(route):
+        req = route.request
+        req_url = req.url
+        is_main = req.is_navigation_request() and (req.frame == page.main_frame)
+        safe, reason = is_safe_public_browser_url(req_url, is_main_document=is_main)
+        if not safe:
+            logger.warning("[PublicBrowserGuard] Blocked %s request to %s: %s", "navigation" if is_main else "subresource", req_url, reason)
+            route.abort("blockedbyclient")
+            return
+        route.continue_()
+    return handle_route
+
 def _read_chunked_body(client_sock, initial_buf: bytes, max_body_size: int = MAX_REQUEST_BODY_BYTES) -> tuple[bytes | None, str | None]:
     """
     Reads a complete chunked HTTP request body from client_sock starting with initial_buf.
@@ -555,13 +689,17 @@ class SafeBrowserProxy:
     Local TCP tunneling proxy for Playwright browser contexts.
     Enforces network-level destination pinning and SSRF defense:
     - Intercepts all Chromium outbound connection attempts.
-    - Validates target hostnames against Google Maps & subresource authorization rules.
+    - When allow_public_hosts=False (default, Google Maps mode): validates target hostnames
+      strictly against Google Maps & authorized subresource rules.
+    - When allow_public_hosts=True (public website crawl mode): allows legitimate public
+      external hostnames while still enforcing real-time DNS validation and IP pinning.
     - Resolves hostnames in Python, verifies every IP with is_ip_allowed(),
       and connects the upstream socket directly to the pinned public IP.
     - Aborts connections immediately if a hostname resolves to a private IP,
       localhost, cloud metadata, or link-local address (preventing DNS rebinding).
     """
-    def __init__(self):
+    def __init__(self, allow_public_hosts: bool = False):
+        self.allow_public_hosts = allow_public_hosts
         self.server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_sock.bind(('127.0.0.1', 0))
         self.port = self.server_sock.getsockname()[1]
@@ -680,8 +818,18 @@ class SafeBrowserProxy:
 
             # Determine destination host, port, and convert target to origin-form
             if method == 'CONNECT':
-                if ':' in target:
-                    host, port_str = target.split(':', 1)
+                if target.startswith('['):
+                    # IPv6 literal format: [::1]:443 or [::1]
+                    if ']:' in target:
+                        host, port_str = target.rsplit(':', 1)
+                        try:
+                            port = int(port_str)
+                        except ValueError:
+                            port = 443
+                    else:
+                        host, port = target, 443
+                elif ':' in target:
+                    host, port_str = target.rsplit(':', 1)
                     try:
                         port = int(port_str)
                     except ValueError:
@@ -702,8 +850,17 @@ class SafeBrowserProxy:
                     # Already origin-form or asterisk-form
                     origin_target = target if (target.startswith('/') or target == '*') else f"/{target}"
                     if host_header_val:
-                        if ':' in host_header_val:
-                            host, port_str = host_header_val.split(':', 1)
+                        if host_header_val.startswith('['):
+                            if ']:' in host_header_val:
+                                host, port_str = host_header_val.rsplit(':', 1)
+                                try:
+                                    port = int(port_str)
+                                except ValueError:
+                                    port = 80
+                            else:
+                                host, port = host_header_val, 80
+                        elif ':' in host_header_val:
+                            host, port_str = host_header_val.rsplit(':', 1)
                             try:
                                 port = int(port_str)
                             except ValueError:
@@ -720,11 +877,12 @@ class SafeBrowserProxy:
 
             clean_host = host.strip("[]").lower()
 
-            # 1. Domain Authorization Filter
-            if not (is_google_maps_domain(clean_host) or is_authorized_maps_subresource_host(clean_host)):
-                logger.warning("SafeBrowserProxy: Domain authorization rejected host %s (target: %s)", clean_host, target)
-                client_sock.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nForbidden: Unauthorized destination\r\n")
-                return
+            # 1. Domain Authorization Filter (enforced in Google Maps mode; public website mode relies on DNS/IP pinning below)
+            if not self.allow_public_hosts:
+                if not (is_google_maps_domain(clean_host) or is_authorized_maps_subresource_host(clean_host)):
+                    logger.warning("SafeBrowserProxy: Domain authorization rejected host %s (target: %s)", clean_host, target)
+                    client_sock.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nForbidden: Unauthorized destination\r\n")
+                    return
 
             # 2. DNS Resolution & Rebinding Check
             is_safe, reason, resolved_ips = resolve_and_validate_hostname(clean_host, port=port)

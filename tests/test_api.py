@@ -1,45 +1,61 @@
+import os
 import unittest
 import json
 from unittest.mock import patch
-from app import app
+from app import app, rate_limiter
 
 class TestAppAPI(unittest.TestCase):
     def setUp(self):
+        self._orig_api_key = os.environ.get("LEADHUNTER_API_KEY")
+        self.test_api_key = "test-suite-api-key-10-1a"
+        os.environ["LEADHUNTER_API_KEY"] = self.test_api_key
+        rate_limiter.reset()
         self.client = app.test_client()
+        self.auth_headers = {"X-API-Key": self.test_api_key}
+
+    def tearDown(self):
+        if self._orig_api_key is None:
+            os.environ.pop("LEADHUNTER_API_KEY", None)
+        else:
+            os.environ["LEADHUNTER_API_KEY"] = self._orig_api_key
+        rate_limiter.reset()
+
+    def _post_auth(self, path, payload):
+        return self.client.post(path, json=payload, headers=self.auth_headers)
 
     def test_homepage_loads(self):
         response = self.client.get('/')
         self.assertEqual(response.status_code, 200)
 
     def test_scrape_api_missing_url(self):
-        response = self.client.post('/api/scrape', json={})
+        response = self._post_auth('/api/scrape', {})
         self.assertEqual(response.status_code, 400)
         data = json.loads(response.data)
         self.assertFalse(data["success"])
 
     def test_scrape_api_ssrf_blocked(self):
-        response = self.client.post('/api/scrape', json={"url": "http://127.0.0.1:8000", "type": "website"})
+        response = self._post_auth('/api/scrape', {"url": "http://127.0.0.1:8000", "type": "website"})
         self.assertEqual(response.status_code, 400)
         data = json.loads(response.data)
         self.assertFalse(data["success"])
         self.assertIn("Security restriction", data["error"])
 
     def test_scrape_api_maps_ssrf_blocked_localhost(self):
-        response = self.client.post('/api/scrape', json={"url": "http://127.0.0.1:8000/maps", "type": "maps"})
+        response = self._post_auth('/api/scrape', {"url": "http://127.0.0.1:8000/maps", "type": "maps"})
         self.assertEqual(response.status_code, 400)
         data = json.loads(response.data)
         self.assertFalse(data["success"])
         self.assertIn("Security restriction", data["error"])
 
     def test_scrape_api_maps_ssrf_blocked_external_domain(self):
-        response = self.client.post('/api/scrape', json={"url": "https://example.com/maps/search/hvac", "type": "maps"})
+        response = self._post_auth('/api/scrape', {"url": "https://example.com/maps/search/hvac", "type": "maps"})
         self.assertEqual(response.status_code, 400)
         data = json.loads(response.data)
         self.assertFalse(data["success"])
         self.assertIn("Security restriction", data["error"])
 
     def test_scrape_api_maps_ssrf_blocked_metadata(self):
-        response = self.client.post('/api/scrape', json={"url": "http://169.254.169.254/latest", "type": "maps"})
+        response = self._post_auth('/api/scrape', {"url": "http://169.254.169.254/latest", "type": "maps"})
         self.assertEqual(response.status_code, 400)
         data = json.loads(response.data)
         self.assertFalse(data["success"])
@@ -72,7 +88,7 @@ class TestAppAPI(unittest.TestCase):
             "intelligence": {"lead_score": 80, "priority_tier": "High Priority Prospect"}
         }
 
-        response = self.client.post('/api/scrape', json={
+        response = self._post_auth('/api/scrape', {
             "url": "https://www.google.com/maps/search/HVAC+contractors+in+Dallas,+TX",
             "type": "maps"
         })
@@ -115,7 +131,7 @@ class TestAppAPI(unittest.TestCase):
 
         mock_crawl.side_effect = crawl_side_effect
 
-        response = self.client.post('/api/scrape', json={
+        response = self._post_auth('/api/scrape', {
             "url": "https://www.google.com/maps/search/HVAC+contractors+in+Dallas,+TX",
             "type": "maps"
         })
@@ -153,7 +169,7 @@ class TestAppAPI(unittest.TestCase):
             "data": {"Business Name": "Dallas Ad HVAC"}
         }
 
-        response = self.client.post('/api/scrape', json={
+        response = self._post_auth('/api/scrape', {
             "url": "https://www.google.com/maps/search/HVAC+contractors+in+Dallas,+TX",
             "type": "maps"
         })
@@ -177,7 +193,7 @@ class TestAppAPI(unittest.TestCase):
             "data": None
         }
 
-        response = self.client.post('/api/scrape', json={
+        response = self._post_auth('/api/scrape', {
             "url": "https://www.google.com/maps/search/HVAC+contractors+in+Dallas,+TX",
             "type": "maps"
         })
@@ -210,7 +226,7 @@ class TestAppAPI(unittest.TestCase):
             }
         }
 
-        response = self.client.post('/api/scrape', json={
+        response = self._post_auth('/api/scrape', {
             "url": "https://www.google.com/maps/place/Dallas+Master+Heating",
             "type": "maps"
         })
@@ -237,7 +253,7 @@ class TestAppAPI(unittest.TestCase):
             "intelligence": {"lead_score": 75}
         }
 
-        response = self.client.post('/api/scrape', json={
+        response = self._post_auth('/api/scrape', {
             "url": "https://acmeair.com",
             "type": "website",
             "business_name": "Acme Air"
@@ -253,7 +269,7 @@ class TestAppAPI(unittest.TestCase):
         self.assertEqual(data["data"]["Email"], "info@acmeair.com")
 
     def test_export_excel_api_validation(self):
-        response = self.client.post('/api/export-excel', json={"leads": []})
+        response = self._post_auth('/api/export-excel', {"leads": []})
         self.assertEqual(response.status_code, 400)
 
         sample_leads = [{
@@ -272,7 +288,7 @@ class TestAppAPI(unittest.TestCase):
                 }
             }
         }]
-        resp_export = self.client.post('/api/export-excel', json={"leads": sample_leads})
+        resp_export = self._post_auth('/api/export-excel', {"leads": sample_leads})
         self.assertEqual(resp_export.status_code, 200)
         self.assertEqual(resp_export.mimetype, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 

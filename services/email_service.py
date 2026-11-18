@@ -14,6 +14,7 @@ from urllib.parse import urlparse, unquote
 from bs4 import BeautifulSoup
 import dns.resolver
 from email_validator import validate_email, EmailNotValidError
+from services.security import SecurityError, resolve_and_validate_public_ips
 
 GENERIC_PREFIXES = [
     'info', 'contact', 'support', 'service', 'sales', 'admin',
@@ -454,9 +455,17 @@ def verify_email_smtp(email: str, timeout: int = 5):
     except Exception:
         return False, "Invalid"
 
-    # 2. SMTP Handshake
+    # 1b. SSRF / DNS Rebinding Validation on MX Host (resolve once and pin to public IP)
     try:
-        server = smtplib.SMTP(mx_host, 25, timeout=timeout)
+        validated_ips = resolve_and_validate_public_ips(mx_host, port=25, allow_ip_literal=False)
+        pinned_mx_ip = validated_ips[0]
+    except SecurityError:
+        return False, "Invalid"
+
+    # 2. SMTP Handshake directly to validated public IP (zero secondary DNS lookup)
+    server = None
+    try:
+        server = smtplib.SMTP(pinned_mx_ip, 25, timeout=timeout)
         server.helo('verify-engine.org')
         server.mail('check@verify-engine.org')
 
@@ -471,6 +480,7 @@ def verify_email_smtp(email: str, timeout: int = 5):
             server.quit()
         except Exception:
             pass
+        server = None
 
         if is_catchall:
             return True, "MX Only"
@@ -488,3 +498,9 @@ def verify_email_smtp(email: str, timeout: int = 5):
         return True, "MX Only"
     except Exception:
         return False, "Unverified"
+    finally:
+        if server is not None:
+            try:
+                server.close()
+            except Exception:
+                pass

@@ -10,7 +10,13 @@ from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-from services.security import safe_http_get, validate_and_sanitize_url, SecurityError
+from services.security import (
+    safe_http_get,
+    validate_and_sanitize_url,
+    SecurityError,
+    SafeBrowserProxy,
+    create_public_website_route_interceptor
+)
 from services.email_service import (
     extract_emails_and_socials,
     find_decision_maker_from_html,
@@ -27,26 +33,31 @@ from services.opportunity_analyzer import analyze_business_opportunities
 def find_candidate_pages(html_text: str, base_url: str, max_candidates: int = 5):
     """
     Finds high-priority internal links (Contact, About, Team, Leadership)
-    strictly within the same base domain.
+    strictly within the same base domain and restricted to HTTP/HTTPS schemes.
     """
     candidate_urls = []
     if not html_text or not base_url:
         return candidate_urls
 
     try:
-        base_domain = urlparse(base_url).netloc.lower().replace('www.', '')
+        base_parsed = urlparse(base_url)
+        if base_parsed.scheme not in ('http', 'https') or not base_parsed.hostname:
+            return candidate_urls
+        base_domain = base_parsed.hostname.lower().replace('www.', '')
         soup = BeautifulSoup(html_text, 'html.parser')
         keywords = ['contact', 'about', 'reach', 'touch', 'support', 'team', 'leadership', 'location', 'service']
 
         for a in soup.find_all('a', href=True):
             href = a.get('href', '').strip()
             text = a.get_text().strip().lower()
-            if not href or href.startswith(('tel:', 'mailto:', 'javascript:', '#')):
+            if not href or href.startswith(('tel:', 'mailto:', 'javascript:', 'data:', 'file:', '#')):
                 continue
 
             full_url = urljoin(base_url, href)
             parsed = urlparse(full_url)
-            parsed_domain = parsed.netloc.lower().replace('www.', '')
+            if parsed.scheme not in ('http', 'https') or not parsed.hostname:
+                continue
+            parsed_domain = parsed.hostname.lower().replace('www.', '')
 
             # Enforce same domain
             if parsed_domain == base_domain:
@@ -69,54 +80,95 @@ def find_candidate_pages(html_text: str, base_url: str, max_candidates: int = 5)
 
     return candidate_urls[:max_candidates]
 
-def scrape_with_playwright_fallback(url: str, existing_fb: str = "", existing_insta: str = "", existing_linkedin: str = ""):
+def scrape_with_playwright_fallback(url: str, existing_fb: str = "", existing_insta: str = "", existing_linkedin: str = "", business_name: str = ""):
     """
     Headless Chromium rendering fallback for JavaScript-rendered SPAs (React, Vue, Wix, Webflow).
+    Enforces defense-in-depth SSRF & DNS rebinding protection:
+    - Pre-validates initial URL and every candidate page URL via validate_and_sanitize_url().
+    - Routes ALL browser traffic through SafeBrowserProxy(allow_public_hosts=True) for real-time
+      DNS resolution and pinned public-IP socket connections.
+    - Attaches Playwright route interceptor to abort any internal/restricted navigation or subresource.
+    - Guarantees cleanup of page, context, browser, and proxy in try/finally blocks.
     """
+    # Fail closed immediately if the initial URL fails SSRF / scheme / DNS validation
+    safe_url = validate_and_sanitize_url(url)
+
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=12000, wait_until='domcontentloaded')
-            time.sleep(0.5)
+        with SafeBrowserProxy(allow_public_hosts=True) as proxy:
+            with sync_playwright() as p:
+                browser = None
+                context = None
+                page = None
+                try:
+                    browser = p.chromium.launch(headless=True)
+                    context = browser.new_context(
+                        proxy={"server": f"http://127.0.0.1:{proxy.port}"},
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+                    )
+                    page = context.new_page()
+                    page.route("**/*", create_public_website_route_interceptor(page))
 
-            try:
-                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                time.sleep(0.5)
-            except Exception:
-                pass
+                    page.goto(safe_url, timeout=12000, wait_until='domcontentloaded')
+                    time.sleep(0.5)
 
-            html = page.content()
-            email, fb, insta, linkedin, _ = extract_emails_and_socials(html, base_url=url)
-            dm_name, dm_role = find_decision_maker_from_html(html)
-
-            fb = fb or existing_fb
-            insta = insta or existing_insta
-            linkedin = linkedin or existing_linkedin
-
-            # Crawl candidates if still missing info (bounded to 2 candidates, 8s timeout)
-            if not (email and fb and linkedin and dm_name):
-                candidate_links = find_candidate_pages(html, url, max_candidates=2)
-                for curl in candidate_links:
                     try:
-                        page.goto(curl, timeout=8000, wait_until='domcontentloaded')
-                        c_html = page.content()
-                        c_email, c_fb, c_insta, c_linkedin, _ = extract_emails_and_socials(c_html, base_url=url)
-                        if not dm_name:
-                            dm_name, dm_role = find_decision_maker_from_html(c_html)
-                        email = email or c_email
-                        fb = fb or c_fb
-                        insta = insta or c_insta
-                        linkedin = linkedin or c_linkedin
-                        if email and fb and linkedin and dm_name:
-                            break
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                        time.sleep(0.5)
                     except Exception:
                         pass
 
-            browser.close()
-            return html, email, fb, insta, linkedin, dm_name, dm_role
+                    html = page.content()
+                    email, fb, insta, linkedin, _ = extract_emails_and_socials(html, base_url=safe_url)
+                    dm_name, dm_role = find_decision_maker_from_html(html, business_name=business_name)
+
+                    fb = fb or existing_fb
+                    insta = insta or existing_insta
+                    linkedin = linkedin or existing_linkedin
+
+                    # Crawl candidates if still missing info (bounded to 2 candidates, 8s timeout)
+                    if not (email and fb and linkedin and dm_name):
+                        candidate_links = find_candidate_pages(html, safe_url, max_candidates=2)
+                        for curl in candidate_links:
+                            try:
+                                safe_curl = validate_and_sanitize_url(curl)
+                            except SecurityError:
+                                continue
+                            try:
+                                page.goto(safe_curl, timeout=8000, wait_until='domcontentloaded')
+                                c_html = page.content()
+                                c_email, c_fb, c_insta, c_linkedin, _ = extract_emails_and_socials(c_html, base_url=safe_url)
+                                if not dm_name:
+                                    dm_name, dm_role = find_decision_maker_from_html(c_html, business_name=business_name)
+                                email = email or c_email
+                                fb = fb or c_fb
+                                insta = insta or c_insta
+                                linkedin = linkedin or c_linkedin
+                                if email and fb and linkedin and dm_name:
+                                    break
+                            except Exception:
+                                pass
+
+                    return html, email, fb, insta, linkedin, dm_name, dm_role
+                finally:
+                    if page:
+                        try:
+                            page.close()
+                        except Exception:
+                            pass
+                    if context:
+                        try:
+                            context.close()
+                        except Exception:
+                            pass
+                    if browser:
+                        try:
+                            browser.close()
+                        except Exception:
+                            pass
+    except SecurityError:
+        raise
     except Exception as e:
-        print(f"Playwright fallback error for {url}: {e}")
+        print(f"Playwright fallback error for {safe_url}: {e}")
         return "", "", existing_fb, existing_insta, existing_linkedin, None, None
 
 def is_challenge_or_blocked(status_code: int = 200, html_text: str = "", error_msg: str = None) -> tuple[bool, str]:
@@ -347,7 +399,11 @@ def crawl_and_audit_website(url: str, hint_decision_maker: str = "", business_na
     if not response_text or not email or not (fb or linkedin):
         try:
             pw_html, pw_email, pw_fb, pw_insta, pw_li, pw_dm, pw_role = scrape_with_playwright_fallback(
-                final_url, existing_fb=fb, existing_insta=insta, existing_linkedin=linkedin
+                final_url,
+                existing_fb=fb,
+                existing_insta=insta,
+                existing_linkedin=linkedin,
+                business_name=business_name
             )
             pw_blocked, _ = is_challenge_or_blocked(200, pw_html)
             if pw_html and not pw_blocked and not response_text:

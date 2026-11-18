@@ -12,20 +12,33 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 import re
 
+from services.security import SecurityError, create_pinned_public_socket
+
 def inspect_ssl_certificate(hostname: str, port: int = 443, timeout: int = 4):
     """
-    Connects to the server over SSL and extracts expiration, issuer, and days remaining.
-    Uses certifi CA bundle with strict certificate verification and preserves the original hostname for SNI.
+    Connects to the server over SSL via a DNS-pinned public IP socket and extracts
+    expiration, issuer, and days remaining.
+    Uses certifi CA bundle with strict certificate verification (`CERT_REQUIRED` + `check_hostname=True`)
+    and preserves the original hostname for SNI and certificate hostname matching.
     """
     if not hostname:
         return {"status": "Unknown", "evidence": "No hostname provided"}
 
-    clean_host = hostname.strip().lower().split(':')[0]
-    context = ssl.create_default_context(cafile=certifi.where())
+    clean_host = hostname.strip().strip('[]').lower()
+    if ':' in clean_host and clean_host.count(':') == 1:
+        clean_host = clean_host.split(':')[0]
 
+    context = ssl.create_default_context(cafile=certifi.where())
+    context.verify_mode = ssl.CERT_REQUIRED
+    context.check_hostname = True
+
+    raw_sock = None
     try:
-        with socket.create_connection((clean_host, port), timeout=timeout) as sock:
-            with context.wrap_socket(sock, server_hostname=clean_host) as ssock:
+        raw_sock, pinned_ip = create_pinned_public_socket(
+            clean_host, port, timeout=timeout, allow_ip_literal=False
+        )
+        with raw_sock:
+            with context.wrap_socket(raw_sock, server_hostname=clean_host) as ssock:
                 cert = ssock.getpeercert()
                 if not cert:
                     return {"status": "Warning", "evidence": "No peer certificate returned"}
@@ -50,6 +63,8 @@ def inspect_ssl_certificate(hostname: str, port: int = 443, timeout: int = 4):
                         "issuer": issuer_org,
                         "evidence": f"Issuer: {issuer_org}, Expires: {expiry_date.strftime('%Y-%m-%d')} ({days_remaining} days left)"
                     }
+    except SecurityError as se:
+        return {"status": "Blocked", "days_remaining": 0, "evidence": f"Security restriction: {se}"}
     except ssl.SSLCertVerificationError as e:
         return {"status": "Invalid", "days_remaining": 0, "evidence": f"SSL Verification Failed: {e}"}
     except Exception as e:
